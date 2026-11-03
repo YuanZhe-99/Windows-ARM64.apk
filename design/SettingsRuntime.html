@@ -17,10 +17,10 @@ a{color:var(--link)}a:hover{color:var(--linkh)}
 .tb{height:40px;display:flex;align-items:center;padding-left:16px;gap:10px;flex-shrink:0}
 .tb .nm{font-size:12px;color:var(--tx2)}
 .wb{display:flex;margin-left:auto}.wb button{width:46px;height:40px;border:0;background:transparent;color:var(--tx)}
-.shell{flex:1;display:flex;min-height:0;padding:0 8px 8px 0}
+.shell{flex:1;display:flex;min-height:0;padding:8px 8px 8px 0}
 .panes{flex:1;display:flex;gap:8px;min-width:0;flex-direction:column}
 .prow{flex:1;display:flex;gap:8px;min-height:0;min-width:0}
-.side{width:232px;flex-shrink:0;display:flex;flex-direction:column;padding:4px 12px 12px;box-sizing:border-box;gap:2px}
+.side{width:232px;flex-shrink:0;display:flex;flex-direction:column;padding:0 12px 4px;box-sizing:border-box;gap:2px}
 .add{display:flex;align-items:center;justify-content:center;gap:8px;height:36px;margin:0 0 12px;border:0;border-radius:6px;background:var(--acc);color:var(--onacc);font-weight:600;text-decoration:none}
 .add:hover{color:var(--onacc)}
 .nav{display:flex;align-items:center;gap:12px;height:36px;padding:0 10px;border-radius:6px;color:var(--tx);text-decoration:none;position:relative}
@@ -130,7 +130,7 @@ a{color:var(--link)}a:hover{color:var(--linkh)}
 .snav .sh{padding:12px 10px 4px}
 .spage{flex:1;min-width:0;padding:28px 40px;display:flex;flex-direction:column;gap:22px;overflow:hidden}
 .ptitle{display:flex;flex-direction:column;gap:4px;max-width:720px}.ptitle h2{margin:0;font-size:22px;font-weight:600}.ptitle span{color:var(--tx2)}
-.ghost{position:absolute;left:0;top:0;width:1280px;height:800px;display:flex;padding:40px 8px 8px 0;box-sizing:border-box}
+.ghost{position:absolute;left:0;top:0;width:1280px;height:800px;display:flex;padding:8px 8px 8px 0;box-sizing:border-box}
 .ghost .gs{width:232px;padding:4px 12px;box-sizing:border-box;display:flex;flex-direction:column;gap:10px}
 .ghost .gs div{height:30px;border-radius:6px;background:var(--side)}
 .ghost .gp{flex:1;background:var(--pane);border:1px solid var(--bd);border-radius:8px}
@@ -149,6 +149,25 @@ a{color:var(--link)}a:hover{color:var(--linkh)}
 .notice.bad{background:var(--badtint);border-color:var(--badbd)}
 .notice .t{flex:1;display:flex;flex-direction:column;gap:2px}.notice .t b{font-weight:600}.notice .t span{font-size:13px;color:var(--tx2)}
 .btn.pri:hover{color:var(--onacc)}.btn.warn:hover{color:var(--pane)}
+.stop{display:flex;gap:6px;align-items:center;margin-bottom:10px;height:44px}
+.stop .add{flex:1;margin:0}
+.grp{background:var(--side);border-radius:8px;padding:4px;display:flex;flex-direction:column;gap:2px;margin:2px 0}
+.grp.cur{background:var(--sidecur)}
+.grp .gt{font-size:12px;color:var(--tx2);padding:4px 6px 2px;font-weight:600;display:flex;align-items:center;gap:6px}
+.pane.focus{border-color:var(--acc);box-shadow:0 0 0 1px var(--acc)}
+.ph .wb{margin-left:0}.ph .wb button{width:40px;height:44px}
+.ph .ht{font-weight:600;font-size:14px;flex:1}
+.prow.col{flex-direction:column}
+.radio{display:flex;flex-direction:column;gap:2px;margin-top:8px}
+.ro{display:flex;gap:10px;align-items:flex-start;padding:8px 10px;border-radius:6px}
+.ro.on{background:var(--tint)}
+.ro .rb{width:16px;height:16px;border-radius:8px;border:1.5px solid var(--tx2);box-sizing:border-box;flex-shrink:0;margin-top:2px;position:relative}
+.ro.on .rb{border-color:var(--acc)}.ro.on .rb::after{content:"";position:absolute;left:3px;top:3px;width:7px;height:7px;border-radius:4px;background:var(--acc)}
+.ro .t{display:flex;flex-direction:column;gap:1px}.ro .t b{font-weight:600;font-size:13px}.ro .t span{font-size:12px;color:var(--tx2)}
+.ro.dis{opacity:.5}
+.bar{height:6px;border-radius:3px;background:var(--sub);overflow:hidden}.bar span{display:block;height:6px;border-radius:3px;background:var(--acc)}
+.cb{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--tx)}
+.spage.tight{gap:14px;padding-top:22px}.tight .srow{padding:9px 16px}
 </style>
 </helmet>
 <div class="w">
@@ -158,25 +177,26 @@ a{color:var(--link)}a:hover{color:var(--linkh)}
   <header class="shh"><h1 id="sett">Settings</h1><a class="ib" href="Library.html" aria-label="Close settings"><svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true"><path d="M1 1l12 12M13 1L1 13" stroke="currentColor" stroke-width="1.5"></path></svg></a></header>
   <div style="flex: 1; display: flex; min-height: 0">
     <nav class="snav" aria-label="Settings sections"><label class="search" style="max-width: none; flex: 0 0 34px; margin-bottom: 12px"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"></circle><path d="M20 20l-4-4"></path></svg><input aria-label="Search settings" placeholder="Search settings"></label><span class="sh">Preferences</span><a href="SettingsGeneral.html">General</a><span class="sh">Running apps</span><a href="SettingsRuntime.html" class="cur" aria-current="page">Runtime</a><a href="Diagnostics.html" style="gap: 8px"><span style="flex: 1">Diagnostics</span><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"></path></svg></a><span class="sh">Windows-ARM64.apk</span><a href="SettingsAbout.html">About</a></nav>
-    <div class="spage">
+    <div class="spage" style="gap: 18px">
       <div class="ptitle"><h2>Runtime</h2><span>What apps run on. Changes apply to each app the next time it opens.</span></div>
       <section class="sec" aria-labelledby="jre">
         <h3 id="jre">Java runtime</h3>
         <div class="box">
-          <div class="srow"><span class="tile"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 10h11v4a5 5 0 0 1-5 5h-1a5 5 0 0 1-5-5z"></path><path d="M16 11h1.5a2.5 2.5 0 0 1 0 5H16M9 3c-1 1.5 1 2 0 4M12 3c-1 1.5 1 2 0 4"></path></svg></span><span class="t"><b>Use</b><span>An ARM64 Java runtime, version 21 or later. Windows-ARM64.apk never installs one or changes one elsewhere on your PC.</span></span><select class="dd" aria-label="Java runtime" style="min-width: 240px"><option>The one that came with it</option><option>A folder I choose…</option></select></div>
-          <div class="srow"><span class="tile" style="background: var(--oktint); color: var(--ok)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></span><span class="t"><b>OpenJDK 21.0.5 · ARM64</b><span>Found and checked today at 14:02.</span></span><a class="btn" href="Diagnostics.html">Check again</a></div>
+          <div class="srow"><span class="tile"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 10h11v4a5 5 0 0 1-5 5h-1a5 5 0 0 1-5-5z"></path><path d="M16 11h1.5a2.5 2.5 0 0 1 0 5H16M9 3c-1 1.5 1 2 0 4M12 3c-1 1.5 1 2 0 4"></path></svg></span><span class="t"><b>Use</b><span>An ARM64 Java runtime, version 21 or later.</span></span><select class="dd" aria-label="Java runtime" style="min-width: 330px"><option>Windows-ARM64.apk's own (installed by it)</option><option>A folder I choose…</option></select></div>
+          <div class="srow"><span class="tile" style="background: var(--oktint); color: var(--ok)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></span><span class="t"><b>OpenJDK 21.0.5 · ARM64</b><span>Installed by Windows-ARM64.apk on 2 November, in its own folder. Only it uses this runtime: Java elsewhere on your PC, the PATH and your environment are left alone.</span></span><button class="btn">Update</button><button class="btn">Reinstall</button></div>
         </div>
       </section>
       <section class="sec" aria-labelledby="gfx">
         <h3 id="gfx">Graphics</h3>
         <div class="box">
-          <div class="srow top"><span class="tile"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4l9 16H3z"></path></svg></span><span class="t"><b>Default for apps</b><span>Automatic uses Vulkan on this PC, else Direct3D 11. If you choose one, apps use only that one, and say so when it isn't available rather than switching. Each app can choose its own.</span></span><div class="seg" role="radiogroup" aria-label="Default graphics"><button role="radio" aria-checked="true">Automatic</button><button role="radio" aria-checked="false">Vulkan</button><button role="radio" aria-checked="false">Direct3D 11</button></div></div>
+          <div class="srow top"><span class="tile"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4l9 16H3z"></path></svg></span><span class="t"><b>Default for apps</b><span>Automatic uses Vulkan on this PC, else Direct3D 11. A choice of one is kept: apps say so when it isn't available rather than switching.</span></span><div class="seg" role="radiogroup" aria-label="Default graphics"><button role="radio" aria-checked="true">Automatic</button><button role="radio" aria-checked="false">Vulkan</button><button role="radio" aria-checked="false">Direct3D 11</button></div></div>
         </div>
       </section>
       <section class="sec" aria-labelledby="nat">
-        <h3 id="nat">Native code</h3>
+        <h3 id="nat">Advanced: native code<span class="chip warn">Experimental</span></h3>
         <div class="box">
-          <div class="srow"><span class="tile"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="7" y="7" width="10" height="10" rx="1.5"></rect><path d="M10 3v4M14 3v4M10 17v4M14 17v4M3 10h4M3 14h4M17 10h4M17 14h4"></path></svg></span><span class="t"><b>New apps start with native code off</b><span>You can allow restricted native code for one app at a time, in its details.</span></span><span class="chip warn">Experimental</span></div>
+          <div class="srow"><span class="tile"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="7" y="7" width="10" height="10" rx="1.5"></rect><path d="M10 3v4M14 3v4M10 17v4M14 17v4M3 10h4M3 14h4M17 10h4M17 14h4"></path></svg></span><span class="t"><b>New apps start with native code off</b><span>Restricted native code is allowed one app at a time, in its details.</span></span></div>
+          <div class="srow top"><span class="tile"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l8 3v6c0 4.5-3.4 8-8 9-4.6-1-8-4.5-8-9V6z"></path></svg></span><span class="t"><b>Default profile for restricted apps</b><span>N0: self-contained code only. N1: also the C library, threads and Java calls. N2: also OpenGL ES drawing.</span></span><div class="seg" role="radiogroup" aria-label="Default profile"><button role="radio" aria-checked="false">N0</button><button role="radio" aria-checked="true">N1</button><button role="radio" aria-checked="false">N2</button></div></div>
         </div>
         <span style="font-size: 13px; color: var(--tx2)">What this PC supports right now is in <a href="Diagnostics.html">Diagnostics</a>.</span>
       </section>

@@ -17,10 +17,10 @@ a{color:var(--link)}a:hover{color:var(--linkh)}
 .tb{height:40px;display:flex;align-items:center;padding-left:16px;gap:10px;flex-shrink:0}
 .tb .nm{font-size:12px;color:var(--tx2)}
 .wb{display:flex;margin-left:auto}.wb button{width:46px;height:40px;border:0;background:transparent;color:var(--tx)}
-.shell{flex:1;display:flex;min-height:0;padding:0 8px 8px 0}
+.shell{flex:1;display:flex;min-height:0;padding:8px 8px 8px 0}
 .panes{flex:1;display:flex;gap:8px;min-width:0;flex-direction:column}
 .prow{flex:1;display:flex;gap:8px;min-height:0;min-width:0}
-.side{width:232px;flex-shrink:0;display:flex;flex-direction:column;padding:4px 12px 12px;box-sizing:border-box;gap:2px}
+.side{width:232px;flex-shrink:0;display:flex;flex-direction:column;padding:0 12px 4px;box-sizing:border-box;gap:2px}
 .add{display:flex;align-items:center;justify-content:center;gap:8px;height:36px;margin:0 0 12px;border:0;border-radius:6px;background:var(--acc);color:var(--onacc);font-weight:600;text-decoration:none}
 .add:hover{color:var(--onacc)}
 .nav{display:flex;align-items:center;gap:12px;height:36px;padding:0 10px;border-radius:6px;color:var(--tx);text-decoration:none;position:relative}
@@ -130,7 +130,7 @@ a{color:var(--link)}a:hover{color:var(--linkh)}
 .snav .sh{padding:12px 10px 4px}
 .spage{flex:1;min-width:0;padding:28px 40px;display:flex;flex-direction:column;gap:22px;overflow:hidden}
 .ptitle{display:flex;flex-direction:column;gap:4px;max-width:720px}.ptitle h2{margin:0;font-size:22px;font-weight:600}.ptitle span{color:var(--tx2)}
-.ghost{position:absolute;left:0;top:0;width:1280px;height:800px;display:flex;padding:40px 8px 8px 0;box-sizing:border-box}
+.ghost{position:absolute;left:0;top:0;width:1280px;height:800px;display:flex;padding:8px 8px 8px 0;box-sizing:border-box}
 .ghost .gs{width:232px;padding:4px 12px;box-sizing:border-box;display:flex;flex-direction:column;gap:10px}
 .ghost .gs div{height:30px;border-radius:6px;background:var(--side)}
 .ghost .gp{flex:1;background:var(--pane);border:1px solid var(--bd);border-radius:8px}
@@ -149,60 +149,88 @@ a{color:var(--link)}a:hover{color:var(--linkh)}
 .notice.bad{background:var(--badtint);border-color:var(--badbd)}
 .notice .t{flex:1;display:flex;flex-direction:column;gap:2px}.notice .t b{font-weight:600}.notice .t span{font-size:13px;color:var(--tx2)}
 .btn.pri:hover{color:var(--onacc)}.btn.warn:hover{color:var(--pane)}
+.stop{display:flex;gap:6px;align-items:center;margin-bottom:10px;height:44px}
+.stop .add{flex:1;margin:0}
+.grp{background:var(--side);border-radius:8px;padding:4px;display:flex;flex-direction:column;gap:2px;margin:2px 0}
+.grp.cur{background:var(--sidecur)}
+.grp .gt{font-size:12px;color:var(--tx2);padding:4px 6px 2px;font-weight:600;display:flex;align-items:center;gap:6px}
+.pane.focus{border-color:var(--acc);box-shadow:0 0 0 1px var(--acc)}
+.ph .wb{margin-left:0}.ph .wb button{width:40px;height:44px}
+.ph .ht{font-weight:600;font-size:14px;flex:1}
+.prow.col{flex-direction:column}
+.radio{display:flex;flex-direction:column;gap:2px;margin-top:8px}
+.ro{display:flex;gap:10px;align-items:flex-start;padding:8px 10px;border-radius:6px}
+.ro.on{background:var(--tint)}
+.ro .rb{width:16px;height:16px;border-radius:8px;border:1.5px solid var(--tx2);box-sizing:border-box;flex-shrink:0;margin-top:2px;position:relative}
+.ro.on .rb{border-color:var(--acc)}.ro.on .rb::after{content:"";position:absolute;left:3px;top:3px;width:7px;height:7px;border-radius:4px;background:var(--acc)}
+.ro .t{display:flex;flex-direction:column;gap:1px}.ro .t b{font-weight:600;font-size:13px}.ro .t span{font-size:12px;color:var(--tx2)}
+.ro.dis{opacity:.5}
+.bar{height:6px;border-radius:3px;background:var(--sub);overflow:hidden}.bar span{display:block;height:6px;border-radius:3px;background:var(--acc)}
+.cb{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--tx)}
+.spage.tight{gap:14px;padding-top:22px}.tight .srow{padding:9px 16px}
 </style>
 </helmet>
 <div class="w">
-<div class="tb"><svg width="20" height="20" viewBox="0 0 20 20" aria-hidden="true"><rect width="20" height="20" rx="5" fill="#0072B5"></rect><rect x="3.5" y="4.5" width="13" height="11" rx="1.6" fill="none" stroke="#FFFFFF" stroke-width="1.4"></rect><path d="M3.5 7.4h13" stroke="#FFFFFF" stroke-width="1.4"></path><rect x="8.2" y="8.9" width="3.6" height="5.1" rx="0.8" fill="#FFFFFF"></rect></svg><span class="nm">Windows-ARM64.apk</span><div class="wb"><button aria-label="Minimize"><svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M0 5h10" stroke="currentColor"></path></svg></button><button aria-label="Maximize"><svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><rect x="0.5" y="0.5" width="9" height="9" fill="none" stroke="currentColor"></rect></svg></button><button aria-label="Close window"><svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M0 0l10 10M10 0L0 10" stroke="currentColor"></path></svg></button></div></div>
 <div class="shell">
-  <nav class="side" aria-label="Sections"><a class="add" href="Inspect.html"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg>Add APK…</a><a class="nav cur" href="Library.html" aria-current="page"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="4" width="7" height="7" rx="1.5"></rect><rect x="13" y="4" width="7" height="7" rx="1.5"></rect><rect x="4" y="13" width="7" height="7" rx="1.5"></rect><path d="M16.5 13.5v6M13.5 16.5h6"></path></svg>Library<span class="n">5</span></a>
-<a class="nav" href="Diagnostics.html"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12h4l3-7 4 14 3-7h4"></path></svg>Diagnostics</a>
-    <div class="sh">Open apps<span class="n">1</span></div>
-    <a class="run" href="Standalone.html"><span class="ai s a-hj"><span aria-hidden="true">Hi</span></span><span class="t"><b>Hello Java</b><i>In its own window</i></span><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 4h6v6M20 4l-8 8"></path><path d="M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"></path></svg></a>
-    <div style="flex: 1"></div>
+  <nav class="side" aria-label="Sidebar"><div class="stop"><button class="ib" aria-label="Hide the sidebar" title="Hide the sidebar"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"></rect><path d="M9 4v16"></path></svg></button><a class="add" href="Inspect.html"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg>Add APK…</a></div><a class="nav cur" href="Library.html" aria-current="page"><svg width="20" height="20" viewBox="0 0 20 20" aria-hidden="true"><rect width="20" height="20" rx="5" fill="#0072B5"></rect><rect x="3.5" y="4.5" width="13" height="11" rx="1.6" fill="none" stroke="#FFFFFF" stroke-width="1.4"></rect><path d="M3.5 7.4h13" stroke="#FFFFFF" stroke-width="1.4"></path><rect x="8.2" y="8.9" width="3.6" height="5.1" rx="0.8" fill="#FFFFFF"></rect></svg>Home<span class="n">6 apps</span></a>
+    <div class="sh">Open<span class="n">1</span></div>
+    <div class="sh">In windows of their own</div>
+<a class="run" href="Standalone.html"><span class="ai s a-hj"><span aria-hidden="true">Hi</span></span><span class="t"><b>Hello Java</b><i>Running</i></span><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 4h6v6M20 4l-8 8"></path><path d="M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"></path></svg></a><div style="flex: 1"></div>
 <a class="nav" href="SettingsGeneral.html"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"></circle><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M4.9 19.1L7 17M17 7l2.1-2.1"></path></svg>Settings</a>
 <a class="status" href="Diagnostics.html"><span class="dot"></span><span class="t"><b>Ready to run apps</b><i>Java runtime found · ARM64</i></span></a></nav>
   <main class="pane" style="flex: 1">
-    <header class="ptop" style="padding-bottom: 16px; border-bottom: 1px solid var(--bd2)">
-      <a class="ib" href="Library.html" aria-label="Back to the library"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 5l-7 7 7 7"></path></svg></a>
-      <span class="ai l a-gl" style="width: 52px; height: 52px; border-radius: 12px"><svg width="22" height="22" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4l9 16H3z" fill="#FFFFFF" fill-opacity="0.92"></path><path d="M12 4l9 16H3z" fill="#F25C54" fill-opacity="0.5"></path></svg></span>
+    <div class="ph"><svg width="20" height="20" viewBox="0 0 20 20" aria-hidden="true"><rect width="20" height="20" rx="5" fill="#0072B5"></rect><rect x="3.5" y="4.5" width="13" height="11" rx="1.6" fill="none" stroke="#FFFFFF" stroke-width="1.4"></rect><path d="M3.5 7.4h13" stroke="#FFFFFF" stroke-width="1.4"></path><rect x="8.2" y="8.9" width="3.6" height="5.1" rx="0.8" fill="#FFFFFF"></rect></svg><span class="ht">Home</span><button class="ib" aria-label="Split right" title="Split right"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"></rect><path d="M12 4v16"></path></svg></button><button class="ib" aria-label="Split down" title="Split down"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"></rect><path d="M3 12h18"></path></svg></button><span class="vsep"></span><div class="wb"><button aria-label="Minimize"><svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M0 5h10" stroke="currentColor"></path></svg></button><button aria-label="Maximize"><svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><rect x="0.5" y="0.5" width="9" height="9" fill="none" stroke="currentColor"></rect></svg></button><button aria-label="Close window"><svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M0 0l10 10M10 0L0 10" stroke="currentColor"></path></svg></button></div></div>
+    <header class="ptop" style="padding: 14px 24px; border-bottom: 1px solid var(--bd2)">
+      <a class="ib" href="Library.html" aria-label="Back to the apps"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 5l-7 7 7 7"></path></svg></a>
+      <span class="ai l a-gl" style="width: 48px; height: 48px; border-radius: 12px"><svg width="22" height="22" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4l9 16H3z" fill="#FFFFFF" fill-opacity="0.92"></path><path d="M12 4l9 16H3z" fill="#F25C54" fill-opacity="0.5"></path></svg></span>
       <div style="flex: 1; display: flex; flex-direction: column; gap: 2px; min-width: 0">
-        <h1 style="flex: 0">GL Triangle</h1>
+        <h1 style="flex: 0; font-size: 22px">GL Triangle</h1>
         <span style="font-size: 13px; color: var(--tx2)">Version 1.0 · com.example.gltriangle · Added today</span>
       </div>
       <span class="st">Stopped</span>
       <div class="split"><a class="btn pri" href="LibraryDark.html"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 5l11 7-11 7z"></path></svg>Open</a><a class="btn pri" href="OpenMenu.html" aria-label="More ways to open"><svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M3 4.5l3 3 3-3"></path></svg></a></div>
       <a class="ib" href="ContextMenu.html" aria-label="More"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="1.6"></circle><circle cx="12" cy="12" r="1.6"></circle><circle cx="19" cy="12" r="1.6"></circle></svg></a>
     </header>
-    <div style="flex: 1; min-height: 0; padding: 20px 28px; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 20px 28px; align-content: start">
-      <section class="sec" aria-labelledby="works">
-        <h3 id="works">What works on this PC</h3>
-        <div class="box">
-          <div class="srow"><span class="tile"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 10h11v4a5 5 0 0 1-5 5h-1a5 5 0 0 1-5-5z"></path><path d="M16 11h1.5a2.5 2.5 0 0 1 0 5H16M9 3c-1 1.5 1 2 0 4M12 3c-1 1.5 1 2 0 4"></path></svg></span><span class="t"><b>Java code</b><span>Runs on the ARM64 Java runtime.</span></span><span class="chip ok">Works</span></div>
-          <div class="srow"><span class="tile"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="7" y="7" width="10" height="10" rx="1.5"></rect><path d="M10 3v4M14 3v4M10 17v4M14 17v4M3 10h4M3 14h4M17 10h4M17 14h4"></path></svg></span><span class="t"><b>Native code for arm64</b><span>1 library. Allowed for this app, within the tested set of features.</span></span><span class="chip warn">Experimental</span></div>
-          <div class="srow"><span class="tile"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4l9 16H3z"></path></svg></span><span class="t"><b>OpenGL ES 3.0</b><span>Drawn through Vulkan on this PC.</span></span><span class="chip warn">Experimental</span></div>
-        </div>
-        <span style="font-size: 13px; color: var(--tx2)">Last opened yesterday: it stopped while starting. <a href="StartFailed.html">What happened</a></span>
-      </section>
-      <div style="display: flex; flex-direction: column; gap: 20px; min-width: 0">
-      <section class="sec" aria-labelledby="open">
-        <h3 id="open">Opening</h3>
-        <div class="box">
-          <div class="srow"><span class="t"><b>Opens in</b><span>Open uses this. The arrow beside it opens it the other way once.</span></span><div class="seg" role="radiogroup" aria-label="Opens in"><button role="radio" aria-checked="true">The pane</button><button role="radio" aria-checked="false">Its own window</button></div></div>
-          <div class="srow"><span class="t"><b>Screen size</b><span>What the app is told its screen is.</span></span><select class="dd" aria-label="Screen size" style="min-width: 170px"><option>Phone · 360 × 720</option><option>Small tablet · 600 × 960</option><option>Follow the window</option></select></div>
-        </div>
-      </section>
-      <section class="sec" aria-labelledby="data">
-        <h3 id="data">Data</h3>
-        <div class="box">
-          <div class="srow"><span class="tile"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"></rect><path d="M7 15h.01M11 15h6"></path></svg></span><span class="t"><b>App data · 2.1 MB</b><span>Kept in a folder of its own.</span></span><a class="ib" href="SettingsGeneral.html" aria-label="Open folder" title="Open folder"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6a1 1 0 0 1 1-1h5l2 2h9a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1z"></path></svg></a><button class="btn sm">Clear…</button><button class="btn sm danger">Remove app…</button></div>
-        </div>
-      </section>
+    <div style="flex: 1; min-height: 0; padding: 18px 24px; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr); gap: 24px; align-content: start">
+      <div style="display: flex; flex-direction: column; gap: 18px; min-width: 0">
+        <section class="sec" aria-labelledby="works">
+          <h3 id="works">What works on this PC</h3>
+          <div class="box">
+            <div class="srow"><span class="tile"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 10h11v4a5 5 0 0 1-5 5h-1a5 5 0 0 1-5-5z"></path><path d="M16 11h1.5a2.5 2.5 0 0 1 0 5H16M9 3c-1 1.5 1 2 0 4M12 3c-1 1.5 1 2 0 4"></path></svg></span><span class="t"><b>Java code</b><span>Runs on the ARM64 Java runtime.</span></span><span class="chip ok">Works</span></div>
+            <div class="srow"><span class="tile"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="7" y="7" width="10" height="10" rx="1.5"></rect><path d="M10 3v4M14 3v4M10 17v4M14 17v4M3 10h4M3 14h4M17 10h4M17 14h4"></path></svg></span><span class="t"><b>Native code for arm64</b><span>1 library. Allowed for this app, within a tested set.</span></span><span class="chip warn">Experimental</span></div>
+            <div class="srow"><span class="tile"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4l9 16H3z"></path></svg></span><span class="t"><b>OpenGL ES 3.0</b><span>Drawn through Vulkan on this PC.</span></span><span class="chip warn">Experimental</span></div>
+          </div>
+          <span style="font-size: 13px; color: var(--tx2)">Last opened yesterday: it stopped while starting. <a href="StartFailed.html">What happened</a></span>
+        </section>
+        <section class="sec" aria-labelledby="open">
+          <h3 id="open">Opening</h3>
+          <div class="box">
+            <div class="srow"><span class="t"><b>Opens</b><span>Open does this; its arrow offers the other ways once.</span></span><div class="seg" role="radiogroup" aria-label="Opens"><button role="radio" aria-checked="true">As a pane</button><button role="radio" aria-checked="false">In a window of its own</button></div></div>
+            <div class="srow"><span class="t"><b>Screen size</b><span>What the app is told its screen is.</span></span><select class="dd" aria-label="Screen size" style="min-width: 170px"><option>Phone · 360 × 720</option><option>Small tablet · 600 × 960</option><option>Fit the pane</option></select></div>
+          </div>
+        </section>
+        <section class="sec" aria-labelledby="data">
+          <h3 id="data">Data</h3>
+          <div class="box">
+            <div class="srow"><span class="tile"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"></rect><path d="M7 15h.01M11 15h6"></path></svg></span><span class="t"><b>App data · 2.1 MB</b><span>In a folder of its own.</span></span><a class="ib" href="SettingsGeneral.html" aria-label="Open folder" title="Open folder"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6a1 1 0 0 1 1-1h5l2 2h9a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1z"></path></svg></a><button class="btn sm">Clear…</button><button class="btn sm danger">Remove app…</button></div>
+          </div>
+        </section>
       </div>
-      <section class="sec" aria-labelledby="adv" style="grid-column: 1 / -1; max-width: none">
+      <section class="sec" aria-labelledby="adv" style="max-width: none">
         <h3 id="adv">Advanced<span class="r"><a href="AppDetails.html">Hide</a></span></h3>
         <div class="box">
-          <div class="srow top"><span class="tile"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="7" y="7" width="10" height="10" rx="1.5"></rect><path d="M10 3v4M14 3v4M10 17v4M14 17v4M3 10h4M3 14h4M17 10h4M17 14h4"></path></svg></span><span class="t"><b>Native code</b><span>Off: only the app's Java code runs, and parts that need native code won't start. Restricted: runs its arm64 native code within a tested set of features; it's experimental, and the app stops with a message if it needs something outside that set. Never a sandbox: the code runs with your account's access.</span></span><div class="seg" role="radiogroup" aria-label="Native code"><button role="radio" aria-checked="false">Off</button><button role="radio" aria-checked="true">Restricted</button></div></div>
-          <div class="srow top"><span class="tile"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4l9 16H3z"></path></svg></span><span class="t"><b>Graphics</b><span>Automatic uses Vulkan on this PC, else Direct3D 11. If you choose one, only that one is used: when it isn't available the app tells you instead of switching.</span></span><div class="seg" role="radiogroup" aria-label="Graphics"><button role="radio" aria-checked="true">Automatic</button><button role="radio" aria-checked="false">Vulkan</button><button role="radio" aria-checked="false">Direct3D 11</button></div></div>
+          <div class="srow top" style="flex-wrap: wrap"><span class="tile"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="7" y="7" width="10" height="10" rx="1.5"></rect><path d="M10 3v4M14 3v4M10 17v4M14 17v4M3 10h4M3 14h4M17 10h4M17 14h4"></path></svg></span><span class="t"><b>Native code</b><span>Off: only the app's Java code runs; parts that need native code won't start. Restricted: its arm64 native code runs within the profile below, and the app stops with a message if it needs anything outside it. Experimental, and never a sandbox: the code runs with your account's access.</span></span><div class="seg" role="radiogroup" aria-label="Native code"><button role="radio" aria-checked="false">Off</button><button role="radio" aria-checked="true">Restricted</button></div>
+            <div style="flex-basis: 100%; padding-left: 46px; box-sizing: border-box">
+              <span style="font-size: 13px; font-weight: 600">Profile</span>
+              <div class="radio" role="radiogroup" aria-label="Profile">
+                <div class="ro" role="radio" aria-checked="false"><span class="rb"></span><span class="t"><b>Use the default · N1</b><span>Set in Settings › Runtime.</span></span></div>
+                <div class="ro" role="radio" aria-checked="false"><span class="rb"></span><span class="t"><b>N0 · Self-contained code</b><span>Libraries that call nothing outside themselves, such as maths or decoding.</span></span></div>
+                <div class="ro" role="radio" aria-checked="false"><span class="rb"></span><span class="t"><b>N1 · C library and Java calls</b><span>Also the standard C library, threads, and calls to and from the app's Java code.</span></span></div>
+                <div class="ro on" role="radio" aria-checked="true"><span class="rb"></span><span class="t"><b>N2 · Graphics</b><span>Also drawing with OpenGL ES from native code. This app needs it.</span></span></div>
+              </div>
+            </div>
+          </div>
+          <div class="srow top"><span class="tile"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4l9 16H3z"></path></svg></span><span class="t"><b>Graphics</b><span>Automatic uses Vulkan on this PC, else Direct3D 11. A choice of one is kept: when it isn't available, the app says so instead of switching.</span></span><div class="seg" role="radiogroup" aria-label="Graphics"><button role="radio" aria-checked="true">Automatic</button><button role="radio" aria-checked="false">Vulkan</button><button role="radio" aria-checked="false">Direct3D 11</button></div></div>
         </div>
         <span style="font-size: 13px; color: var(--tx2)">Changes apply the next time the app opens.</span>
       </section>

@@ -17,10 +17,10 @@ a{color:var(--link)}a:hover{color:var(--linkh)}
 .tb{height:40px;display:flex;align-items:center;padding-left:16px;gap:10px;flex-shrink:0}
 .tb .nm{font-size:12px;color:var(--tx2)}
 .wb{display:flex;margin-left:auto}.wb button{width:46px;height:40px;border:0;background:transparent;color:var(--tx)}
-.shell{flex:1;display:flex;min-height:0;padding:0 8px 8px 0}
+.shell{flex:1;display:flex;min-height:0;padding:8px 8px 8px 0}
 .panes{flex:1;display:flex;gap:8px;min-width:0;flex-direction:column}
 .prow{flex:1;display:flex;gap:8px;min-height:0;min-width:0}
-.side{width:232px;flex-shrink:0;display:flex;flex-direction:column;padding:4px 12px 12px;box-sizing:border-box;gap:2px}
+.side{width:232px;flex-shrink:0;display:flex;flex-direction:column;padding:0 12px 4px;box-sizing:border-box;gap:2px}
 .add{display:flex;align-items:center;justify-content:center;gap:8px;height:36px;margin:0 0 12px;border:0;border-radius:6px;background:var(--acc);color:var(--onacc);font-weight:600;text-decoration:none}
 .add:hover{color:var(--onacc)}
 .nav{display:flex;align-items:center;gap:12px;height:36px;padding:0 10px;border-radius:6px;color:var(--tx);text-decoration:none;position:relative}
@@ -130,7 +130,7 @@ a{color:var(--link)}a:hover{color:var(--linkh)}
 .snav .sh{padding:12px 10px 4px}
 .spage{flex:1;min-width:0;padding:28px 40px;display:flex;flex-direction:column;gap:22px;overflow:hidden}
 .ptitle{display:flex;flex-direction:column;gap:4px;max-width:720px}.ptitle h2{margin:0;font-size:22px;font-weight:600}.ptitle span{color:var(--tx2)}
-.ghost{position:absolute;left:0;top:0;width:1280px;height:800px;display:flex;padding:40px 8px 8px 0;box-sizing:border-box}
+.ghost{position:absolute;left:0;top:0;width:1280px;height:800px;display:flex;padding:8px 8px 8px 0;box-sizing:border-box}
 .ghost .gs{width:232px;padding:4px 12px;box-sizing:border-box;display:flex;flex-direction:column;gap:10px}
 .ghost .gs div{height:30px;border-radius:6px;background:var(--side)}
 .ghost .gp{flex:1;background:var(--pane);border:1px solid var(--bd);border-radius:8px}
@@ -149,20 +149,38 @@ a{color:var(--link)}a:hover{color:var(--linkh)}
 .notice.bad{background:var(--badtint);border-color:var(--badbd)}
 .notice .t{flex:1;display:flex;flex-direction:column;gap:2px}.notice .t b{font-weight:600}.notice .t span{font-size:13px;color:var(--tx2)}
 .btn.pri:hover{color:var(--onacc)}.btn.warn:hover{color:var(--pane)}
+.stop{display:flex;gap:6px;align-items:center;margin-bottom:10px;height:44px}
+.stop .add{flex:1;margin:0}
+.grp{background:var(--side);border-radius:8px;padding:4px;display:flex;flex-direction:column;gap:2px;margin:2px 0}
+.grp.cur{background:var(--sidecur)}
+.grp .gt{font-size:12px;color:var(--tx2);padding:4px 6px 2px;font-weight:600;display:flex;align-items:center;gap:6px}
+.pane.focus{border-color:var(--acc);box-shadow:0 0 0 1px var(--acc)}
+.ph .wb{margin-left:0}.ph .wb button{width:40px;height:44px}
+.ph .ht{font-weight:600;font-size:14px;flex:1}
+.prow.col{flex-direction:column}
+.radio{display:flex;flex-direction:column;gap:2px;margin-top:8px}
+.ro{display:flex;gap:10px;align-items:flex-start;padding:8px 10px;border-radius:6px}
+.ro.on{background:var(--tint)}
+.ro .rb{width:16px;height:16px;border-radius:8px;border:1.5px solid var(--tx2);box-sizing:border-box;flex-shrink:0;margin-top:2px;position:relative}
+.ro.on .rb{border-color:var(--acc)}.ro.on .rb::after{content:"";position:absolute;left:3px;top:3px;width:7px;height:7px;border-radius:4px;background:var(--acc)}
+.ro .t{display:flex;flex-direction:column;gap:1px}.ro .t b{font-weight:600;font-size:13px}.ro .t span{font-size:12px;color:var(--tx2)}
+.ro.dis{opacity:.5}
+.bar{height:6px;border-radius:3px;background:var(--sub);overflow:hidden}.bar span{display:block;height:6px;border-radius:3px;background:var(--acc)}
+.cb{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--tx)}
+.spage.tight{gap:14px;padding-top:22px}.tight .srow{padding:9px 16px}
 </style>
 </helmet>
 <div class="w">
 <div aria-hidden="true" style="position: absolute; inset: 0; background: #C9D5E1"></div>
 <div aria-hidden="true" style="position: absolute; left: 40px; top: 36px; width: 720px; height: 560px; background: var(--base); border-radius: 8px; border: 1px solid #B9C4CF; box-shadow: 0 8px 24px rgba(10,16,24,0.18); display: flex; flex-direction: column; overflow: hidden; opacity: 0.92">
-  <div style="height: 32px; display: flex; align-items: center; gap: 8px; padding-left: 12px; font-size: 12px; color: var(--tx2)"><svg width="20" height="20" viewBox="0 0 20 20" aria-hidden="true"><rect width="20" height="20" rx="5" fill="#0072B5"></rect><rect x="3.5" y="4.5" width="13" height="11" rx="1.6" fill="none" stroke="#FFFFFF" stroke-width="1.4"></rect><path d="M3.5 7.4h13" stroke="#FFFFFF" stroke-width="1.4"></path><rect x="8.2" y="8.9" width="3.6" height="5.1" rx="0.8" fill="#FFFFFF"></rect></svg>Windows-ARM64.apk</div>
-  <div style="flex: 1; display: flex; padding: 0 6px 6px 0; gap: 6px"><div style="width: 150px; padding: 0 10px; display: flex; flex-direction: column; gap: 8px"><div style="height: 26px; border-radius: 6px; background: var(--acc); opacity: 0.5"></div><div style="height: 22px; border-radius: 6px; background: var(--sidecur)"></div><div style="height: 22px; border-radius: 6px; background: var(--side)"></div></div><div style="flex: 1; background: var(--pane); border: 1px solid var(--bd); border-radius: 6px"></div><div style="width: 230px; background: var(--pane); border: 1px solid var(--bd); border-radius: 6px"></div></div>
+  <div style="flex: 1; display: flex; padding: 6px 6px 6px 0; gap: 6px"><div style="width: 150px; padding: 0 10px; display: flex; flex-direction: column; gap: 8px"><div style="height: 26px; border-radius: 6px; background: var(--acc); opacity: 0.5"></div><div style="height: 22px; border-radius: 6px; background: var(--sidecur)"></div><div style="height: 22px; border-radius: 6px; background: var(--side)"></div></div><div style="flex: 1; background: var(--pane); border: 1px solid var(--bd); border-radius: 6px"></div><div style="width: 230px; background: var(--pane); border: 1px solid var(--bd); border-radius: 6px"></div></div>
 </div>
 <section aria-label="Hello Java, its own window" style="position: absolute; left: 780px; top: 18px; width: 460px; height: 764px; background: var(--pane); border: 1px solid #B9C4CF; border-radius: 8px; box-shadow: 0 18px 48px rgba(10,16,24,0.32); display: flex; flex-direction: column; overflow: hidden">
   <div class="ph" style="padding-right: 0; border-bottom: 1px solid var(--bd2)">
     <span class="ai s a-hj"><span aria-hidden="true">Hi</span></span><span class="t" title="Hello Java — Windows-ARM64.apk"><b>Hello Java</b></span>
     <button class="ib" aria-label="Back (Esc)" title="Back (Esc)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M16 5L7 12l9 7z"></path></svg></button>
     <button class="ib" aria-label="Rotate" title="Rotate"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 12a8 8 0 1 1-2.3-5.7M20 4v5h-5"></path></svg></button>
-    <a class="ib hv" href="Library.html" aria-label="Move into the pane" title="Move into the pane"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"></rect><path d="M14 4v16"></path><path d="M6 12h5M9 9.5l2.5 2.5L9 14.5"></path></svg></a>
+    <a class="ib hv" href="LibrarySplit.html" aria-label="Back to the main window" title="Back to the main window"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"></rect><path d="M14 4v16"></path><path d="M6 12h5M9 9.5l2.5 2.5L9 14.5"></path></svg></a>
     <a class="ib" href="ContextMenu.html" aria-label="More"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="1.6"></circle><circle cx="12" cy="12" r="1.6"></circle><circle cx="19" cy="12" r="1.6"></circle></svg></a>
     <span class="vsep"></span>
     <div class="wb"><button aria-label="Minimize" style="width: 40px; height: 44px"><svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M0 5h10" stroke="currentColor"></path></svg></button><button aria-label="Maximize" style="width: 40px; height: 44px"><svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><rect x="0.5" y="0.5" width="9" height="9" fill="none" stroke="currentColor"></rect></svg></button><button aria-label="Close and stop Hello Java" title="Close and stop Hello Java" style="width: 40px; height: 44px"><svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M0 0l10 10M10 0L0 10" stroke="currentColor"></path></svg></button></div>
@@ -175,7 +193,7 @@ a{color:var(--link)}a:hover{color:var(--linkh)}
       <span style="height: 40px; padding: 0 24px; border-radius: 20px; background: #2E7D4F; color: #FFFFFF; display: flex; align-items: center; font-weight: 600">TAP ME</span>
     </div>
   </div>
-  <div class="tip" style="right: 78px; top: 50px">Move into the pane — it keeps running</div>
+  <div class="tip" style="right: 40px; top: 50px">Back to the main window, as a pane — it keeps running</div>
 </section>
 </div>
 </x-dc>

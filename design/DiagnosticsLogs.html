@@ -17,10 +17,10 @@ a{color:var(--link)}a:hover{color:var(--linkh)}
 .tb{height:40px;display:flex;align-items:center;padding-left:16px;gap:10px;flex-shrink:0}
 .tb .nm{font-size:12px;color:var(--tx2)}
 .wb{display:flex;margin-left:auto}.wb button{width:46px;height:40px;border:0;background:transparent;color:var(--tx)}
-.shell{flex:1;display:flex;min-height:0;padding:0 8px 8px 0}
+.shell{flex:1;display:flex;min-height:0;padding:8px 8px 8px 0}
 .panes{flex:1;display:flex;gap:8px;min-width:0;flex-direction:column}
 .prow{flex:1;display:flex;gap:8px;min-height:0;min-width:0}
-.side{width:232px;flex-shrink:0;display:flex;flex-direction:column;padding:4px 12px 12px;box-sizing:border-box;gap:2px}
+.side{width:232px;flex-shrink:0;display:flex;flex-direction:column;padding:0 12px 4px;box-sizing:border-box;gap:2px}
 .add{display:flex;align-items:center;justify-content:center;gap:8px;height:36px;margin:0 0 12px;border:0;border-radius:6px;background:var(--acc);color:var(--onacc);font-weight:600;text-decoration:none}
 .add:hover{color:var(--onacc)}
 .nav{display:flex;align-items:center;gap:12px;height:36px;padding:0 10px;border-radius:6px;color:var(--tx);text-decoration:none;position:relative}
@@ -130,7 +130,7 @@ a{color:var(--link)}a:hover{color:var(--linkh)}
 .snav .sh{padding:12px 10px 4px}
 .spage{flex:1;min-width:0;padding:28px 40px;display:flex;flex-direction:column;gap:22px;overflow:hidden}
 .ptitle{display:flex;flex-direction:column;gap:4px;max-width:720px}.ptitle h2{margin:0;font-size:22px;font-weight:600}.ptitle span{color:var(--tx2)}
-.ghost{position:absolute;left:0;top:0;width:1280px;height:800px;display:flex;padding:40px 8px 8px 0;box-sizing:border-box}
+.ghost{position:absolute;left:0;top:0;width:1280px;height:800px;display:flex;padding:8px 8px 8px 0;box-sizing:border-box}
 .ghost .gs{width:232px;padding:4px 12px;box-sizing:border-box;display:flex;flex-direction:column;gap:10px}
 .ghost .gs div{height:30px;border-radius:6px;background:var(--side)}
 .ghost .gp{flex:1;background:var(--pane);border:1px solid var(--bd);border-radius:8px}
@@ -149,20 +149,38 @@ a{color:var(--link)}a:hover{color:var(--linkh)}
 .notice.bad{background:var(--badtint);border-color:var(--badbd)}
 .notice .t{flex:1;display:flex;flex-direction:column;gap:2px}.notice .t b{font-weight:600}.notice .t span{font-size:13px;color:var(--tx2)}
 .btn.pri:hover{color:var(--onacc)}.btn.warn:hover{color:var(--pane)}
+.stop{display:flex;gap:6px;align-items:center;margin-bottom:10px;height:44px}
+.stop .add{flex:1;margin:0}
+.grp{background:var(--side);border-radius:8px;padding:4px;display:flex;flex-direction:column;gap:2px;margin:2px 0}
+.grp.cur{background:var(--sidecur)}
+.grp .gt{font-size:12px;color:var(--tx2);padding:4px 6px 2px;font-weight:600;display:flex;align-items:center;gap:6px}
+.pane.focus{border-color:var(--acc);box-shadow:0 0 0 1px var(--acc)}
+.ph .wb{margin-left:0}.ph .wb button{width:40px;height:44px}
+.ph .ht{font-weight:600;font-size:14px;flex:1}
+.prow.col{flex-direction:column}
+.radio{display:flex;flex-direction:column;gap:2px;margin-top:8px}
+.ro{display:flex;gap:10px;align-items:flex-start;padding:8px 10px;border-radius:6px}
+.ro.on{background:var(--tint)}
+.ro .rb{width:16px;height:16px;border-radius:8px;border:1.5px solid var(--tx2);box-sizing:border-box;flex-shrink:0;margin-top:2px;position:relative}
+.ro.on .rb{border-color:var(--acc)}.ro.on .rb::after{content:"";position:absolute;left:3px;top:3px;width:7px;height:7px;border-radius:4px;background:var(--acc)}
+.ro .t{display:flex;flex-direction:column;gap:1px}.ro .t b{font-weight:600;font-size:13px}.ro .t span{font-size:12px;color:var(--tx2)}
+.ro.dis{opacity:.5}
+.bar{height:6px;border-radius:3px;background:var(--sub);overflow:hidden}.bar span{display:block;height:6px;border-radius:3px;background:var(--acc)}
+.cb{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--tx)}
+.spage.tight{gap:14px;padding-top:22px}.tight .srow{padding:9px 16px}
 </style>
 </helmet>
 <div class="w">
-<div class="tb"><svg width="20" height="20" viewBox="0 0 20 20" aria-hidden="true"><rect width="20" height="20" rx="5" fill="#0072B5"></rect><rect x="3.5" y="4.5" width="13" height="11" rx="1.6" fill="none" stroke="#FFFFFF" stroke-width="1.4"></rect><path d="M3.5 7.4h13" stroke="#FFFFFF" stroke-width="1.4"></path><rect x="8.2" y="8.9" width="3.6" height="5.1" rx="0.8" fill="#FFFFFF"></rect></svg><span class="nm">Windows-ARM64.apk</span><div class="wb"><button aria-label="Minimize"><svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M0 5h10" stroke="currentColor"></path></svg></button><button aria-label="Maximize"><svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><rect x="0.5" y="0.5" width="9" height="9" fill="none" stroke="currentColor"></rect></svg></button><button aria-label="Close window"><svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M0 0l10 10M10 0L0 10" stroke="currentColor"></path></svg></button></div></div>
 <div class="shell">
-  <nav class="side" aria-label="Sections"><a class="add" href="Inspect.html"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg>Add APK…</a><a class="nav" href="Library.html"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="4" width="7" height="7" rx="1.5"></rect><rect x="13" y="4" width="7" height="7" rx="1.5"></rect><rect x="4" y="13" width="7" height="7" rx="1.5"></rect><path d="M16.5 13.5v6M13.5 16.5h6"></path></svg>Library<span class="n">5</span></a>
-<a class="nav cur" href="Diagnostics.html" aria-current="page"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12h4l3-7 4 14 3-7h4"></path></svg>Diagnostics</a>
-    <div class="sh">Open apps<span class="n">1</span></div>
-    <a class="run" href="Standalone.html"><span class="ai s a-hj"><span aria-hidden="true">Hi</span></span><span class="t"><b>Hello Java</b><i>In its own window</i></span><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 4h6v6M20 4l-8 8"></path><path d="M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"></path></svg></a>
-    <div style="flex: 1"></div>
+  <nav class="side" aria-label="Sidebar"><div class="stop"><button class="ib" aria-label="Hide the sidebar" title="Hide the sidebar"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"></rect><path d="M9 4v16"></path></svg></button><a class="add" href="Inspect.html"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg>Add APK…</a></div><a class="nav" href="Library.html"><svg width="20" height="20" viewBox="0 0 20 20" aria-hidden="true"><rect width="20" height="20" rx="5" fill="#0072B5"></rect><rect x="3.5" y="4.5" width="13" height="11" rx="1.6" fill="none" stroke="#FFFFFF" stroke-width="1.4"></rect><path d="M3.5 7.4h13" stroke="#FFFFFF" stroke-width="1.4"></path><rect x="8.2" y="8.9" width="3.6" height="5.1" rx="0.8" fill="#FFFFFF"></rect></svg>Home<span class="n">6 apps</span></a><div class="sh">Open<span class="n">2</span></div>
+<a class="run cur" href="Diagnostics.html" aria-current="page"><span class="tile" style="width: 24px; height: 24px; border-radius: 6px"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12h4l3-7 4 14 3-7h4"></path></svg></span><span class="t"><b>Diagnostics</b><i>This PC and app logs</i></span></a>
+<div class="sh">In windows of their own</div>
+<a class="run" href="Standalone.html"><span class="ai s a-hj"><span aria-hidden="true">Hi</span></span><span class="t"><b>Hello Java</b><i>Running</i></span><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 4h6v6M20 4l-8 8"></path><path d="M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"></path></svg></a><div style="flex: 1"></div>
 <a class="nav" href="SettingsGeneral.html"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"></circle><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M4.9 19.1L7 17M17 7l2.1-2.1"></path></svg>Settings</a>
 <a class="status" href="Diagnostics.html"><span class="dot"></span><span class="t"><b>Ready to run apps</b><i>Java runtime found · ARM64</i></span></a></nav>
   <main class="pane" style="flex: 1">
-    <header class="ptop"><h1 style="flex: 0; margin-right: 16px">Diagnostics</h1><div class="seg" role="tablist" aria-label="Diagnostics"><a role="tab" href="Diagnostics.html" style="height: 28px; padding: 0 12px; display: flex; align-items: center; color: var(--tx2); text-decoration: none">This PC</a><button role="tab" aria-checked="true" aria-selected="true">App logs</button></div><span style="flex: 1"></span><button class="btn"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="8" y="8" width="12" height="12" rx="2"></rect><path d="M16 8V5a1 1 0 0 0-1-1H5a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h3"></path></svg>Copy log</button><button class="btn"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6a1 1 0 0 1 1-1h5l2 2h9a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1z"></path></svg>Open log folder</button><button class="btn">Save for a bug report…</button></header>
+    <div class="ph"><span class="tile" style="width: 24px; height: 24px; border-radius: 6px"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12h4l3-7 4 14 3-7h4"></path></svg></span><span class="ht">Diagnostics</span><a class="ib" href="Standalone.html" aria-label="Open in a window of its own" title="Open in a window of its own"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 4h6v6M20 4l-8 8"></path><path d="M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"></path></svg></a><button class="ib" aria-label="Split right" title="Split right"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"></rect><path d="M12 4v16"></path></svg></button><button class="ib" aria-label="Split down" title="Split down"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"></rect><path d="M3 12h18"></path></svg></button><span class="vsep"></span><a class="ib" href="Library.html" aria-label="Close" title="Close"><svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true"><path d="M1 1l12 12M13 1L1 13" stroke="currentColor" stroke-width="1.5"></path></svg></a><span class="vsep"></span><div class="wb"><button aria-label="Minimize"><svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M0 5h10" stroke="currentColor"></path></svg></button><button aria-label="Maximize"><svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><rect x="0.5" y="0.5" width="9" height="9" fill="none" stroke="currentColor"></rect></svg></button><button aria-label="Close window"><svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M0 0l10 10M10 0L0 10" stroke="currentColor"></path></svg></button></div></div>
+    <header class="ptop" style="padding-top: 14px"><div class="seg" role="tablist" aria-label="Diagnostics"><a role="tab" href="Diagnostics.html" style="height: 28px; padding: 0 12px; display: flex; align-items: center; color: var(--tx2); text-decoration: none">This PC</a><button role="tab" aria-checked="true" aria-selected="true">App logs</button></div><span style="flex: 1"></span><button class="btn"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="8" y="8" width="12" height="12" rx="2"></rect><path d="M16 8V5a1 1 0 0 0-1-1H5a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h3"></path></svg>Copy log</button><button class="btn"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6a1 1 0 0 1 1-1h5l2 2h9a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1z"></path></svg>Open log folder</button><button class="btn">Save for a bug report…</button></header>
     <div class="pbody" style="gap: 14px">
       <div class="tools">
         <select class="dd" aria-label="App" style="min-width: 220px"><option>GL Triangle</option><option>Hello Java</option><option>Notes Lite</option></select>
@@ -174,15 +192,15 @@ a{color:var(--link)}a:hover{color:var(--linkh)}
         <dl class="kv" style="grid-template-columns: 140px 1fr 140px 1fr">
           <dt>Stage</dt><dd class="mono">jni.load → elf.link</dd><dt>Module</dt><dd class="mono">lib/arm64-v8a/libgltriangle.so</dd>
           <dt>Symbol</dt><dd class="mono">android_set_abort_message</dd><dt>Needed at</dt><dd class="mono">+0x1a2b0 (GOT)</dd>
-          <dt>Native profile</dt><dd class="mono">N1 (restricted)</dd><dt>Graphics</dt><dd class="mono">auto → angle/vulkan</dd>
+          <dt>Native profile</dt><dd class="mono">N2 (restricted, graphics)</dd><dt>Graphics</dt><dd class="mono">auto → angle/vulkan</dd>
           <dt>Process</dt><dd class="mono">pid 18244 · exit 3</dd><dt>APK</dt><dd class="mono">sha256 9c41d2…e07a</dd>
         </dl>
-        <span style="font-size: 13px; color: var(--tx2)">The symbol isn't in the restricted set, so loading stopped instead of continuing with a stand-in. Nothing ran from this library.</span>
+        <span style="font-size: 13px; color: var(--tx2)">The symbol isn't in profile N2, so loading stopped instead of continuing with a stand-in. Nothing ran from this library.</span>
       </div>
       <div style="flex: 1; min-height: 0; border: 1px solid var(--bd); border-radius: 8px; overflow: hidden; display: flex; flex-direction: column">
         <div class="mono" style="display: grid; grid-template-columns: 96px 110px 60px 140px 1fr; gap: 0 12px; padding: 8px 14px; background: var(--soft); border-bottom: 1px solid var(--bd2); color: var(--tx2); font-weight: 600"><span>Time</span><span>pid/tid</span><span>Level</span><span>Stage</span><span>Message</span></div>
         <div class="mono" style="display: grid; grid-template-columns: 96px 110px 60px 140px 1fr; gap: 6px 12px; padding: 10px 14px; line-height: 1.35">
-          <span>14:05:11.204</span><span>18244/18244</span><span>info</span><span>launch</span><span>package com.example.gltriangle 1.0 (1), mode pane, native N1</span>
+          <span>14:05:11.204</span><span>18244/18244</span><span>info</span><span>launch</span><span>package com.example.gltriangle 1.0 (1), mode pane, native N2</span>
           <span>14:05:11.388</span><span>18244/18244</span><span>info</span><span>dex.convert</span><span>cache hit, 2 dex files</span>
           <span>14:05:12.902</span><span>18244/18251</span><span>info</span><span>jvm.start</span><span>OpenJDK 21.0.5 arm64, heap 512 MB</span>
           <span>14:05:13.410</span><span>18244/18251</span><span>info</span><span>gfx.select</span><span>backend auto → angle/vulkan (Adreno X1-85)</span>
