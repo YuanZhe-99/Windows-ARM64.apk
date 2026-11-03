@@ -211,8 +211,10 @@ change.
   passing never stands in for Vulkan; an explicit backend choice is never silently switched.
 - **Leave the system alone.** Never register as the default APK handler, change global
   environment, copy GPU drivers or install anything silently. The one thing it installs is its own
-  private Java runtime, when none is found, in its own folder and with the person seeing it; never
-  the system's Java, `PATH` or environment (`PLAN.md` §2.4).
+  private Java runtime, when none is found, in its own folder and with the person seeing it, and
+  it may keep that runtime updated (verified like the first download) while that setting is on;
+  never the system's Java, `PATH` or environment. The app itself never updates on its own
+  (`PLAN.md` §2.4).
 - **Never claim more than was verified;** each layer (A Java MVP, B Native PoC, C Graphics PoC,
   D experimental release) is reported on its own, and macOS regressions not run are `NOT_RUN`.
 

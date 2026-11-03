@@ -109,9 +109,9 @@ purpose.
 
 ## Open questions
 
-- Where Windows-ARM64.apk's own Java runtime comes from (the screens say Microsoft Build of
-  OpenJDK 21.0.5), how its download is verified (checksum and signature are drawn), and whether
-  Update checks only when asked (the screens assume so: no automatic updates).
+- None. The private Java runtime is Microsoft Build of OpenJDK 21 (the user accepts any suitable
+  ARM64 build); it may update itself (Settings › Runtime › Keep it up to date, on by default),
+  checked like the first download. Only the Java runtime updates itself, never the app.
 
 ## Tokens
 
