@@ -112,8 +112,6 @@ purpose.
 - Where Windows-ARM64.apk's own Java runtime comes from (the screens say Microsoft Build of
   OpenJDK 21.0.5), how its download is verified (checksum and signature are drawn), and whether
   Update checks only when asked (the screens assume so: no automatic updates).
-- Whether Diagnostics should stay a pane in the Open list (as drawn, like Kyokai's status pane)
-  or open as a sheet like Settings.
 
 ## Tokens
 
