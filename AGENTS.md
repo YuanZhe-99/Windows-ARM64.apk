@@ -32,7 +32,7 @@ about to change, verify against the code, then fix the docs in the same commit.
 | Question | Read |
 |---|---|
 | Architecture, ABI rules, phases, gates, fixtures, acceptance (while the plan is active) | `PLAN.md` |
-| Interface screens, wording and design tokens (reference for the MyGo front end) | `design/` (once the design agent delivers it) |
+| Interface screens, wording and design tokens (reference for the MyGo front end) | `design/` |
 | Verified upstream contracts (Mac.apk, Windows ARM64 ABI, Android NDK, MyGo) and quirks | `doc/en-us/upstream.md` |
 | Reused third-party code, licenses and obligations | `doc/en-us/third-party.md` |
 | What is implemented and verified per platform, with gate status | `doc/en-us/platform-notes.md` |
