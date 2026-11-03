@@ -10,7 +10,7 @@ themselves.
 |---|---|---|---|---|---|
 | MyGo | `egoist/mygo`, latest tag | UI framework, packaging | MIT | none | keep the copyright notice; its embedded Kage compiler and MingCute icon are Apache-2.0 |
 | Kyokai, Easytier-MyGo and Nextcloud-MyGo files | `YuanZhe-99/Kyokai`, `YuanZhe-99/Easytier-MyGo`, `YuanZhe-99/Nextcloud-MyGo` | `tools/checkdocs`, the `internal/version` pattern, the MyGo maintenance skill, the conventions; Kyokai is the design reference | AGPL-3.0 / GPL-3.0, relicensed under AGPL-3.0 by their author | adapted names and comments | none beyond Windows-ARM64.apk's own license |
-| Mac.apk | `kksimp/Mac.apk`, latest `main`, git subtree under `macapk/` (imported in P0) | DEX translation, Android Framework, APK/resource parsing, loader and bridge code | AGPL-3.0 (upstream also offers a commercial license, not used here) | edited in place for Windows, recorded per commit | keep headers and notices; ship the complete corresponding source of `macapk/` with every release; its bundled components keep their own licenses (`macapk/THIRD_PARTY_NOTICES.txt`) |
+| Mac.apk | `kksimp/Mac.apk`, latest `main`, git subtree under `macapk/` (imported at `367fd1a`) | DEX translation, Android Framework, APK/resource parsing, loader and bridge code | AGPL-3.0 (upstream also offers a commercial license, not used here) | edited in place for Windows, recorded per commit | keep headers and notices; ship the complete corresponding source of `macapk/` with every release; its bundled components keep their own licenses (`macapk/THIRD_PARTY_NOTICES.txt`) |
 
 ## Trademarks
 

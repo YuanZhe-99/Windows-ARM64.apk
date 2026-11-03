@@ -4,7 +4,7 @@
 |---|---|
 | Windows 11 ARM64 | 仅脚手架：Go 检查通过（见下）。尚无运行时和前端。 |
 | Windows 11 x64 | 不是目标平台；只可承载构建工具和解析测试。 |
-| macOS（Apple Silicon） | 上游 Mac.apk 的平台；引入 subtree 后记录其回归状态。 |
+| macOS（Apple Silicon） | 上游 Mac.apk 的平台；已在 `367fd1a` 引入为 `macapk/`；尚未在此运行 macOS 构建或 smoke（`NOT_RUN`）。 |
 
 ## Windows
 
@@ -28,5 +28,5 @@
 
 ## 已知限制
 
-- 尚未引入 Mac.apk；还没有任何运行时代码。
+- Mac.apk 已原样引入 `macapk/`；尚无 Windows 运行时代码。
 - 在运行时于 ARM64 真机上运行之前，不能声明原生 ARM64 支持。

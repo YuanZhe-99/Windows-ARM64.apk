@@ -4,7 +4,7 @@
 |---|---|
 | Windows 11 ARM64 | Scaffold only: the Go gate passes (below). No runtime, no front end yet. |
 | Windows 11 x64 | Not a target; may host build tools and parsing tests only. |
-| macOS (Apple Silicon) | Upstream Mac.apk's platform; its regression status is recorded once the subtree is imported. |
+| macOS (Apple Silicon) | Upstream Mac.apk's platform; imported as `macapk/` at `367fd1a`; no macOS build or smoke run here yet (`NOT_RUN`). |
 
 ## Windows
 
@@ -28,5 +28,5 @@ Verified on Windows 11 ARM64 (2026-11-03; Go 1.27.3):
 
 ## Known limitations
 
-- Mac.apk is not imported yet; no runtime code exists.
+- Mac.apk is imported under `macapk/` unchanged; no Windows runtime code exists yet.
 - No native ARM64 claim can be made before the runtime runs on ARM64 hardware.

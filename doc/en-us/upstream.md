@@ -3,8 +3,9 @@
 What Windows-ARM64.apk relies on from its upstreams, and how far each point has been checked.
 Mac.apk, Go and MyGo follow their latest version, so every point is re-checked when that upstream
 moves. The Mac.apk points below were read from commit `f87be03` (identical code to `main` at
-`367fd1a`, 2026-11-03) without building or running anything; P0 re-checks each one against the
-imported subtree and replaces "read" with the result.
+`367fd1a`, 2026-11-03) without building or running anything. The subtree was imported at
+`367fd1a` and every path named below exists in it; the behavior points stay "read" until P0's
+audit and builds replace them with results.
 
 ## Mac.apk
 

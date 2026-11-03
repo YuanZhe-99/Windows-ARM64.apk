@@ -20,5 +20,5 @@ Go, Java and native dependencies with their license texts.
 
 | Component | License | Used for |
 |---|---|---|
-| Mac.apk (git subtree under `macapk/`, imported in P0) | AGPL-3.0 (dual-licensed upstream) | DEX translation, Android Framework, loader and bridges; its own bundled components are listed in `macapk/THIRD_PARTY_NOTICES.txt` |
+| Mac.apk (git subtree under `macapk/`, imported at `367fd1a`) | AGPL-3.0 (dual-licensed upstream) | DEX translation, Android Framework, loader and bridges; its own bundled components are listed in `macapk/THIRD_PARTY_NOTICES.txt` |
 | OpenJDK, ANGLE, Vulkan Loader, Skia, AOSP resources | recorded when chosen in P0 | runtime of the APK process |
