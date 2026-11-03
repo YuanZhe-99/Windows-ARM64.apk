@@ -1,0 +1,22 @@
+/build/
+/.mygo/
+mygo_windows_*.syso
+/.dev/
+# Runtime build trees (CMake) and package staging
+/macapk/runtime/build/
+/out/
+/packaging/*/staging/
+# Generated fixtures (sources stay in tests/windows-arm64/)
+/tests/fixtures/
+# Downloaded toolchains and dependencies
+/.deps/
+# Crash dumps and local run data
+*.dmp
+# Stray build outputs at the repository root
+/windows-arm64-apk.exe
+/winapk.exe
+# Signing material never lives in the repository
+*.p12
+*.pfx
+*.key
+*.pem
