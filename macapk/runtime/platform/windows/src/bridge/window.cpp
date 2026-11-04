@@ -8,30 +8,40 @@
 // unbound and throw UnsatisfiedLinkError naming themselves.
 //
 // Threads: init() and runLoop() run on the JVM's main thread, which becomes the UI thread and
-// owns every window. Calls from other threads that create or change windows are marshalled to
-// it with SendMessage (they block until the loop runs them); presentBitmap only copies pixels
+// owns every window. Calls from other threads that create or change windows are posted to it
+// and wait (RunOnUi): every 2 s of waiting logs UI_THREAD_BLOCKED, and a call the running loop
+// has not started within 10 s is abandoned with UI_CALL_TIMEOUT, so a JNI caller holding a lock
+// the UI thread waits for cannot hang the app (PLAN.md §8.3). presentBitmap only copies pixels
 // under a lock and invalidates. Frames are driven from the UI thread: each tick calls the
 // renderer's macapkSurfaceChanged (when the size changed) and macapkDrawFrame, as the macOS
-// side's display link does. Coordinates: "points" are Windows DIPs (1/96 inch); a point is a
-// dp because the runtime starts with density = 160 × the window's DPI scale.
+// side's display link does; a minimised window keeps drawing at 2 Hz, as upstream throttles a
+// hidden one, so app logic tied to frames keeps running. Coordinates: "points" are Windows DIPs
+// (1/96 inch); a point is a dp because the runtime starts with density = 160 × the window's
+// DPI scale.
 #include "bridge.h"
 
 #include <windows.h>
 #include <windowsx.h>
 
 #include <atomic>
+#include <chrono>
+#include <condition_variable>
 #include <cstdint>
 #include <functional>
 #include <map>
+#include <memory>
 #include <mutex>
 #include <vector>
 
 namespace winapk::bridge {
 namespace {
 
-constexpr UINT kCallMessage = WM_APP + 1;  // wParam 0, lParam: std::function<void()>*
+constexpr UINT kCallMessage = WM_APP + 1;  // wParam 0, lParam: std::shared_ptr<UiCall>*
 constexpr UINT_PTR kFrameTimer = 1;
-constexpr int kActionDown = 0, kActionUp = 1, kActionMove = 2;  // MotionEvent actions
+constexpr int kActionDown = 0, kActionUp = 1, kActionMove = 2, kActionCancel = 3;  // MotionEvent actions
+constexpr ULONGLONG kHiddenFrameMs = 500;   // a minimised window draws at 2 Hz (upstream's hidden rate)
+constexpr int kUiWaitLogMs = 2000, kUiAbandonMs = 10000;
+constexpr int kFocusLogLines = 60;          // as upstream's [focus] trace
 
 /// A canvas view: the renderer that draws it and the last frame it presented.
 struct View {
@@ -49,11 +59,25 @@ struct Window {
     View* content = nullptr;
     COLORREF background = RGB(255, 255, 255);
     bool pointerDown = false;
+    LPARAM lastPointer = 0;         ///< where the held pointer last was (client pixels)
+    bool charFromKey = false;       ///< the last WM_KEYDOWN already delivered its character
+    bool minimized = false;
+    ULONGLONG lastHiddenFrame = 0;  ///< when a minimised window last drew
+};
+
+/// A function posted to the UI thread by RunOnUi, shared by the waiting caller and the loop.
+struct UiCall {
+    enum State { kPending, kRunning, kDone, kAbandoned };
+    const std::function<void()>* fn = nullptr;  ///< the caller's; valid while the caller waits
+    std::mutex mu;
+    std::condition_variable cv;
+    State state = kPending;
 };
 
 JavaVM* g_vm = nullptr;
 DWORD g_uiThread = 0;
 HWND g_dispatcher = nullptr;              // message-only window on the UI thread
+std::atomic<int> g_loop{0};               // the message loop: 0 not started, 1 running, 2 ended
 jobject g_touch = nullptr;                // global ref to com.macapk.loader.TouchDispatcher
 std::atomic<int> g_phoneW{400}, g_phoneH{800};  // the app's size, in points
 std::map<HWND, Window*> g_windows;        // UI thread only
@@ -81,12 +105,39 @@ void CheckCallback(JNIEnv* env, const char* what) {
     env->ExceptionClear();
 }
 
-/// Runs `fn` on the UI thread and waits for it.
-/// Notes: from the UI thread it runs inline; from another thread it blocks until the UI
-/// thread's message loop runs it (before runLoop starts, that is when it starts).
-void RunOnUi(const std::function<void()>& fn) {
-    if (GetCurrentThreadId() == g_uiThread) { fn(); return; }
-    SendMessageW(g_dispatcher, kCallMessage, 0, reinterpret_cast<LPARAM>(&fn));
+/// Runs `fn`, the work of the native `what`, on the UI thread and waits for it.
+/// Returns: true when it ran; false when it was abandoned or the loop had ended.
+/// Notes: from the UI thread it runs inline. From another thread it is posted and waited for:
+/// every 2 s of waiting logs UI_THREAD_BLOCKED; once the loop runs, a call it has not started
+/// within 10 s is abandoned with UI_CALL_TIMEOUT. A call already started is never abandoned,
+/// because `fn` lives on this stack. Before runLoop starts the wait has no limit (boot is slow
+/// and nothing is wrong), and after the loop ends nothing runs: the call fails at once.
+bool RunOnUi(const char* what, const std::function<void()>& fn) {
+    if (GetCurrentThreadId() == g_uiThread) { fn(); return true; }
+    auto call = std::make_shared<UiCall>();
+    call->fn = &fn;
+    auto* msg = new std::shared_ptr<UiCall>(call);
+    if (g_loop == 2 || !PostMessageW(g_dispatcher, kCallMessage, 0, reinterpret_cast<LPARAM>(msg))) {
+        delete msg;
+        LogLine(std::string("[winapk] window: ") + what + " skipped: the UI thread's message loop has ended");
+        return false;
+    }
+    std::unique_lock<std::mutex> lock(call->mu);
+    int waited = 0;
+    while (!call->cv.wait_for(lock, std::chrono::milliseconds(kUiWaitLogMs), [&] { return call->state == UiCall::kDone; })) {
+        waited += kUiWaitLogMs;
+        const int loop = g_loop;
+        if (call->state == UiCall::kPending && (loop == 2 || (loop == 1 && waited >= kUiAbandonMs))) {
+            call->state = UiCall::kAbandoned;
+            LogLine(std::string("[winapk] window: UI_CALL_TIMEOUT: ") + what + " was not run by the UI thread in " +
+                    std::to_string(waited / 1000) + " s; abandoned");
+            return false;
+        }
+        const char* where = call->state == UiCall::kRunning ? "running" : loop == 0 ? "queued until the message loop starts" : "queued";
+        LogLine(std::string("[winapk] window: UI_THREAD_BLOCKED: ") + what + " has waited " + std::to_string(waited / 1000) +
+                " s for the UI thread (" + where + ", caller thread " + std::to_string(GetCurrentThreadId()) + ")");
+    }
+    return true;
 }
 
 /// Returns the DPI scale of `hwnd` (or the system's): 1.0 at 96 DPI.
@@ -102,6 +153,14 @@ std::wstring Wide(const std::string& s) {
     return w;
 }
 
+/// Returns a method of TouchDispatcher, looked up once per call site.
+jmethodID TouchMethod(JNIEnv* env, const char* name, const char* sig) {
+    jclass c = env->GetObjectClass(g_touch);
+    jmethodID m = env->GetMethodID(c, name, sig);
+    env->DeleteLocalRef(c);
+    return m;
+}
+
 /// Sends one pointer event to TouchDispatcher.dispatch(action, x, y, viewW, viewH).
 /// Notes: x and y are points with y measured from the bottom, the Cocoa convention the
 /// dispatcher flips back (TouchDispatcher.doDispatch).
@@ -113,15 +172,18 @@ void Touch(Window* w, int action, LPARAM lp) {
     const float vw = rc.right / s, vh = rc.bottom / s;
     const float x = GET_X_LPARAM(lp) / s, y = vh - GET_Y_LPARAM(lp) / s;
     JNIEnv* env = Env();
-    static jmethodID mid = [&] {
-        jclass c = env->GetObjectClass(g_touch);
-        jmethodID m = env->GetMethodID(c, "dispatch", "(IFFFF)V");
-        env->DeleteLocalRef(c);
-        return m;
-    }();
+    static jmethodID mid = TouchMethod(env, "dispatch", "(IFFFF)V");
     if (!mid) return;
     env->CallVoidMethod(g_touch, mid, action, x, y, vw, vh);
     CheckCallback(env, "TouchDispatcher.dispatch");
+}
+
+/// Ends a held pointer that Windows took away (capture lost, window deactivated) with
+/// ACTION_CANCEL at its last position, so the app never sees a touch that never lifts.
+void CancelPointer(Window* w) {
+    if (!w->pointerDown) return;
+    w->pointerDown = false;
+    Touch(w, kActionCancel, w->lastPointer);
 }
 
 /// Sends a wheel turn to TouchDispatcher.dispatchWheel; one notch is one line (1.0).
@@ -135,12 +197,7 @@ void Wheel(Window* w, WPARAM wp, LPARAM lp, bool horizontal) {
     const float vw = rc.right / s, vh = rc.bottom / s;
     const float notches = GET_WHEEL_DELTA_WPARAM(wp) / static_cast<float>(WHEEL_DELTA);
     JNIEnv* env = Env();
-    static jmethodID mid = [&] {
-        jclass c = env->GetObjectClass(g_touch);
-        jmethodID m = env->GetMethodID(c, "dispatchWheel", "(FFFFFF)Z");
-        env->DeleteLocalRef(c);
-        return m;
-    }();
+    static jmethodID mid = TouchMethod(env, "dispatchWheel", "(FFFFFF)Z");
     if (!mid) return;
     env->CallBooleanMethod(g_touch, mid, p.x / s, vh - p.y / s, vw, vh,
                            horizontal ? 0.0f : notches, horizontal ? -notches : 0.0f);
@@ -149,7 +206,8 @@ void Wheel(Window* w, WPARAM wp, LPARAM lp, bool horizontal) {
 
 /// Maps a Windows virtual key to an Android KeyEvent keycode; 0 when there is none.
 /// Notes: the first round covers common keys and Back (PLAN.md §8.4); Escape and
-/// Browser Back are Android's BACK.
+/// Browser Back are Android's BACK. A key with no keycode that types a character still
+/// reaches the app, through WM_CHAR (Text).
 int AndroidKey(WPARAM vk) {
     if (vk >= 'A' && vk <= 'Z') return 29 + static_cast<int>(vk - 'A');  // KEYCODE_A..Z
     if (vk >= '0' && vk <= '9') return 7 + static_cast<int>(vk - '0');   // KEYCODE_0..9
@@ -181,10 +239,20 @@ int AndroidKey(WPARAM vk) {
     }
 }
 
-/// Sends a key to TouchDispatcher.dispatchKey(action, keyCode, unicodeChar, metaState).
-void Key(bool down, WPARAM vk, LPARAM lp) {
+/// Calls TouchDispatcher.dispatchKey(action, keyCode, unicodeChar, metaState).
+void DispatchKey(int action, int code, int unicode, int meta) {
+    JNIEnv* env = Env();
+    static jmethodID mid = TouchMethod(env, "dispatchKey", "(IIII)V");
+    if (!mid) return;
+    env->CallVoidMethod(g_touch, mid, action, code, unicode, meta);
+    CheckCallback(env, "TouchDispatcher.dispatchKey");
+}
+
+/// Sends a mapped key to the app with the character it types.
+/// Returns: true when the key carried a character, so the WM_CHAR that follows is not sent again.
+bool Key(bool down, WPARAM vk, LPARAM lp) {
     const int code = AndroidKey(vk);
-    if (!g_touch || code == 0) return;
+    if (!g_touch || code == 0) return false;
     BYTE state[256];
     GetKeyboardState(state);
     wchar_t ch[4] = {};
@@ -193,25 +261,48 @@ void Key(bool down, WPARAM vk, LPARAM lp) {
     int meta = 0;
     if (GetKeyState(VK_SHIFT) & 0x8000) meta |= 0x1;      // META_SHIFT_ON
     if (GetKeyState(VK_CONTROL) & 0x8000) meta |= 0x1000; // META_CTRL_ON
+    DispatchKey(down ? 0 : 1, code, unicode, meta);
+    return unicode != 0;
+}
+
+/// Sends a typed UTF-16 code unit that no mapped key delivered: an input method's commit, a
+/// dead-key composition, a key with no Android keycode, a character sent as a packet.
+/// Notes: upstream's shape for composed text (cocoa_bridge.mm insertText): KEYCODE_UNKNOWN
+/// with the character, DOWN then UP, one pair per code unit, so a surrogate pair reassembles
+/// in the field's buffer. Control characters come only as keys.
+void Text(wchar_t c) {
+    if (!g_touch || c < 0x20 || c == 0x7f) return;
+    DispatchKey(0, 0, c, 0);
+    DispatchKey(1, 0, c, 0);
+}
+
+/// Calls ActivityHost.macapkTaskToFront: the app's window came back from the taskbar, which
+/// on Windows is where moveTaskToBack sends it. Notes: a no-op in Java unless the runtime
+/// sent the task back (upstream calls it when the Mac app is unhidden).
+void TaskToFront() {
     JNIEnv* env = Env();
-    static jmethodID mid = [&] {
-        jclass c = env->GetObjectClass(g_touch);
-        jmethodID m = env->GetMethodID(c, "dispatchKey", "(IIII)V");
-        env->DeleteLocalRef(c);
-        return m;
+    static jclass cls = [&] {
+        jclass c = env->FindClass("com/macapk/loader/ActivityHost");
+        jclass g = c ? static_cast<jclass>(env->NewGlobalRef(c)) : nullptr;
+        if (c) env->DeleteLocalRef(c);
+        return g;
     }();
-    if (!mid) return;
-    env->CallVoidMethod(g_touch, mid, down ? 0 : 1, code, unicode, meta);
-    CheckCallback(env, "TouchDispatcher.dispatchKey");
+    static jmethodID mid = cls ? env->GetStaticMethodID(cls, "macapkTaskToFront", "()V") : nullptr;
+    if (!mid) { env->ExceptionClear(); return; }
+    env->CallStaticVoidMethod(cls, mid);
+    CheckCallback(env, "ActivityHost.macapkTaskToFront");
 }
 
 /// Runs one frame of `w`'s view: reports a new size, then asks the renderer to draw.
+/// Notes: a minimised window has no client area; it keeps its last size and draws at 2 Hz.
 void Tick(Window* w) {
     View* v = w->content;
     if (!v || !v->renderer) return;
-    RECT rc;
-    GetClientRect(w->hwnd, &rc);
-    if (rc.right <= 0 || rc.bottom <= 0) return;  // minimised
+    if (w->minimized) {
+        const ULONGLONG now = GetTickCount64();
+        if (now - w->lastHiddenFrame < kHiddenFrameMs) return;
+        w->lastHiddenFrame = now;
+    }
     JNIEnv* env = Env();
     static jmethodID changed = nullptr, draw = nullptr;
     if (!draw) {
@@ -220,12 +311,15 @@ void Tick(Window* w) {
         draw = env->GetMethodID(c, "macapkDrawFrame", "()V");
         env->DeleteLocalRef(c);
     }
-    if (rc.right != v->sizedW || rc.bottom != v->sizedH) {
+    RECT rc;
+    GetClientRect(w->hwnd, &rc);
+    if (!w->minimized && rc.right > 0 && rc.bottom > 0 && (rc.right != v->sizedW || rc.bottom != v->sizedH)) {
         v->sizedW = rc.right;
         v->sizedH = rc.bottom;
         env->CallVoidMethod(v->renderer, changed, static_cast<jint>(rc.right), static_cast<jint>(rc.bottom));
         CheckCallback(env, "macapkSurfaceChanged");
     }
+    if (v->sizedW <= 0) return;  // never sized: nothing to draw into yet
     env->CallVoidMethod(v->renderer, draw);
     CheckCallback(env, "macapkDrawFrame");
 }
@@ -264,6 +358,12 @@ void Paint(Window* w) {
     EndPaint(w->hwnd, &ps);
 }
 
+/// Logs a focus change, at most kFocusLogLines times (upstream's [focus] trace).
+void FocusLog(const char* what) {
+    static int lines = 0;
+    if (++lines <= kFocusLogLines) LogLine(std::string("[winapk] window: focus ") + what);
+}
+
 /// Handles an app window's messages.
 LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     auto it = g_windows.find(hwnd);
@@ -276,12 +376,13 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         case WM_LBUTTONDOWN:
             SetCapture(hwnd);
             w->pointerDown = true;
+            w->lastPointer = lp;
             Touch(w, kActionDown, lp);
             return 0;
         case WM_MOUSEMOVE:
             // Only a move with the button held drags; with the mouse captured, other moves
             // (the cursor passing by) must not turn a tap into a drag.
-            if (w->pointerDown && (wp & MK_LBUTTON)) Touch(w, kActionMove, lp);
+            if (w->pointerDown && (wp & MK_LBUTTON)) { w->lastPointer = lp; Touch(w, kActionMove, lp); }
             return 0;
         case WM_LBUTTONUP:
             if (w->pointerDown) {
@@ -290,12 +391,44 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 Touch(w, kActionUp, lp);
             }
             return 0;
+        case WM_CAPTURECHANGED:
+            // Another window took the mouse mid-press (a system dialog, Alt+Tab).
+            if (reinterpret_cast<HWND>(lp) != hwnd) CancelPointer(w);
+            return 0;
         case WM_MOUSEWHEEL: Wheel(w, wp, lp, false); return 0;
         case WM_MOUSEHWHEEL: Wheel(w, wp, lp, true); return 0;
-        case WM_KEYDOWN: case WM_SYSKEYDOWN:
-            if (msg == WM_KEYDOWN || wp != VK_F4) { Key(true, wp, lp); if (msg == WM_KEYDOWN) return 0; }
+        case WM_KEYDOWN:
+            w->charFromKey = Key(true, wp, lp);
+            return 0;
+        case WM_SYSKEYDOWN:
+            if (wp != VK_F4) Key(true, wp, lp);  // Alt+F4 still closes the window
             break;
-        case WM_KEYUP: case WM_SYSKEYUP: Key(false, wp, lp); if (msg == WM_KEYUP) return 0; break;
+        case WM_KEYUP:
+            w->charFromKey = false;
+            Key(false, wp, lp);
+            return 0;
+        case WM_SYSKEYUP: Key(false, wp, lp); break;
+        case WM_CHAR:
+            // TranslateMessage's character for the key just pressed: already sent with it
+            // when the key is mapped, else sent here (IME commits arrive this way too).
+            if (w->charFromKey) w->charFromKey = false;
+            else Text(static_cast<wchar_t>(wp));
+            return 0;
+        case WM_ACTIVATE:
+            FocusLog(LOWORD(wp) == WA_INACTIVE ? "lost" : "gained");
+            if (LOWORD(wp) == WA_INACTIVE) CancelPointer(w);
+            break;
+        case WM_SIZE:
+            if (wp == SIZE_MINIMIZED && !w->minimized) {
+                w->minimized = true;
+                w->lastHiddenFrame = 0;
+                LogLine("[winapk] window: minimised; drawing at 2 Hz");
+            } else if (wp != SIZE_MINIMIZED && w->minimized) {
+                w->minimized = false;
+                LogLine("[winapk] window: restored; drawing at full rate");
+                TaskToFront();
+            }
+            return 0;
         case WM_SIZING: {
             // Keep the app's max aspect ratio while the person drags an edge.
             const float cap = g_maxAspect;
@@ -332,13 +465,24 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     return DefWindowProcW(hwnd, msg, wp, lp);
 }
 
-/// Runs functions sent from other threads (RunOnUi).
+/// Runs functions posted by RunOnUi from other threads, unless their caller gave up.
 LRESULT CALLBACK DispatcherProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
-    if (msg == kCallMessage) {
-        (*reinterpret_cast<const std::function<void()>*>(lp))();
-        return 0;
+    if (msg != kCallMessage) return DefWindowProcW(hwnd, msg, wp, lp);
+    auto* p = reinterpret_cast<std::shared_ptr<UiCall>*>(lp);
+    std::shared_ptr<UiCall> call = std::move(*p);
+    delete p;
+    {
+        std::lock_guard<std::mutex> lock(call->mu);
+        if (call->state == UiCall::kAbandoned) return 0;
+        call->state = UiCall::kRunning;
     }
-    return DefWindowProcW(hwnd, msg, wp, lp);
+    (*call->fn)();
+    {
+        std::lock_guard<std::mutex> lock(call->mu);
+        call->state = UiCall::kDone;
+    }
+    call->cv.notify_all();
+    return 0;
 }
 
 /// Returns the window a Java handle names, or null (UI thread only).
@@ -396,11 +540,11 @@ jint JNICALL DisplayHz(JNIEnv*, jclass) {
     return 60;
 }
 
-/// Creates a hidden app window sized to the app; returns its handle.
+/// Creates a hidden app window sized to the app; returns its handle (0 when it failed).
 jlong JNICALL CreateWindowNative(JNIEnv* env, jclass, jstring title) {
     const std::wstring t = Wide(Utf8(env, title));
     HWND result = nullptr;
-    RunOnUi([&] {
+    RunOnUi("createWindow", [&] {
         const float s = Scale(nullptr);
         RECT r{0, 0, static_cast<LONG>(g_phoneW * s), static_cast<LONG>(g_phoneH * s)};
         AdjustWindowRectExForDpi(&r, WS_OVERLAPPEDWINDOW, FALSE, 0, GetDpiForSystem());
@@ -426,7 +570,7 @@ jlong JNICALL CreateSurfaceView(JNIEnv*, jclass, jint w, jint h) {
 
 /// Makes `view` the content of `window` and the target of presentBitmap.
 void JNICALL SetContentView(JNIEnv*, jclass, jlong window, jlong view) {
-    RunOnUi([&] {
+    RunOnUi("setContentView", [&] {
         if (Window* w = FromHandle(window)) {
             w->content = reinterpret_cast<View*>(view);
             g_current = w->content;
@@ -437,7 +581,7 @@ void JNICALL SetContentView(JNIEnv*, jclass, jlong window, jlong view) {
 }
 
 void JNICALL ShowWindowNative(JNIEnv*, jclass, jlong window) {
-    RunOnUi([&] {
+    RunOnUi("showWindow", [&] {
         if (Window* w = FromHandle(window)) {
             ShowWindow(w->hwnd, SW_SHOWNORMAL);
             SetForegroundWindow(w->hwnd);
@@ -446,18 +590,18 @@ void JNICALL ShowWindowNative(JNIEnv*, jclass, jlong window) {
 }
 
 void JNICALL CloseWindowNative(JNIEnv*, jclass, jlong window) {
-    RunOnUi([&] { if (Window* w = FromHandle(window)) DestroyWindow(w->hwnd); });
+    RunOnUi("closeWindow", [&] { if (Window* w = FromHandle(window)) DestroyWindow(w->hwnd); });
 }
 
 void JNICALL SetWindowTitle(JNIEnv* env, jclass, jlong window, jstring title) {
     const std::wstring t = Wide(Utf8(env, title));
-    RunOnUi([&] { if (Window* w = FromHandle(window)) SetWindowTextW(w->hwnd, t.c_str()); });
+    RunOnUi("setWindowTitle", [&] { if (Window* w = FromHandle(window)) SetWindowTextW(w->hwnd, t.c_str()); });
 }
 
 /// Sets the color shown before the first frame.
 void JNICALL SetStartingWindowColor(JNIEnv*, jclass, jint argb) {
     const COLORREF c = RGB((argb >> 16) & 0xff, (argb >> 8) & 0xff, argb & 0xff);
-    RunOnUi([&] { for (auto& [h, w] : g_windows) { w->background = c; InvalidateRect(h, nullptr, FALSE); } });
+    RunOnUi("setStartingWindowColor", [&] { for (auto& [h, w] : g_windows) { w->background = c; InvalidateRect(h, nullptr, FALSE); } });
 }
 
 /// Attaches the renderer that draws `view` (a MetalSurfaceCallbacks).
@@ -465,18 +609,19 @@ void JNICALL SetRenderer(JNIEnv* env, jclass, jlong view, jobject callbacks) {
     auto* v = reinterpret_cast<View*>(view);
     if (!v) return;
     jobject ref = callbacks ? env->NewGlobalRef(callbacks) : nullptr;
-    RunOnUi([&] {
+    const bool ran = RunOnUi("setRenderer", [&] {
         if (v->renderer) Env()->DeleteGlobalRef(v->renderer);
         v->renderer = ref;
         v->sizedW = v->sizedH = -1;
     });
+    if (!ran && ref) env->DeleteGlobalRef(ref);
 }
 
 /// Detaches `view`'s renderer.
 void JNICALL ReleaseRenderer(JNIEnv*, jclass, jlong view) {
     auto* v = reinterpret_cast<View*>(view);
     if (!v) return;
-    RunOnUi([&] {
+    RunOnUi("releaseRenderer", [&] {
         if (v->renderer) Env()->DeleteGlobalRef(v->renderer);
         v->renderer = nullptr;
     });
@@ -484,10 +629,11 @@ void JNICALL ReleaseRenderer(JNIEnv*, jclass, jlong view) {
 
 void JNICALL RegisterTouchDispatcher(JNIEnv* env, jclass, jobject dispatcher) {
     jobject ref = dispatcher ? env->NewGlobalRef(dispatcher) : nullptr;
-    RunOnUi([&] {
+    const bool ran = RunOnUi("registerTouchDispatcher", [&] {
         if (g_touch) Env()->DeleteGlobalRef(g_touch);
         g_touch = ref;
     });
+    if (!ran && ref) env->DeleteGlobalRef(ref);
 }
 
 /// Copies a frame (ARGB, top-down, `w` × `h`) to the current view and repaints it.
@@ -507,19 +653,23 @@ void JNICALL PresentBitmap(JNIEnv* env, jclass, jintArray argb, jint w, jint h) 
 }
 
 /// Runs the UI thread's message loop until the app's window closes.
+/// Side effects: from its start, RunOnUi's waits are limited; after it ends, RunOnUi fails at
+/// once and waiting callers give up.
 void JNICALL RunLoop(JNIEnv*, jclass) {
+    g_loop = 1;
     MSG m;
     while (GetMessageW(&m, nullptr, 0, 0) > 0) {
         TranslateMessage(&m);
         DispatchMessageW(&m);
     }
+    g_loop = 2;
 }
 
 /// Shapes every app window for `landscape` (wider than tall) or portrait, keeping its area.
 void Orient(bool landscape) {
     const int w = g_phoneW, h = g_phoneH;
     if ((w > h) != landscape && w != h) { g_phoneW = h; g_phoneH = w; }
-    RunOnUi([] {
+    RunOnUi("orientation", [] {
         for (auto& [hwnd, win] : g_windows) {
             RECT rc;
             GetClientRect(hwnd, &rc);
@@ -556,17 +706,18 @@ jlong JNICALL GetPlaceholderWindow(JNIEnv*, jclass) { return 0; }
 
 /// Keeps FLAG_SECURE windows out of screenshots and screen sharing.
 void JNICALL SetSecureContent(JNIEnv*, jclass, jboolean secure) {
-    RunOnUi([&] { for (auto& [hwnd, w] : g_windows) SetWindowDisplayAffinity(hwnd, secure ? WDA_EXCLUDEFROMCAPTURE : WDA_NONE); });
+    RunOnUi("setSecureContent", [&] { for (auto& [hwnd, w] : g_windows) SetWindowDisplayAffinity(hwnd, secure ? WDA_EXCLUDEFROMCAPTURE : WDA_NONE); });
 }
 
-/// Minimises the app's windows (Activity.moveTaskToBack).
+/// Minimises the app's windows (Activity.moveTaskToBack); restoring one brings the task back
+/// (WM_SIZE → ActivityHost.macapkTaskToFront).
 void JNICALL MoveTaskToBack(JNIEnv*, jclass) {
-    RunOnUi([] { for (auto& [hwnd, w] : g_windows) ShowWindow(hwnd, SW_MINIMIZE); });
+    RunOnUi("moveTaskToBack", [] { for (auto& [hwnd, w] : g_windows) ShowWindow(hwnd, SW_MINIMIZE); });
 }
 
 /// Restores and raises the app's windows.
 void JNICALL MoveTaskToFront(JNIEnv*, jclass) {
-    RunOnUi([] { for (auto& [hwnd, w] : g_windows) { ShowWindow(hwnd, SW_RESTORE); SetForegroundWindow(hwnd); } });
+    RunOnUi("moveTaskToFront", [] { for (auto& [hwnd, w] : g_windows) { ShowWindow(hwnd, SW_RESTORE); SetForegroundWindow(hwnd); } });
 }
 
 /// Records the app's data subdirectory and native library folder for the guest loader.

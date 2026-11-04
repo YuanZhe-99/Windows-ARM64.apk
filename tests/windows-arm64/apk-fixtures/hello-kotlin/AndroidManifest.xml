@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- T04 hello-kotlin: a Kotlin APK for G1.6 (PLAN.md §8, §16), its Kotlin standard library
+     dexed in. Built by scripts/windows/build.ps1 -Component Fixtures; never committed as an APK. -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="org.winapk.fixture.kotlin"
+    android:versionCode="1"
+    android:versionName="1.0">
+    <uses-sdk android:minSdkVersion="24" android:targetSdkVersion="36" />
+    <application android:label="@string/app_name" android:allowBackup="false">
+        <activity android:name=".MainActivity" android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>

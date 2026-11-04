@@ -2,6 +2,9 @@ package org.winapk.fixture.hello;
 
 import android.app.Activity;
 import android.content.SharedPreferences;
+import android.database.Cursor;
+import android.database.DatabaseUtils;
+import android.database.sqlite.SQLiteDatabase;
 import android.os.Bundle;
 import android.text.Editable;
 import android.text.TextWatcher;
@@ -43,6 +46,7 @@ public class MainActivity extends Activity {
         taps = prefs.getInt("taps", 0);
         Log.i(TAG, "restored.prefs=" + taps);
         Log.i(TAG, "restored.file=" + readFile());
+        Log.i(TAG, "sqlite=" + sqlite());
 
         count = findViewById(R.id.count);
         showCount();
@@ -143,6 +147,55 @@ public class MainActivity extends Activity {
             return new String(Files.readAllBytes(f.toPath()), StandardCharsets.UTF_8);
         } catch (IOException e) {
             return "error:" + e.getMessage();
+        }
+    }
+
+    /**
+     * Adds a row to databases/t03.db and reads the table back through Android's SQLite.
+     *
+     * Returns: "rows=N upper=… like=… order=… missing=…": N grows by one per launch (persistence); upper()
+     * and LIKE are the Unicode forms an Android device has, and LOCALIZED is one of the
+     * collations every Android connection carries ("apple|Banana|café 中文";
+     * a byte order would put Banana first). A query of a table that does not exist must throw,
+     * never answer ("missing=SQLiteException").
+     */
+    private String sqlite() {
+        SQLiteDatabase db = openOrCreateDatabase("t03.db", MODE_PRIVATE, null);
+        try {
+            db.execSQL("CREATE TABLE IF NOT EXISTS runs (id INTEGER PRIMARY KEY, name TEXT)");
+            db.execSQL("INSERT INTO runs (name) VALUES (?)", new Object[] {"café 中文"});
+            db.execSQL("INSERT INTO runs (name) VALUES (?)", new Object[] {"Banana"});
+            db.execSQL("INSERT INTO runs (name) VALUES (?)", new Object[] {"apple"});
+            long rows = DatabaseUtils.queryNumEntries(db, "runs") / 3;
+            return "rows=" + rows
+                    + " upper=" + one(db, "SELECT upper(name) FROM runs WHERE name LIKE 'CAF%' LIMIT 1")
+                    + " like=" + one(db, "SELECT count(*) > 0 FROM runs WHERE name LIKE 'CAFÉ%'")
+                    + " order=" + one(db, "SELECT group_concat(name, '|') FROM (SELECT DISTINCT name FROM runs ORDER BY name COLLATE LOCALIZED)")
+                    + " missing=" + missing(db);
+        } catch (RuntimeException e) {
+            return "error:" + e;
+        } finally {
+            db.close();
+        }
+    }
+
+    /** Returns the simple name of what a query of a missing table throws, or "none". */
+    private static String missing(SQLiteDatabase db) {
+        try {
+            db.rawQuery("SELECT * FROM no_such_table", null).close();
+            return "none";
+        } catch (RuntimeException e) {
+            return e.getClass().getSimpleName();
+        }
+    }
+
+    /** Returns the first column of a query's first row. */
+    private static String one(SQLiteDatabase db, String sql) {
+        Cursor c = db.rawQuery(sql, null);
+        try {
+            return c.moveToFirst() ? c.getString(0) : "none";
+        } finally {
+            c.close();
         }
     }
 

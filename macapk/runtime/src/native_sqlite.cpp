@@ -63,7 +63,13 @@
 #include <string>
 #include <vector>
 #include <cstdint>
+#if defined(_WIN32)
+// Windows-ARM64.apk: the same file is built into winapk-bridge.dll against vcpkg's SQLite;
+// only the Unicode helpers below differ (Win32 NLS instead of CoreFoundation).
+#include <windows.h>
+#else
 #include <CoreFoundation/CoreFoundation.h>
+#endif
 
 namespace macapk {
 namespace sqlite {
@@ -255,6 +261,94 @@ static std::string current_journal_mode(sqlite3* db) {
 // new dependency.
 namespace {
 
+#if defined(_WIN32)
+// Windows-ARM64.apk: Win32 NLS equivalents of the CoreFoundation helpers below, with the same
+// names and contracts. Case mapping is the invariant locale's linguistic casing; LOCALIZED
+// compares in the user's locale, UNICODE in the invariant one, both ignoring case.
+
+/** UTF-8 to UTF-16; false if the input is not valid UTF-8 (CF returns null then). */
+bool utf16_from_utf8(const unsigned char* p, int nbytes, std::wstring& out) {
+    out.clear();
+    if (!p) return false;
+    if (nbytes == 0) return true;
+    const int n = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, (const char*)p, nbytes, nullptr, 0);
+    if (n <= 0) return false;
+    out.resize((size_t)n);
+    MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, (const char*)p, nbytes, &out[0], n);
+    return true;
+}
+
+/** Maps case with LCMapStringEx (LCMAP_UPPERCASE or LCMAP_LOWERCASE). */
+std::wstring map_case(const std::wstring& in, DWORD how) {
+    if (in.empty()) return in;
+    const DWORD flags = how | LCMAP_LINGUISTIC_CASING;
+    const int n = LCMapStringEx(LOCALE_NAME_INVARIANT, flags, in.data(), (int)in.size(), nullptr, 0, nullptr, nullptr, 0);
+    if (n <= 0) return in;
+    std::wstring out((size_t)n, L'\0');
+    LCMapStringEx(LOCALE_NAME_INVARIANT, flags, in.data(), (int)in.size(), &out[0], n, nullptr, nullptr, 0);
+    return out;
+}
+
+void cf_case_fn(sqlite3_context* ctx, int argc, sqlite3_value** argv, bool upper) {
+    if (argc < 1 || sqlite3_value_type(argv[0]) == SQLITE_NULL) {
+        sqlite3_result_null(ctx);
+        return;
+    }
+    std::wstring in;
+    if (!utf16_from_utf8(sqlite3_value_text(argv[0]), sqlite3_value_bytes(argv[0]), in)) {
+        sqlite3_result_value(ctx, argv[0]);
+        return;
+    }
+    const std::wstring m = map_case(in, upper ? LCMAP_UPPERCASE : LCMAP_LOWERCASE);
+    std::string out;
+    if (!m.empty()) {
+        const int n = WideCharToMultiByte(CP_UTF8, 0, m.data(), (int)m.size(), nullptr, 0, nullptr, nullptr);
+        out.resize((size_t)n);
+        WideCharToMultiByte(CP_UTF8, 0, m.data(), (int)m.size(), &out[0], n, nullptr, nullptr);
+    }
+    sqlite3_result_text(ctx, out.c_str(), (int)out.size(), SQLITE_TRANSIENT);
+}
+
+void fn_upper(sqlite3_context* c, int n, sqlite3_value** v) { cf_case_fn(c, n, v, true); }
+void fn_lower(sqlite3_context* c, int n, sqlite3_value** v) { cf_case_fn(c, n, v, false); }
+
+int cf_collate(void* pUser, int nl, const void* zl, int nr, const void* zr) {
+    const bool localized = (pUser != nullptr);
+    std::wstring a, b;
+    if (utf16_from_utf8((const unsigned char*)zl, nl, a) && utf16_from_utf8((const unsigned char*)zr, nr, b)) {
+        const int rc = CompareStringEx(localized ? LOCALE_NAME_USER_DEFAULT : LOCALE_NAME_INVARIANT,
+                                       NORM_IGNORECASE, a.data(), (int)a.size(), b.data(), (int)b.size(),
+                                       nullptr, nullptr, 0);
+        if (rc != 0) return rc - CSTR_EQUAL;   // CSTR_LESS_THAN 1, CSTR_EQUAL 2, CSTR_GREATER_THAN 3
+    }
+    // Not valid UTF-8 (or NLS refused): a byte compare, as the CoreFoundation version does.
+    int n = (nl < nr) ? nl : nr;
+    int rc = std::memcmp(zl, zr, (size_t)n);
+    if (rc == 0) rc = (nl == nr) ? 0 : (nl < nr ? -1 : 1);
+    return rc;
+}
+
+bool fold_to_codepoints(const unsigned char* p, int nbytes, std::vector<uint32_t>& out) {
+    std::wstring in;
+    if (!utf16_from_utf8(p, nbytes, in)) return false;
+    const std::wstring m = map_case(in, LCMAP_LOWERCASE);   // u_foldCase's role here
+    out.clear();
+    out.reserve(m.size());
+    for (size_t i = 0; i < m.size(); ) {
+        const uint32_t c = m[i];
+        if (c >= 0xD800 && c <= 0xDBFF && i + 1 < m.size() && m[i + 1] >= 0xDC00 && m[i + 1] <= 0xDFFF) {
+            out.push_back(((c - 0xD800) << 10) + (uint32_t)(m[i + 1] - 0xDC00) + 0x10000u);
+            i += 2;
+            continue;
+        }
+        out.push_back(c);
+        i += 1;
+    }
+    return true;
+}
+
+#else  // CoreFoundation (macOS)
+
 CFStringRef cf_from_utf8(const unsigned char* p, int nbytes) {
     if (!p) return nullptr;
     return CFStringCreateWithBytes(kCFAllocatorDefault, (const UInt8*)p,
@@ -346,6 +440,8 @@ bool fold_to_codepoints(const unsigned char* p, int nbytes, std::vector<uint32_t
     CFRelease(m);
     return true;
 }
+
+#endif  // _WIN32
 
 /** SQL LIKE over folded codepoints: '%' any run, '_' any single, ESCAPE opt-out. */
 bool like_match(const std::vector<uint32_t>& pat, size_t pi,

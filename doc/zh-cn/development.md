@@ -8,7 +8,7 @@
   提供 clang-cl、MSVC、Windows SDK、CMake、Ninja 和 vcpkg（都不在 PATH 上）。JDK 是适用于 ARM64 的
   Microsoft OpenJDK 21，用 `winget install --id Microsoft.OpenJDK.21 -e --architecture arm64` 安装（其 MSI
   设置系统 `JAVA_HOME` 和 PATH；构建时可用 `WINAPK_JAVA_HOME` 覆盖）。Android SDK（build-tools 36.0.0、
-  android-36、cmdline-tools）和 NDK r30 用于构建平台资源和夹具；Android Studio 的默认位置 `%LOCALAPPDATA%\Android\Sdk`
+  android-36、cmdline-tools）和 NDK r30 用于构建平台资源和夹具，Kotlin 夹具使用 Android Studio 自带的 kotlinc 2.4.0（或 `KOTLIN_HOME`）；Android Studio 的默认位置 `%LOCALAPPDATA%\Android\Sdk`
   无需 `ANDROID_HOME` 即可找到。`scripts/windows/check-requirements.ps1` 检查全部内容，不安装任何东西。
 
 ## 命令
@@ -35,24 +35,26 @@ go run ./tools/checkdocs           # doc/en-us and doc/zh-cn mirror each other
 .\build\windows-arm64\bin\winapk.exe doctor --json
 .\build\windows-arm64\bin\winapk.exe inspect .\tests\fixtures\hello-java.apk --json
 .\build\windows-arm64\bin\winapk.exe run .\tests\fixtures\hello-java.apk --native=off
+.\build\windows-arm64\bin\winapk.exe dex .\tests\fixtures\hello-java.apk .\build\classes.jar
 ```
 
 `-Component Java` 把 Mac.apk 的 Java 侧构建到 `build/windows-arm64/lib`（见 [port-audit.md](port-audit.md)）。
 `-Component FrameworkRes` 用 SDK 的 `aapt2`，从 `build-lock.json` 指定标签的 AOSP `frameworks/base/core/res`
 一次性构建平台资源包 `bin/tools/framework-res.apk`（上游 `scripts/build_framework_res.sh` 的步骤）。
-`-Component Fixtures` 用 SDK 的 `aapt2`、`d8`、`zipalign`、`apksigner`，以及（对 `jni/*.c`）NDK 的 clang，把
+`-Component Fixtures` 用 SDK 的 `aapt2`、`d8`、`zipalign`、`apksigner`，对 `src/**/*.kt` 用 kotlinc（Kotlin 标准库一并转为 DEX），以及（对 `jni/*.c`）NDK 的 clang，把
 `tests/windows-arm64/apk-fixtures` 的夹具 APK 构建到 `tests/fixtures`（从不提交）；每个夹具附带记录构建参数和
 哈希的 `<name>.json`，每个库都检查是否为 ELF64 AArch64。`-Component Host` 在 Visual Studio 的 ARM64 开发者环境中用
 clang-cl 把 `winapk.exe`、`winapk-bridge.dll` 和 `winapk-probe.jar` 构建到 `build/windows-arm64/bin`，首次构建时
-通过 vcpkg 获取 Vulkan 头文件和 zlib，生成的任何 PE 不是 ARM64 时即失败。
+通过 vcpkg 获取 Vulkan 头文件、zlib 和 SQLite，生成的任何 PE 不是 ARM64 时即失败。
 
-`test.ps1 -Suite Host` 就是夹具 T01。`test.ps1 -Suite Java` 是 G1（T02、T03 和 `hello-jni` 负例）：它用
-`winapk run` 运行夹具，向应用窗口发送点击、按键和改变尺寸，并读取运行时日志；需要桌面会话，数据和日志写到
+`test.ps1 -Suite Host` 就是夹具 T01。`test.ps1 -Suite Java` 是 G1（T02、T03、T04 和 `hello-jni` 负例）：它用
+`winapk run` 运行夹具，向应用窗口发送点击、按键、字符、改变尺寸、最小化、恢复和失去激活，挂起一次 UI 线程以检查 UI 调用超时（由上游的
+`MACAPK_INJECT_FILE` 输入驱动发送返回），从 Unicode 路径运行一份副本，并读取运行时日志；需要桌面会话，数据和日志写到
 `build/windows-arm64/test-data`。`doctor --present` 还会打开一个小测试窗口检查 Vulkan 呈现；不加时该项为 `not-run`。
 
 `winapk run` 把每个应用的数据放在 `%LOCALAPPDATA%\Windows-ARM64.apk\Apps` 下（`--data-dir` 可改）：`android\`
 是应用看到的 Android 根目录（`data\data\<package>`、`sdcard`），`code\<package>\` 是转换后的代码及缓存戳，
-`logs\` 是 JVM 的崩溃日志。运行时日志写到标准错误。
+`logs\` 是 JVM 的崩溃日志。运行时日志写到标准错误。`winapk dex` 就是单独执行的 `run` 转换步骤：在自身进程的 JVM 中把 APK 的 DEX 转换为 jar。
 
 ## 运行界面
 

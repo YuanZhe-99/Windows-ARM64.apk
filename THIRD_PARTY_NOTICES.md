@@ -21,4 +21,6 @@ Go, Java and native dependencies with their license texts.
 | Component | License | Used for |
 |---|---|---|
 | Mac.apk (git subtree under `macapk/`, imported at `367fd1a`) | AGPL-3.0 (dual-licensed upstream) | DEX translation, Android Framework, loader and bridges; its own bundled components are listed in `macapk/THIRD_PARTY_NOTICES.txt` |
+| zlib 1.3.2 (vcpkg) | zlib License (Jean-loup Gailly and Mark Adler; the notice ships with `z.dll`) | inflating APK entries in `winapk.exe`; ships as `z.dll` |
+| SQLite 3.54.1 (vcpkg) | public domain | `android.database.sqlite` in `winapk-bridge.dll`; ships as `sqlite3.dll` |
 | OpenJDK, ANGLE, Vulkan Loader, Skia, AOSP resources | recorded when chosen in P0 | runtime of the APK process |

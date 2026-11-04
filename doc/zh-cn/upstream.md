@@ -13,6 +13,10 @@ Windows 11 ARM64 上构建或运行过（[port-audit.md](port-audit.md)）。
 | `NativeCocoa.java` 承载窗口、Surface、呈现和宿主服务的 JNI 方法；帧由 UI 线程调用渲染器的 `macapkDrawFrame()` 拉取，它用 `presentBitmap` 呈现 ARGB 像素；触摸以点为单位、y 从底部起算交给 `TouchDispatcher.dispatch` | Windows 把同样的声明绑定到 Win32 代码（ADR-0002） | 已验证（G1） |
 | `AppClassLoader.findLibrary` 转换 APK 的库，失败时退回空操作的 stub | guest native 关闭时，Windows 先抛出 `GUEST_NATIVE_DISABLED`（按平台条件生效的检查） | 已验证（G1.5） |
 | `MACAPK_FW_RES_APK` 指定平台资源包；`-Dmacapk.android.root` 指定 Android 根目录；`-Dmacapk.display.density` 指定 density | 由 `winapk run` 设置 | 已验证（G1） |
+| `MACAPK_BUILD_JAVA_ID`（来自 `build-id.txt`，由 `main.cpp` 导出）是 `dalvik.system.MacApkDexConverter` 缓存的键；没有它该缓存不会保留 | 由 `winapk run` 导出（ADR-0003） | 已设置（G1）；动态 DEX 路径尚无夹具覆盖 |
+| `ActivityHost.macapkTaskToFront()` 把运行时移到后台的任务带回前台；其他情况下不做任何事 | 窗口从任务栏恢复时调用 | 已验证（G1.3） |
+| `MACAPK_INJECT_FILE` 启动 `TouchDispatcher` 的输入驱动，它从该文件读取 `key`、`tap` 等行 | `test.ps1` 用它在 UI 线程被挂起时发送返回 | 已验证（G1.3） |
+| `runtime/src/native_sqlite.cpp` 除 CoreFoundation 的大小写映射和排序外都是可移植的 C++ | 在 Windows 上构建，用 `_WIN32` 分支替换这两部分 | 已验证（T03 SQLite） |
 | `runtime/src/jvm_loader.cpp` 以 macOS 加载假设嵌入 JVM | 需要 Windows `jvm.dll` 加载器及其自己的选项 | 已验证：Windows 加载器在 `platform/windows` 中，JDK 接受上游的模块选项（T01） |
 | `runtime/CMakeLists.txt` 在顶层启用 OBJCXX，并查找 Apple 与 Homebrew 依赖 | 语言、源文件、链接和依赖发现改为按平台条件化 | 已构建：`if(WIN32)` 分支在 macOS 项目之前引入 `platform/windows/windows.cmake` |
 | `runtime/translator/src/arm64_native.cpp` 将 ELF 映射/重定位与 macOS 内存、寄存器和补丁机制交织 | 复用解析逻辑；分离宿主内存与执行策略 | 已阅读 |

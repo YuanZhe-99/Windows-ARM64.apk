@@ -68,6 +68,8 @@ $sdkRoot = @($env:ANDROID_HOME, $env:ANDROID_SDK_ROOT, (Join-Path $env:LOCALAPPD
 if ($sdkRoot) { Report 'AndroidSDK' 'OK' $sdkRoot } else { Report 'AndroidSDK' 'LATER' "not installed; needed from P1 ($($lock.guest.androidSdk.packages -join ', '))" }
 $ndk = if ($sdkRoot) { Join-Path $sdkRoot ('ndk\' + ($lock.guest.androidNdk.version -replace '.*\((.*)\)', '$1')) }
 if ($ndk -and (Test-Path $ndk)) { Report 'AndroidNDK' 'OK' $ndk } else { Report 'AndroidNDK' 'LATER' "not installed; needed from P2 ($($lock.guest.androidNdk.version))" }
+try { Report 'kotlinc' 'OK' "$(Find-Kotlinc) ($($lock.guest.kotlinc.version))" }
+catch { Report 'kotlinc' 'LATER' "$($_.Exception.Message); needed for the Kotlin fixture T04 only" }
 
 if ($script:bad -gt 0) { Write-Host "$script:bad requirement(s) missing or different"; exit 1 }
 Write-Host 'requirements met for the Java and Host components'

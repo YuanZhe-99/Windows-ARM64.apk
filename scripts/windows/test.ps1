@@ -12,11 +12,15 @@ script exits non-zero when any fails. Build first:
 scripts/windows/build.ps1 -Component All.
 
 Suite Java is G1 (PLAN.md §8): fixtures T02 (the Win32 bitmap presenter: pixel
-format, size, message pump) and T03 (hello-java.apk: DEX conversion, the
-Activity's lifecycle, taps, typing, scrolling, a resize, Back, closing, then a
-second run that restores the saved state from the cache), driven by posting
-window messages to the app's window and reading the runtime's log; and its
-negative cases, a file that is not an APK and an unsupported --native mode. It
+format, size, message pump), T03 (hello-java.apk: DEX conversion, the
+Activity's lifecycle, taps, typing keys and Unicode characters, scrolling, a
+resize, a press cancelled by losing focus, Back, minimise and restore, SQLite,
+closing, then a second run that restores the saved state from the cache and
+checks the UI-call timeout with the UI thread suspended, then a run from a
+Unicode path) and T04 (hello-kotlin.apk, G1.6), driven by posting window
+messages to the app's window and reading the runtime's log; and its negative
+cases, a file that is not an APK, an unsupported --native mode, an APK library
+with guest native off and a query of a missing SQLite table. It
 needs a desktop session. Build first: build.ps1 -Component All.
 
 .PARAMETER Suite
@@ -118,7 +122,40 @@ public static class WinApkTestWin {
   [DllImport("user32.dll")] public static extern bool PrintWindow(IntPtr h, IntPtr dc, uint f);
   [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
   [DllImport("user32.dll")] public static extern bool SetProcessDpiAwarenessContext(IntPtr c);
+  [DllImport("user32.dll")] public static extern bool IsIconic(IntPtr h);
+  [DllImport("kernel32.dll")] static extern IntPtr OpenThread(uint access, bool inherit, uint id);
+  [DllImport("kernel32.dll")] static extern uint SuspendThread(IntPtr h);
+  [DllImport("kernel32.dll")] public static extern uint ResumeThread(IntPtr h);
+  [DllImport("kernel32.dll")] public static extern bool CloseHandle(IntPtr h);
+  [DllImport("kernel32.dll")] static extern bool GetThreadContext(IntPtr h, IntPtr ctx);
+  [DllImport("kernel32.dll", CharSet=CharSet.Unicode)] static extern IntPtr GetModuleHandleW(string n);
+  [DllImport("kernel32.dll")] static extern IntPtr GetCurrentProcess();
+  [DllImport("psapi.dll")] static extern bool GetModuleInformation(IntPtr p, IntPtr m, out MODULEINFO mi, uint cb);
+  struct MODULEINFO { public IntPtr Base; public uint Size; public IntPtr Entry; }
   public struct RECT { public int L, T, R, B; }
+  // Suspends thread `tid` while it waits in win32u.dll (GetMessage), never in Java code, so the
+  // JVM's safepoints still complete. ARM64 CONTEXT: ContextFlags at 0, Pc at 264, 16-aligned.
+  // Returns the thread handle (ResumeThread, CloseHandle it), or zero.
+  public static IntPtr SuspendWhileWaiting(uint tid) {
+    IntPtr h = OpenThread(0x0002 | 0x0008 | 0x0040, false, tid);  // SUSPEND_RESUME | GET_CONTEXT | QUERY_INFORMATION
+    if (h == IntPtr.Zero) return h;
+    MODULEINFO mi;
+    GetModuleInformation(GetCurrentProcess(), GetModuleHandleW("win32u.dll"), out mi, (uint)Marshal.SizeOf(typeof(MODULEINFO)));
+    long lo = mi.Base.ToInt64(), hi = lo + mi.Size;
+    IntPtr raw = Marshal.AllocHGlobal(0x390 + 16);
+    IntPtr ctx = new IntPtr((raw.ToInt64() + 15) & ~15L);
+    try {
+      for (int i = 0; i < 400; i++) {
+        SuspendThread(h);
+        Marshal.WriteInt32(ctx, 0, 0x00400001);  // CONTEXT_ARM64 | CONTEXT_CONTROL
+        if (GetThreadContext(h, ctx)) { long pc = Marshal.ReadInt64(ctx, 264); if (pc >= lo && pc < hi) return h; }
+        ResumeThread(h);
+        System.Threading.Thread.Sleep(5);
+      }
+    } finally { Marshal.FreeHGlobal(raw); }
+    CloseHandle(h);
+    return IntPtr.Zero;
+  }
 }
 "@
 
@@ -177,6 +214,15 @@ function Send-Drag($H, [int]$X1, [int]$Y1, [int]$X2, [int]$Y2) {
     [WinApkTestWin]::PostMessageW($H, 0x202, [IntPtr]0, (Lp $X2 $Y2)) | Out-Null
 }
 
+<# Types text as WM_CHAR UTF-16 code units, the way an input method's commit arrives. #>
+function Send-Chars($H, [string]$Text) {
+    foreach ($c in $Text.ToCharArray()) { [WinApkTestWin]::PostMessageW($H, 0x102, [IntPtr][int]$c, [IntPtr]1) | Out-Null }
+    Start-Sleep -Milliseconds 40
+}
+
+<# Posts a window-menu command: 0xF020 minimise, 0xF120 restore. #>
+function Send-SysCommand($H, [int]$Command) { [WinApkTestWin]::PostMessageW($H, 0x112, [IntPtr]$Command, [IntPtr]0) | Out-Null }
+
 <# Presses and releases a virtual key. #>
 function Send-Key($H, [int]$Vk) {
     [WinApkTestWin]::PostMessageW($H, 0x100, [IntPtr]$Vk, [IntPtr]1) | Out-Null
@@ -229,6 +275,10 @@ function Test-Java {
     Check 'T03.G1.1.jvm' ($text -match '\[winapk\] stage jvm-created') 'JVM created in winapk.exe'
     Check 'T03.G1.1.lifecycle' ((Wait-Log $log 'T03: lifecycle=onResume') -and $text -match 'T03: lifecycle=onCreate') 'onCreate, onResume'
     Check 'T03.G1.4.fresh' ($text -match 'T03: restored\.prefs=0' -and $text -match 'T03: restored\.file=none') 'nothing saved before the first run'
+    # Non-ASCII test strings are built from code points so this script stays ASCII.
+    $e = [char]0xE9; $zh = "$([char]0x4E2D)$([char]0x6587)"; $emoji = "$([char]0xD83D)$([char]0xDE00)"
+    $sql = { param($n) "T03: sqlite=rows=$n upper=CAF$([char]0xC9) $zh like=1 order=apple|Banana|caf$e $zh missing=SQLiteException" }
+    Check 'T03.sqlite' ($text.Contains((& $sql 1))) "android.database.sqlite: $([regex]::Match($text, 'T03: sqlite=[^\r\n]*').Value)"
     if (-not $layout) { Check 'T03.layout' $false 'no layout line'; Close-App $h $p | Out-Null; return }
     $r = New-Object WinApkTestWin+RECT
     [WinApkTestWin]::GetClientRect($h, [ref]$r) | Out-Null
@@ -245,6 +295,9 @@ function Test-Java {
     Start-Sleep -Milliseconds 300
     Send-Key $h 0x48; Send-Key $h 0x49  # H, I
     Check 'T03.G1.2.text' ($null -ne (Wait-Log $log 'T03: text=hi' 10)) 'typed "hi" into the EditText'
+    # PLAN.md §8.4: characters no mapped key types (an IME commit, a surrogate pair) reach the field.
+    Send-Chars $h "$e$zh$emoji"
+    Check 'T03.G1.2.text-unicode' ($null -ne (Wait-Log $log ([regex]::Escape("T03: text=hi$e$zh$emoji") + '\r?\n') 10)) 'WM_CHAR e-acute, two CJK characters and a surrogate pair landed in the EditText'
     $lb = $layout.Groups[5].Value.Split(',') | ForEach-Object { [int]$_ }
     $cx = [int](($lb[0] + $lb[2]) / 2)
     Send-Drag $h $cx ($lb[3] - 20) $cx ($lb[1] + 20)
@@ -262,25 +315,92 @@ function Test-Java {
     if ($relaid) {
         Send-Tap $h $relaid.Groups[1].Value
         Check 'T03.G1.3.tap-after-resize' ($null -ne (Wait-Log $log 'T03: taps=3' 10)) "the button at $($relaid.Groups[1].Value) took the click"
+        # Losing focus mid-press cancels the touch: the button must not click.
+        $b = $relaid.Groups[1].Value.Split(',') | ForEach-Object { [int]$_ }
+        $bx = [int](($b[0] + $b[2]) / 2); $by = [int](($b[1] + $b[3]) / 2)
+        [WinApkTestWin]::PostMessageW($h, 0x201, [IntPtr]1, (Lp $bx $by)) | Out-Null
+        Start-Sleep -Milliseconds 100
+        [WinApkTestWin]::PostMessageW($h, 0x006, [IntPtr]0, [IntPtr]::Zero) | Out-Null  # WM_ACTIVATE, WA_INACTIVE
+        Start-Sleep -Milliseconds 100
+        [WinApkTestWin]::PostMessageW($h, 0x202, [IntPtr]0, (Lp $bx $by)) | Out-Null
+        $lost = Wait-Log $log '\[winapk\] window: focus lost' 5
+        Start-Sleep -Milliseconds 1500
+        Check 'T03.G1.3.focus-cancel' ($lost -and (Read-Log $log) -notmatch 'T03: taps=4') 'deactivated mid-press: ACTION_CANCEL, no click'
     }
 
     Send-Key $h 0x1B  # Escape is Back
     Check 'T03.G1.2.back' ($null -ne (Wait-Log $log 'T03: lifecycle=onDestroy' 10) -and (Read-Log $log) -match 'T03: back=pressed') 'Back finished the activity'
+    # PLAN.md §8.3: the emptied task goes to the taskbar; restoring the window starts it again.
+    $iconic = $false
+    for ($i = 0; $i -lt 40 -and -not $iconic; $i++) { Start-Sleep -Milliseconds 250; $iconic = [WinApkTestWin]::IsIconic($h) }
+    Check 'T03.G1.3.back-hides' $iconic 'the emptied task minimised the window (moveTaskToBack)'
+    Send-SysCommand $h 0xF120
+    $until = (Get-Date).AddSeconds(20)
+    while ((Get-Date) -lt $until -and [regex]::Matches((Read-Log $log), 'T03: lifecycle=onResume').Count -lt 2) { Start-Sleep -Milliseconds 200 }
+    $text = Read-Log $log
+    Check 'T03.G1.3.restore' ([regex]::Matches($text, 'T03: lifecycle=onResume').Count -ge 2 -and $text -match 'task brought back empty -> launching') 'restoring the window relaunched the activity (ActivityHost.macapkTaskToFront)'
+    Check 'T03.sqlite.persist' ($text.Contains((& $sql 2))) 'the relaunch found the first launch''s rows'
+    Send-SysCommand $h 0xF020
+    $min = Wait-Log $log '\[winapk\] window: minimised; drawing at 2 Hz' 10
+    Start-Sleep -Milliseconds 1500
+    Send-SysCommand $h 0xF120
+    $until = (Get-Date).AddSeconds(10)
+    while ((Get-Date) -lt $until -and [regex]::Matches((Read-Log $log), 'window: restored; drawing at full rate').Count -lt 2) { Start-Sleep -Milliseconds 200 }
+    Check 'T03.G1.3.minimize' ($min -and [regex]::Matches((Read-Log $log), 'window: restored; drawing at full rate').Count -ge 2 -and -not $p.HasExited) 'minimised and restored by the person: throttled, then full rate, app still running'
+    Check 'T03.neg.ui-blocked' ((Read-Log $log) -notmatch 'UI_THREAD_BLOCKED|UI_CALL_TIMEOUT') 'no window call waited on the UI thread in a normal run'
     $code = Close-App $h $p
     Check 'T03.G1.3.exit' ($code -eq 0) "closing the window ended the process (exit $code)"
     Check 'T03.G1.3.no-leftover' ($null -eq (Get-Process -Id $p.Id -ErrorAction SilentlyContinue)) "process $($p.Id) is gone"
 
     # ---- run 2: hot cache, restored state ----
     $log2 = Join-Path $logs 'T03-run2.log'
+    $inject = Join-Path $logs 'T03-inject.txt'
+    Remove-Item $inject -ErrorAction SilentlyContinue
+    $env:MACAPK_INJECT_FILE = $inject  # upstream's input driver (TouchDispatcher.macapkStartInjectDriver)
     $p2 = Start-App $apk $data $log2
+    $env:MACAPK_INJECT_FILE = $null
     $h2 = Find-AppWindow $p2.Id 'Hello Java'
     $ok = $null -ne (Wait-Log $log2 'T03: lifecycle=onResume')
     $text2 = Read-Log $log2
     Check 'T03.G1.4.cache' ($text2 -match '\[winapk\] stage dex-converted \(cached\)') 'hot: classes.jar reused from the cache'
     Check 'T03.G1.4.prefs' ($ok -and $text2 -match 'T03: restored\.prefs=3') 'SharedPreferences restored 3 taps'
     Check 'T03.G1.4.file' ($text2 -match 'T03: restored\.file=3') 'files/taps.txt restored 3'
+    Check 'T03.G1.4.sqlite' ($text2.Contains((& $sql 3))) 'databases/t03.db kept both launches of run 1'
+    # PLAN.md §8.3: a window call from the app's loop while the UI thread cannot run it is
+    # reported, then abandoned, instead of hanging. Back (sent by the input driver, not the
+    # window) ends the task, whose moveTaskToBack must reach the suspended UI thread.
+    $tid = 0
+    if ($h2 -ne [IntPtr]::Zero -and (Wait-Log $log2 'inject-driver watching' 10)) { $tid = [WinApkTestWin]::GetWindowThreadProcessId($h2, [ref]0) }
+    $th = if ($tid) { [WinApkTestWin]::SuspendWhileWaiting($tid) } else { [IntPtr]::Zero }
+    if ($th -ne [IntPtr]::Zero) {
+        try {
+            Set-Content $inject 'key 4' -Encoding ascii
+            $blocked = Wait-Log $log2 'UI_THREAD_BLOCKED: (\w+) has waited' 20
+            $abandoned = Wait-Log $log2 'UI_CALL_TIMEOUT: (\w+) was not run' 30
+        } finally { [WinApkTestWin]::ResumeThread($th) | Out-Null; [WinApkTestWin]::CloseHandle($th) | Out-Null }
+        Check 'T03.G1.3.ui-blocked' ($null -ne $blocked) "reported: $(if ($blocked) { $blocked.Value })"
+        Check 'T03.G1.3.ui-timeout' ($null -ne $abandoned) "abandoned: $(if ($abandoned) { $abandoned.Value })"
+        Start-Sleep -Milliseconds 500
+        Check 'T03.G1.3.ui-recovered' (-not $p2.HasExited) 'the UI thread ran again and the app kept running'
+    } else {
+        Check 'T03.G1.3.ui-blocked' $false "could not suspend the UI thread while it waited (thread $tid)"
+    }
     if ($h2 -ne [IntPtr]::Zero) { $code2 = Close-App $h2 $p2 } else { $p2.Kill(); $code2 = $null }
     Check 'T03.G1.4.exit' ($code2 -eq 0) "second run ended (exit $code2)"
+
+    # PLAN.md §8.1: an APK and a data folder whose paths have spaces and characters outside
+    # the PC's legacy code page (Hungarian, Korean).
+    $uni = Join-Path $out "test-data\uni $([char]0x0151)$([char]0xD55C) $zh"
+    Reset-Dir $uni
+    $uniApk = Join-Path $uni "hello $([char]0x0151)$([char]0xD55C).apk"
+    Copy-Item $apk $uniApk
+    $log4 = Join-Path $logs 'T03-unicode.log'
+    $p4 = Start-App $uniApk (Join-Path $uni "data $e") $log4
+    $h4 = Find-AppWindow $p4.Id 'Hello Java'
+    $ok4 = $null -ne (Wait-Log $log4 'T03: lifecycle=onResume')
+    Check 'T03.G1.1.unicode-path' ($ok4 -and (Read-Log $log4) -match 'stage dex-converted \(\d+ ms\)' -and (Read-Log $log4).Contains((& $sql 1))) 'converted, booted and stored data under a Unicode path with spaces'
+    if ($h4 -ne [IntPtr]::Zero) { $code4 = Close-App $h4 $p4 } else { if (-not $p4.HasExited) { $p4.Kill() }; $code4 = $null }
+    Check 'T03.G1.1.unicode-exit' ($code4 -eq 0) "exit $code4"
 
     # ---- negative cases ----
     & $winapk run (Join-Path $repo 'README.md') --data-dir $data 2> (Join-Path $logs 'neg-not-apk.log')
@@ -301,7 +421,17 @@ function Test-Java {
     Check 'G1.5.load-refused' ($res -and $res.Groups[1].Value -eq 'error' -and $res.Groups[2].Value -match '^GUEST_NATIVE_DISABLED: libhello\.so') "System.loadLibrary: $(if ($res) { $res.Value })"
     if ($h3 -ne [IntPtr]::Zero) { $code3 = Close-App $h3 $p3 } else { if (-not $p3.HasExited) { $p3.Kill() }; $code3 = $null }
     Check 'G1.5.exit' ($code3 -eq 0) "the app kept running and closed normally (exit $code3)"
-    Write-Host 'NOT_RUN  G1.6 (Kotlin fixture T04): not built yet'
+
+    # G1.6: the Kotlin fixture T04 through the same DEX path, its standard library included.
+    $ktApk = Join-Path $repo 'tests\fixtures\hello-kotlin.apk'
+    $log5 = Join-Path $logs 'T04-hello-kotlin.log'
+    $p5 = Start-App $ktApk $data $log5
+    $h5 = Find-AppWindow $p5.Id 'Hello Kotlin'
+    $kt = Wait-Log $log5 'T04: result=([^\r\n]*)' 60
+    Check 'T04.G1.6.result' ($kt -and $kt.Groups[1].Value -eq 'top=the:3,brown:1,dog:1 squares=140 copy=Count(word=fox, n=2)') "kotlin-stdlib: $(if ($kt) { $kt.Groups[1].Value })"
+    Check 'T04.G1.6.lifecycle' ($null -ne (Wait-Log $log5 'T04: lifecycle=onResume' 10)) 'onCreate, onResume'
+    if ($h5 -ne [IntPtr]::Zero) { $code5 = Close-App $h5 $p5 } else { if (-not $p5.HasExited) { $p5.Kill() }; $code5 = $null }
+    Check 'T04.G1.6.exit' ($code5 -eq 0) "exit $code5"
     Write-Host "NOT_RUN  G1.3 DPI other than this PC's ($([math]::Round((Get-Content $log -Raw | Select-String 'scale ([\d.]+)').Matches[0].Groups[1].Value, 2))): needs a second monitor or another scale"
 }
 

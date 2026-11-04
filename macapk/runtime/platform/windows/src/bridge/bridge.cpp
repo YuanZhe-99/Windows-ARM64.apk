@@ -6,6 +6,9 @@
 #include <cstdio>
 #include <mutex>
 
+// upstream native_sqlite.cpp, built into this DLL: com.macapk.loader.NativeSqlite.
+namespace macapk::sqlite { void RegisterNativeSqliteMethods(JNIEnv* env); }
+
 namespace winapk::bridge {
 
 bool Bind(JNIEnv* env, const char* className, const JNINativeMethod* methods, int count) {
@@ -58,6 +61,7 @@ extern "C" __declspec(dllexport) jboolean winapk_bridge_register(JNIEnv* env) {
     using namespace winapk::bridge;
     bool ok = RegisterLog(env);
     ok = RegisterWindow(env) && ok;
+    macapk::sqlite::RegisterNativeSqliteMethods(env);  // logs its own result, as upstream
     return ok ? JNI_TRUE : JNI_FALSE;
 }
 

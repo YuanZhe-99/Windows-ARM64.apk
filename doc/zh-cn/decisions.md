@@ -47,8 +47,10 @@ P2–P4）。
 **理由。** Framework 在 26 个文件中调用 `NativeCocoa`；重命名或包装这些调用会是一次大范围的上游改动，却不带来任何行为上
 的收益，违背 `AGENTS.md` 保持上游改动小的规则。在 JNI 层绑定可以让上游的 Java 保持不变。
 
-**线程和帧。** JVM 主线程调用 `init` 和 `runLoop`，成为拥有所有窗口的 UI 线程；其他线程创建或改变窗口的调用会发送给它
-并等待（在 `runLoop` 开始之前，一直等到它开始）。每个窗口在 UI 线程上有一个 16 ms 的帧定时器：尺寸改变时调用渲染器的
+**线程和帧。** JVM 主线程调用 `init` 和 `runLoop`，成为拥有所有窗口的 UI 线程；其他线程创建或改变窗口的调用会投递给它
+并等待：每等待 2 秒记录一次 `UI_THREAD_BLOCKED`；`runLoop` 运行后，10 秒内仍未开始执行的调用以 `UI_CALL_TIMEOUT`
+放弃，因此持有 UI 线程所等待的锁的 JNI 调用方不会让应用挂起（`runLoop` 开始之前等待不设上限；它结束之后调用立即失败）。
+最小化的窗口以 2 Hz 绘制，即上游对隐藏窗口的节流；恢复窗口时调用上游取消隐藏时的钩子 `ActivityHost.macapkTaskToFront`。每个窗口在 UI 线程上有一个 16 ms 的帧定时器：尺寸改变时调用渲染器的
 `macapkSurfaceChanged`，然后调用 `macapkDrawFrame`，与 macOS 的 display link 一样；`presentBitmap` 在锁内复制 ARGB
 帧并使窗口失效，`WM_PAINT` 以 32 位自上而下的 DIB 绘制它（ARGB 整数在内存中就是 BGRA 字节，所以无需转换；不做 alpha
 合成）。输入在 UI 线程上调用 `TouchDispatcher`。
@@ -58,3 +60,20 @@ P2–P4）。
 
 **重新讨论**：当窗格交接（界面在自己的窗口中显示应用）或 GLES surface 需要不止一个呈现目标时，或帧节奏应当跟随显示器
 （DWM）而不是定时器时。
+
+## ADR-0003：Windows 上的构建标识与转换器进程
+
+2026-11-04，P1。状态：已采纳。
+
+**决定。** `winapk run` 以 APK 的 SHA-256，以及转换器 jar（`macapk-loader.jar`）和框架 jar
+（`android-framework.jar`）整个文件的 SHA-256，作为应用转换后代码（`classes.jar` 及其缓存戳）的键，并导出
+`MACAPK_BUILD_JAVA_ID`（这两者摘要的 16 位十六进制），与上游 `main.cpp` 从 `build-id.txt` 导出它一样：它是应用自己的
+动态 DEX 缓存（`dalvik.system.MacApkDexConverter`）的键。DEX 转换器在子进程 `winapk dex` 中运行，该进程用 Invocation API
+创建 JVM，以 UTF-16 字符串传递路径，而不是在子进程 `java.exe` 中运行；`winapk.exe` 在其 manifest 中声明 UTF-8 活动代码页。
+
+**理由。** 上游的 `build_ids.py` 把 `JAVA_ID` 收窄为转换器自身的字节码和框架的类形状，因此框架方法体的改动不会使已转换的
+应用失效；移植它需要 Python，或者再实现一遍它的摘要算法。以整个 jar 为基础（上游以前的 `JAVA_ID`，现在用于诊断的
+`JARS_ID`）永远不会过期，只是重新转换得更频繁。子进程 `java.exe` 以 ANSI 代码页接收参数，HotSpot 也以它读取 JVM 选项字符串：
+路径中含有该电脑旧代码页之外的字符（在中文系统上的韩文）时，两者都会出错。使用 UTF-8 活动代码页后，选项字符串可以携带任何路径。
+
+**重新讨论**：当只改动框架后的重新转换代价大到值得优化时（届时移植收窄的摘要），或当 P7 的私有运行时改变转换器的启动方式时。

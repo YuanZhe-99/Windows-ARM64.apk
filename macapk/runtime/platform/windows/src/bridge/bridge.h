@@ -33,7 +33,8 @@ bool RegisterWindow(JNIEnv* env);
 
 }  // namespace winapk::bridge
 
-/// Registers every Windows host native on the JVM `env` belongs to.
+/// Registers every Windows host native on the JVM `env` belongs to: NativeLog, NativeCocoa
+/// and upstream's NativeSqlite (native_sqlite.cpp, against vcpkg's SQLite).
 /// Returns: JNI_TRUE when every required class bound. Notes: exported so winapk.exe can
 /// call it after JNI_CreateJavaVM; JNI_OnLoad calls it when java.exe loads the DLL.
 extern "C" __declspec(dllexport) jboolean winapk_bridge_register(JNIEnv* env);

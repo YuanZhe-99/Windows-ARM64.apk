@@ -225,8 +225,24 @@ function Build-Fixtures {
         $sources = @(Get-ChildItem (Join-Path $dir.FullName 'src'), $gen -Recurse -Filter *.java | ForEach-Object FullName)
         Invoke-Checked (Join-Path $jdk 'bin\javac.exe') (@('-d', $classes, '-source', '8', '-target', '8', '-encoding', 'UTF-8',
             '-bootclasspath', $sdk.AndroidJar, '-Xlint:-options') + $sources)
+        # src/**/*.kt: compiled after the Java (R included) against it; the Kotlin standard
+        # library goes into the DEX with the app's classes, as a Gradle build does.
+        $kt = @(Get-ChildItem (Join-Path $dir.FullName 'src') -Recurse -Filter *.kt | ForEach-Object FullName)
+        $stdlib = @()
+        if ($kt) {
+            $kotlinc = Find-Kotlinc
+            Invoke-Checked (Join-Path $kotlinc 'bin\kotlinc.bat') (@('-jvm-target', '1.8', '-no-reflect',
+                '-classpath', "$($sdk.AndroidJar);$classes", '-d', $classes) + $kt)
+            $stdlib = @(Join-Path $kotlinc 'lib\kotlin-stdlib.jar')
+        }
         $classFiles = @(Get-ChildItem $classes -Recurse -Filter *.class | ForEach-Object FullName)
-        Invoke-Checked (Join-Path $bt 'd8.bat') (@('--release', '--min-api', '24', '--lib', $sdk.AndroidJar, '--output', $dex) + $classFiles)
+        $d8 = & (Join-Path $bt 'd8.bat') @(@('--release', '--min-api', '24', '--lib', $sdk.AndroidJar, '--output', $dex) + $classFiles + $stdlib) 2>&1
+        if ($LASTEXITCODE -ne 0) { $d8 | Write-Host; throw "d8.bat exited with $LASTEXITCODE" }
+        # d8 36.0.0 rewrites Kotlin metadata up to 2.2 and reports every newer kotlin-stdlib 2.4
+        # class it leaves as it is, with stack traces (about a megabyte); the DEX code is
+        # unaffected. So a Kotlin fixture's d8 output is shown only when d8 fails.
+        if ($kt) { Write-Step "d8: $(@($d8 | Where-Object { "$_" -match 'kotlin metadata' }).Count) notes on Kotlin metadata newer than it rewrites (code unaffected)" }
+        else { $d8 | Write-Host }
         # classes.dex goes in beside the resources, stored as the platform expects it.
         Add-Type -AssemblyName System.IO.Compression, System.IO.Compression.FileSystem
         $zip = [IO.Compression.ZipFile]::Open($unsigned, 'Update')
@@ -266,6 +282,10 @@ function Build-Fixtures {
             d8 = '--release --min-api 24'
             dexSha256 = (Get-FileHash (Join-Path $dex 'classes.dex') -Algorithm SHA256).Hash.ToLower()
             apkSha256 = (Get-FileHash $apk -Algorithm SHA256).Hash.ToLower()
+        }
+        if ($kt) {
+            $info.kotlinc = "$($lock.guest.kotlinc.version) -jvm-target 1.8 -no-reflect"
+            $info.kotlinStdlibSha256 = (Get-FileHash $stdlib[0] -Algorithm SHA256).Hash.ToLower()
         }
         if ($libs) {
             $info.ndk = $lock.guest.androidNdk.version

@@ -12,8 +12,10 @@ Windows-ARM64.apk 以 AGPL-3.0 授权。本清单列出它复用或嵌入的每�
 | Microsoft Build of OpenJDK 21 | 21.0.13，`build-lock.json` | 构建 Java 侧；开发时 `winapk` 嵌入的 JVM | GPL-2.0 附 Classpath Exception | 无 | 尚不随包发布；P7 的私有运行时随其许可证和声明一起发布 |
 | Vulkan-Headers | 1.4.363.0，经 vcpkg，`build-lock.json` | 编译 `winapk` 的 Vulkan 探测 | Apache-2.0 | 无 | 仅构建时使用；不随包发布 |
 | zlib | 1.3.2，经 vcpkg，`build-lock.json` | 在 `winapk` 中解压 APK 条目（`apk.cpp`） | zlib | 无 | 以 DLL 形式随 `winapk.exe` 发布；保留其声明 |
+| SQLite | 3.54.1，经 vcpkg，`build-lock.json` | 经上游的 `NativeSqlite`（`winapk-bridge.dll` 中的 `native_sqlite.cpp`）提供 `android.database.sqlite` | 公有领域 | 无 | 以 DLL 形式随 `winapk.exe` 发布；无须声明 |
 | AOSP `frameworks/base/core/res` | 标签 `android-16.0.0_r2`，`build-lock.json` | 编译为 `bin/tools/framework-res.apk`，即应用解析 `@android:` 所用的平台资源 | Apache-2.0 | 无（与上游一样，所有 feature flag 编译为只读 true） | 随运行时发布；保留许可证和 NOTICE |
 | Android SDK build-tools、平台和 NDK | build-tools 36.0.0、android-36、NDK r30，`build-lock.json` | 平台资源所用的 `aapt2`；构建夹具 APK 及其库 | Android Software Development Kit License | 无 | 仅构建时使用；不随包发布，夹具是生成的，从不提交 |
+| Kotlin 编译器与标准库 | 2.4.0，Android Studio 自带，`build-lock.json` | 编译 Kotlin 夹具 T04；`kotlin-stdlib.jar` 转为 DEX 放入该 APK | Apache-2.0 | 无 | 仅构建时使用；夹具是生成的，从不提交，也不随包发布 |
 | Mac.apk | `kksimp/Mac.apk`，最新 `main`，`macapk/` 下的 git subtree（在 `ff2afbf`） | DEX 转换、Android Framework、APK/资源解析、加载器与桥代码 | AGPL-3.0（上游另提供商业许可，本项目不使用） | 为 Windows 原地修改，按提交记录 | 保留文件头和声明；每次发行附带 `macapk/` 的完整对应源码；其内含组件保留各自许可证（`macapk/THIRD_PARTY_NOTICES.txt`） |
 
 ## 商标

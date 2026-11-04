@@ -103,7 +103,7 @@ Mac.apk 后重新执行下面的搜索并更新各表。
 | `apk_unpacker.cpp` | 4,520 | `dlfcn`、`sys/attr`、`sys/qos`、`sys/wait` | 复用 APK 解析；替换文件和进程调用（P1） |
 | `window_policy.cpp`、`window_traits.cpp` | 3,017 | `sys/stat` | 复用窗口规则；呈现交给 `HostWindow` |
 | `jvm_loader.cpp` | 818 | `dlfcn`、`mach`、`sys/mman` | Windows 加载器已在 `platform/windows` 中（`LoadLibraryEx` 加载 `jvm.dll`） |
-| `native_sqlite.cpp` | 783 | CoreFoundation | 在 P1 用 Windows 的 SQLite 构建移植 |
+| `native_sqlite.cpp` | 783 | CoreFoundation | 编入 `winapk-bridge.dll`，链接 vcpkg 的 SQLite（P1）；`_WIN32` 分支以 Win32 NLS 取代其 CoreFoundation 大小写映射和排序 |
 | `native_os.cpp`、`icu_host_bridge.cpp`、`native_linker.cpp`、`jit_wx_guard.cpp` | 1,291 | `dlfcn`、`pthread`、`sys/statvfs` | 按能力处理；`jit_wx_guard` 遵守 W^X 规则（`AGENTS.md`） |
 | `angle_glue.cpp`、`gles_bridge.cpp` 和 `.inc` 桥 | 5,963 | `pthread` | P5 |
 | `apk_native_exec.cpp`、`app_process_group.cpp`、`app_native_stub.cpp`、`host_fonts.cpp` | 650 | `signal` | P1/P2 |
@@ -114,10 +114,12 @@ Mac.apk 后重新执行下面的搜索并更新各表。
 
 | 上游部分 | Windows |
 |---|---|
-| `main.cpp` 的启动流程（安装、解包、DEX 转换、JVM 选项、native、`Boot.run`） | 在 `run.cpp` 中重新表达：原生读取 APK（`apk.cpp`：ZIP、ZIP64、解压、二进制 manifest、条目名筛查），与上游一样在子 ARM64 `java.exe` 中用 com.macapk.dex 转换 DEX，按 APK、转换器和框架的哈希缓存，然后在进程内以上游的选项（去掉 macOS 专用的 hosts 文件路径和 AOT 缓存）创建 JVM |
+| `main.cpp` 的启动流程（安装、解包、DEX 转换、JVM 选项、native、`Boot.run`） | 在 `run.cpp` 中重新表达：原生读取 APK（`apk.cpp`：ZIP、ZIP64、解压、二进制 manifest、条目名筛查），与上游一样在子进程中用 com.macapk.dex 转换 DEX，但子进程是以 UTF-16 字符串向 JVM 传参的 `winapk dex`，而不是 `java.exe`（ADR-0003），按 APK、转换器和框架的哈希缓存，然后在进程内以上游的选项（去掉 macOS 专用的 hosts 文件路径和 AOT 缓存）创建 JVM；`winapk.exe` 使用 UTF-8 活动代码页，所以选项字符串能携带 Unicode 路径 |
+| `build-id.txt` 与 `MACAPK_BUILD_JAVA_ID`（`build_ids.py`，由 `main.cpp` 读取） | `winapk run` 以两个 jar 的完整摘要导出 `MACAPK_BUILD_JAVA_ID`，因此应用自己的动态 DEX 缓存得以保留，并在转换器或框架有任何改动时失效（ADR-0003）；`MACAPK_BUILD_NATIVE_ID` 等客体加载器（P2–P4）实现后再提供 |
 | `NativeLog`（5 个 native 中的 4 个） | 绑定 `print`、`nativeBoostCurrentThreadQos`（线程优先级高于正常）、`nativeBootTimeNanos`（性能计数器，即 HotSpot `nanoTime` 的来源）；`nativeInstallJniTrace` 和 `nativeRegisterPairipGate` 未绑定 |
-| `NativeCocoa` 的窗口、呈现、输入（57 个 native 中的 29 个） | 在 `window.cpp` 中绑定（ADR-0002）：`init`、`runLoop`、尺寸和缩放、窗口和视图、渲染器、`presentBitmap`、触摸注册、方向和宽高比上限、`setSecureContent`（`WDA_EXCLUDEFROMCAPTURE`）、任务移到后台/前台、数据和库目录、`exitProcess`。未绑定，在被调用处以 `UnsatisfiedLinkError` 失败的：AOSP 窗口策略会话（`activityWindowTransition`、`windowOverrideOrientation`、`applyWindowOrientationFor`、`setTopActivityConfigChanges`）、URL 和 scheme 处理、IOSurface 环（`presentFrame`）、GL surface 和覆盖层、`hostFontFile`、`setSystemFontsDir`、`setSystemProperty`、翻译覆盖层、触控板和退出手势调试 |
-| Boot 会用到的其他宿主 native（`NativeOs.setenv`、`NativeSqlite`、`GamepadBridge`、Monet 壁纸） | 未绑定；Boot 逐一记录日志并继续。`NativeSqlite`（SQLite 数据库）是普通应用接下来需要的 |
+| `NativeCocoa` 的窗口、呈现、输入（57 个 native 中的 29 个） | 在 `window.cpp` 中绑定（ADR-0002）：`init`、`runLoop`、尺寸和缩放、窗口和视图、渲染器、`presentBitmap`、触摸注册、方向和宽高比上限、`setSecureContent`（`WDA_EXCLUDEFROMCAPTURE`）、任务移到后台/前台、数据和库目录、`exitProcess`。窗口状态与上游一致：最小化的窗口以 2 Hz 绘制（上游对隐藏窗口的节流），恢复窗口时调用 `ActivityHost.macapkTaskToFront`（上游取消隐藏时的钩子），记录焦点变化，按下途中失去焦点或鼠标捕获时发送 `ACTION_CANCEL`。文字：没有映射按键送达的字符（输入法提交、死键组合、未映射的按键）以 KEYCODE_UNKNOWN 加该字符交给 `dispatchKey`，每个 UTF-16 码元一对 DOWN/UP，即上游处理组合文字的方式。未绑定，在被调用处以 `UnsatisfiedLinkError` 失败的：AOSP 窗口策略会话（`activityWindowTransition`、`windowOverrideOrientation`、`applyWindowOrientationFor`、`setTopActivityConfigChanges`）、URL 和 scheme 处理、IOSurface 环（`presentFrame`）、GL surface 和覆盖层、`hostFontFile`、`setSystemFontsDir`、`setSystemProperty`、翻译覆盖层、触控板和退出手势调试 |
+| `NativeSqlite`（26 个 native） | 已绑定：就是上游的 `native_sqlite.cpp`，编入 `winapk-bridge.dll`，链接 SQLite 3.54.1，带有每个 Android 连接都有的 Unicode `upper`/`lower`/`LIKE` 和 LOCALIZED、UNICODE、PHONEBOOK 排序规则。保留的上游特性：它按 modified UTF-8 转换字符串，所以 SQL 文本或列中 BMP 之外的字符与设备上不同（macOS 亦然） |
+| Boot 会用到的其他宿主 native（`NativeOs.setenv`、`GamepadBridge`、Monet 壁纸） | 未绑定；Boot 逐一记录日志并继续 |
 | `AppClassLoader.findLibrary` 退回 stub | guest native 关闭时改为 `GUEST_NATIVE_DISABLED`（G1.5） |
 | `ClassFileRewriter` 把 `/proc/meminfo` 别名为 `/tmp/mcmeminf` | Windows 上没有这个文件夹：读取 `/proc/meminfo` 的应用什么也得不到（`Boot` 会记录）；需要同样长度的 Windows 路径或另一种重定向 |
 | 应用自己调用的 `System.load(absolutePath)` | 会到达 JVM，JVM 会把 ELF 交给 `LoadLibrary`；必须转到客体加载器（P2）——未完成 |
@@ -134,5 +136,6 @@ Mac.apk 后重新执行下面的搜索并更新各表。
 
 ## 下一步
 
-P1 接下来是普通应用需要的宿主 native（`NativeSqlite`、`NativeOs`、宿主字体）、界面从 `winapk.Mock` 切换到 `winapk run`，以及 Kotlin 夹具；P2 从
+P1 尚未完成的是在另一种 DPI 缩放下运行（需要第二台显示器或另一种缩放），以及应用接下来可能需要的宿主 native（`NativeOs`、宿主字体）；界面从
+`winapk.Mock` 切换到 `winapk run` 属于 P7（`PLAN.md` §14）。P2 从
 `elf64_reader.cpp`、`elf_reader.cpp` 和 `arm64_native.cpp` 的内存部分开始。

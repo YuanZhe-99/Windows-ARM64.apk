@@ -3,6 +3,7 @@
 //   winapk doctor [--json] [--present] [--no-jvm] [--java-home <dir>]
 //   winapk inspect <apk> [--json]
 //   winapk run <apk> [--native=off] [--data-dir <dir>] [--java-home <dir>] [--size <w>x<h>]
+//   winapk dex <apk> <out.jar> [--java-home <dir>]   (the conversion step of run, in its own process)
 //   winapk --version
 #include "doctor.h"
 #include "run.h"
@@ -144,6 +145,7 @@ int Usage() {
     fputs("usage: winapk doctor [--json] [--present] [--no-jvm] [--java-home <dir>]\n"
           "       winapk inspect <apk> [--json]\n"
           "       winapk run <apk> [--native=off] [--data-dir <dir>] [--java-home <dir>] [--size <w>x<h>]\n"
+          "       winapk dex <apk> <out.jar> [--java-home <dir>]\n"
           "       winapk --version\n", stderr);
     return 2;
 }
@@ -182,6 +184,10 @@ int wmain(int argc, wchar_t** argv) {
             else return Usage();
         }
         return Run(ra);
+    }
+    if (cmd == L"dex") {
+        if (argc != 4 && !(argc == 6 && std::wstring(argv[4]) == L"--java-home")) return Usage();
+        return ConvertDex(full(argv[2]), full(argv[3]), argc == 6 ? argv[5] : L"");
     }
     if (cmd != L"doctor") return Usage();
     bool json = false, present = false, noJvm = false;

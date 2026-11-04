@@ -332,15 +332,15 @@ GPU 记录至少包含 vendor/device ID、驱动版本、API 版本、queue fami
 
 ## 8. P1 — 纯 Java APK 与 Win32 基础界面
 
-状态（2026-11-03）：G1 在本机通过（G1.6 与其他 DPI 缩放为 NOT_RUN），结果见 `doc/en-us/platform-notes.md`、`port-audit.md` 与 ADR-0002；界面尚未接入 `winapk run`。
+状态（2026-11-04）：G1 在本机通过，含 G1.6（只有其他 DPI 缩放为 NOT_RUN），结果见 `doc/en-us/platform-notes.md`、`port-audit.md`、ADR-0002 与 ADR-0003；界面接入 `winapk run` 属于 P7。
 
 ### 8.1 拆分构建
 
 - [x] Windows 配置只启用 C/C++；macOS 才启用 OBJCXX 与 Apple frameworks。
 - [x] 分离公共 runtime、macOS backend、Windows backend；用目标级源文件和链接设置控制平台。
 - [x] 给 Java Framework/DEX 转换增加独立构建入口，不要求先构建 Bionic shim、ANGLE 或 Skia。
-- [ ] 支持 Windows classpath 分隔符、Unicode/空格路径、参数文件和长命令行。（P1：classpath 与参数文件已支持；Unicode/空格路径尚未测试。）
-- [ ] 保留上游资源、字体、module patches、build IDs 与缓存失效语义。（P1：资源、字体、module patches 已保留；build IDs 尚未计算，缓存改用内容哈希。）
+- [x] 支持 Windows classpath 分隔符、Unicode/空格路径、参数文件和长命令行。（P1：winapk.exe 使用 UTF-8 活动代码页，转换器以 UTF-16 参数在 `winapk dex` 中运行；含空格、匈牙利文、韩文、中文的路径已测试。）
+- [x] 保留上游资源、字体、module patches、build IDs 与缓存失效语义。（P1：`MACAPK_BUILD_JAVA_ID` 以两个 jar 的完整摘要导出，基础比上游宽，见 ADR-0003。）
 - [x] 按锁定 AOSP/SDK 配方提供 `framework-res.apk`；记录来源/API，缺失时明确失败，不以空资源包通过。
 
 ### 8.2 平台中立 Java 接口
@@ -356,8 +356,8 @@ GPU 记录至少包含 vendor/device ID、驱动版本、API 版本、queue fami
 - [x] Windows runtime 从确定的 JDK/JRE 路径加载正确的 `jvm.dll`，使用 Invocation API 创建 JVM。
 - [x] 验证 JDK 选项实际有效，不照搬 macOS 的信号/主线程/JIT 参数。
 - [x] 明确 Win32 消息线程、Framework 主 Looper 和渲染任务归属；跨线程使用任务队列。
-- [ ] 避免 JNI 调用持锁等待 UI，而 UI 又同步等待 JVM 的循环依赖。（P1：跨线程的窗口调用发送到 UI 线程并等待；尚无超时与诊断。）
-- [ ] 正确处理关闭、焦点、最小化、恢复和进程退出；阻塞任务有超时与诊断。（P1：关闭与退出已验证；焦点、最小化、恢复尚未测试。）
+- [x] 避免 JNI 调用持锁等待 UI，而 UI 又同步等待 JVM 的循环依赖。（P1：跨线程窗口调用每 2 秒记录 `UI_THREAD_BLOCKED`，循环运行后 10 秒未开始即以 `UI_CALL_TIMEOUT` 放弃。）
+- [x] 正确处理关闭、焦点、最小化、恢复和进程退出；阻塞任务有超时与诊断。（P1：最小化时 2 Hz 绘制，恢复时调用 `macapkTaskToFront`，失去焦点取消按下；均已测试。）
 
 ### 8.4 基础图形和输入
 
@@ -366,7 +366,7 @@ GPU 记录至少包含 vendor/device ID、驱动版本、API 版本、queue fami
 - [x] 映射鼠标点击/拖动为触摸，键盘/滚轮为相应 Android 事件；首轮先支持常见按键和返回。
 - [ ] DPI 缩放后使用一致的逻辑坐标；resize 更新 Surface/Activity 的尺寸与生命周期。（P1：100% 缩放与改变尺寸已验证；其他缩放 NOT_RUN。）
 - [x] 简单测试页面使用 TextView、Button、EditText 和可滚动列表；字体回退和输入结果要可检查。
-- [ ] 为不支持的高级输入/多触点/IME 场景记录范围；不让基础编辑框静默丢字。
+- [x] 为不支持的高级输入/多触点/IME 场景记录范围；不让基础编辑框静默丢字。（P1：未映射按键与输入法提交经 WM_CHAR 送达；范围见 `doc/en-us/platform-notes.md`；真实输入法会话 NOT_RUN。）
 
 ### 8.5 数据与缓存
 

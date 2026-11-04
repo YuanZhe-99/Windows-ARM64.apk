@@ -57,6 +57,8 @@ and Latin words only where it helps readability.
 | translated (Vulkan driver) | 转换层（Vulkan 驱动） |
 | baseline (vcpkg) | 基线 |
 | requirement | 环境要求 |
+| active code page | 活动代码页 |
+| build identity | 构建标识 |
 
 ## 6. Review checklist
 

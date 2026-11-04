@@ -59,8 +59,12 @@ be a broad upstream change with no behaviour gained, against `AGENTS.md`'s rule 
 changes small. Binding at the JNI layer leaves upstream's Java untouched.
 
 **Threads and frames.** The JVM's main thread calls `init` and `runLoop` and becomes the UI
-thread that owns every window; calls from other threads that create or change windows are sent to
-it and wait (before `runLoop` starts, until it starts). Each window has a 16 ms frame timer on the
+thread that owns every window; calls from other threads that create or change windows are posted
+to it and wait: every 2 s of waiting logs `UI_THREAD_BLOCKED`, and once `runLoop` runs, a call it
+has not started within 10 s is abandoned with `UI_CALL_TIMEOUT`, so a JNI caller holding a lock
+the UI thread waits for cannot hang the app (before `runLoop` starts the wait has no limit; after
+it ends calls fail at once). A minimised window draws at 2 Hz, upstream's hidden-window
+throttle, and restoring it calls `ActivityHost.macapkTaskToFront`, upstream's unhide hook. Each window has a 16 ms frame timer on the
 UI thread that calls the renderer's `macapkSurfaceChanged` when the size changed and then
 `macapkDrawFrame`, as the macOS display link does; `presentBitmap` copies the ARGB frame under a
 lock and invalidates, and `WM_PAINT` draws it as a 32-bit top-down DIB (ARGB ints are BGRA bytes,
@@ -73,3 +77,27 @@ density = 160 × the system DPI scale, so the app's pixels are the window's pixe
 **Revisit** when the pane hand-off (the interface showing the app inside its own window) or GLES
 surfaces need more than one presentation target, or when frame pacing should follow the display
 (DWM) rather than a timer.
+
+## ADR-0003: build identity and the converter process on Windows
+
+2026-11-04, P1. Status: adopted.
+
+**Decision.** `winapk run` keys an app's converted code (`classes.jar` and its stamp) by the
+APK's SHA-256 and the whole SHA-256 of the converter jar (`macapk-loader.jar`) and the framework
+jar (`android-framework.jar`), and exports `MACAPK_BUILD_JAVA_ID`, 16 hex digits of a digest of
+those two, as upstream's `main.cpp` exports it from `build-id.txt`: it keys the app's own
+dynamic-DEX cache (`dalvik.system.MacApkDexConverter`). The DEX converter runs in a child
+`winapk dex` process that creates its JVM with the Invocation API and passes the paths as UTF-16
+strings, not in a child `java.exe`; `winapk.exe` declares the UTF-8 active code page in its
+manifest.
+
+**Why.** Upstream's `build_ids.py` narrows `JAVA_ID` to the converter's own bytecode and the
+framework's class shapes, so a framework method-body change keeps every converted app; porting it
+needs Python or a second implementation of its digest. The whole-jar basis (upstream's former
+`JAVA_ID`, now its diagnostic `JARS_ID`) is never stale; it only re-converts more often. A
+`java.exe` child gets its arguments in the ANSI code page, and HotSpot reads JVM option strings
+in it too: a path with characters outside the PC's legacy code page (Korean on a Chinese system)
+broke both. With the UTF-8 active code page the option strings carry any path.
+
+**Revisit** when re-converting after framework-only changes costs enough to matter (then port the
+narrowed digest), or when the private runtime of P7 changes how the converter is started.
