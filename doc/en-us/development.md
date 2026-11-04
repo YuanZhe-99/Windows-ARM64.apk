@@ -6,9 +6,13 @@
   tool dependency (`go tool mygo …`) at its latest tag.
 - A Windows 11 ARM64 machine for every run of the runtime; graphics work needs a desktop session
   and a GPU with an ARM64 Vulkan driver.
-- For the runtime (from P0): an ARM64 OpenJDK, the Android SDK and NDK, clang-cl with the Windows
-  SDK, CMake and Ninja. P0 chooses their versions and locks them in `build-lock.json`;
-  `scripts/windows/check-requirements.ps1` will check them without installing anything.
+- For the runtime: what `build-lock.json` locks. Visual Studio 2026 with the ARM64 C++ tools,
+  Clang, CMake and vcpkg components provides clang-cl, MSVC, the Windows SDK, CMake, Ninja and
+  vcpkg (none of them on PATH). The JDK is Microsoft OpenJDK 21 for ARM64, installed with
+  `winget install --id Microsoft.OpenJDK.21 -e --architecture arm64` (its MSI sets the system
+  `JAVA_HOME` and PATH; `WINAPK_JAVA_HOME` overrides it for the build). The Android SDK
+  (build-tools 36.0.0, android-36) and NDK r30 are needed from P1 and P2.
+  `scripts/windows/check-requirements.ps1` checks all of it and installs nothing.
 
 ## Commands
 
@@ -22,8 +26,25 @@ go tool mygo i18n check
 go run ./tools/checkdocs           # doc/en-us and doc/zh-cn mirror each other
 ```
 
-The runtime build, `winapk doctor` and the fixture suites are added here with the first runtime
-code (`PLAN.md` §18 lists the intended commands).
+The runtime's commands are in the next section.
+
+## Building and testing the runtime
+
+```powershell
+.\scripts\windows\check-requirements.ps1
+.\scripts\windows\build.ps1 -Component Java
+.\scripts\windows\build.ps1 -Component Host -Configuration Debug
+.\scripts\windows\test.ps1 -Suite Host
+.\build\windows-arm64\bin\winapk.exe doctor --json
+.\build\windows-arm64\bin\winapk.exe doctor --present
+```
+
+`-Component Java` builds Mac.apk's Java side into `build/windows-arm64/lib` (see
+[port-audit.md](port-audit.md)); `-Component Host` builds `winapk.exe` and `winapk-probe.jar` into
+`build/windows-arm64/bin` with clang-cl in Visual Studio's ARM64 developer environment, fetching
+the Vulkan headers through vcpkg the first time, and fails if any PE it makes is not ARM64.
+`test.ps1 -Suite Host` is fixture T01. `doctor --present` also opens a small test window to check
+Vulkan presentation; without it that check is `not-run`.
 
 ## Running the interface
 

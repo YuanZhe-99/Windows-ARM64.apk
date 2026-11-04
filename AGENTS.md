@@ -35,6 +35,9 @@ about to change, verify against the code, then fix the docs in the same commit.
 | Interface screens, wording and design tokens (reference for the MyGo front end) | `design/` |
 | The interface as built: windows, panes, sheets, its files, the runtime contract draft | `doc/en-us/gui.md` |
 | Verified upstream contracts (Mac.apk, Windows ARM64 ABI, Android NDK, MyGo) and quirks | `doc/en-us/upstream.md` |
+| What in Mac.apk is tied to macOS and how each part is handled (the P0 port audit) | `doc/en-us/port-audit.md` |
+| Architecture decisions (ADRs) | `doc/en-us/decisions.md` |
+| Locked toolchain and dependency versions | `build-lock.json` |
 | Reused third-party code, licenses and obligations | `doc/en-us/third-party.md` |
 | What is implemented and verified per platform, with gate status | `doc/en-us/platform-notes.md` |
 | Environment, commands, dev loop | `doc/en-us/development.md` |
@@ -255,8 +258,10 @@ go tool mygo i18n check
 go run ./tools/checkdocs
 ```
 
-- The runtime build, `doctor` and fixture suites (`scripts/windows/*.ps1`, `PLAN.md` §18) join this
-  list, and `development.md`, with the first runtime code. "No tests executed" is never a pass.
+- When a change touches the runtime, the build scripts or `macapk/`, also run on Windows 11 ARM64:
+  `scripts/windows/check-requirements.ps1`, `build.ps1 -Component All` and `test.ps1 -Suite Host`
+  (each suite joins as its phase adds it; `doc/en-us/development.md`). "No tests executed" is
+  never a pass.
 - Run on real Windows 11 ARM64 hardware whenever a change touches the JVM, the loader, the ABI,
   JNI or graphics; an x64 machine can only report parsing or cross-compilation results. Graphics
   gates need a desktop session and a GPU.

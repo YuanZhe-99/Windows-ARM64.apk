@@ -9,5 +9,7 @@
 | `internal/gui` | 界面（[gui.md](../gui.md)）：主窗口、窗格和组、应用窗口、面板、设置、诊断 | `App`、`New`、`view`、`launch`、`group`、`showTab` |
 | `internal/winapk` | 界面对运行时的期望（契约草案）及 Mock | `Client`、`Process`、`Report`、`APK`、`State`、`Mock` |
 | `locales` | 界面的 ARB 目录（en、zh-Hans）及生成的访问函数 | `en.json` |
+| `macapk/runtime/platform/windows` | Windows ARM64 宿主：`winapk.exe`（`doctor`）、它的 JVM 和 Vulkan 探测、`windows.cmake`、`vcpkg.json` | `wmain`、`ProbeJvm`、`ProbeVulkan`、`ProbeHost`、`HostProbe.run` |
+| `scripts/windows` | 环境检查、构建（Java、Host）和测试套件（Host = T01） | `build.ps1`、`test.ps1`、`check-requirements.ps1`、`common.ps1` |
 | `internal/version` | 产品版本 | `Version`、`Older` |
 | `tools/checkdocs` | 文档镜像检查 | `main` |

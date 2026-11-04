@@ -1,4 +1,11 @@
 cmake_minimum_required(VERSION 3.20)
+# Windows-ARM64.apk: on Windows the host targets come from platform/windows; nothing below
+# (Objective-C++, Apple frameworks, Homebrew paths) applies there.
+if(WIN32)
+  project(macapk_runtime LANGUAGES C CXX)
+  include(platform/windows/windows.cmake)
+  return()
+endif()
 project(macapk_runtime LANGUAGES C CXX OBJCXX)
 
 set(CMAKE_CXX_STANDARD 17)

@@ -289,17 +289,19 @@ P8：P7 后的可选扩展（Skia/AGSL、媒体、ARM32 等）
 
 ### 工作项
 
-- [ ] 记录当前工作树状态、合入的上游 commit 和已有变更；不覆盖用户改动。
-- [ ] 对比本计划核查时的上游提交与最新上游 `main`；路径变化时更新审计表，不盲套文件名。
-- [ ] 搜索平台耦合：`Cocoa`、`AppKit`、`Metal`、`Mach`、`dyld`、`.dylib`、`/opt/homebrew`、`/Library`、`mmap`、`pthread`、`sigaction`、`x18`、`TPIDR_EL0`、`svc`。
-- [ ] 阅读 `runtime/CMakeLists.txt`、`runtime/translator/CMakeLists.txt`、`runtime/scripts/build.sh` 和 `scripts/build_framework_res.sh`。
-- [ ] 从既有构建脚本提取 Java 编译、资源打包、module patches 和启动选项；不只把 `.sh` 改名为 `.ps1`。
-- [ ] 为宿主、客体和 Java 工具链分别记录版本、target triple、来源、校验值、许可证与用途。
-- [ ] 检查生成 PE 的机器类型、JVM/DLL 架构、NDK ELF 的架构。构建期工具可以通过 x64 仿真运行，但不得与原生运行时验证混淆。
-- [ ] 核实 JDK 的 `java.desktop`、JNI headers、`jvm.dll`、Java2D/字体支持，以及上游需要的 `--patch-module`、`--add-opens`。
-- [ ] 编写 `doctor`：检查运行时、JVM、图形后端及可选依赖，输出机器可读 JSON。
-- [ ] 锁定 Mac.apk、Go、MyGo 以外的依赖版本（这三者跟随最新，只记录每次构建实际使用的版本）；不得依赖 macOS 预编译产物。ANGLE/Skia 若没有合适 ARM64 二进制，建立独立构建任务。
-- [ ] 建立公开、自建的 APK/ELF 测试集；上游私人回归集不可作为验收前提。
+状态（2026-11-03）：G0 通过，结果见 `doc/en-us/platform-notes.md`、`port-audit.md`、`decisions.md` 与 `build-lock.json`。
+
+- [x] 记录当前工作树状态、合入的上游 commit 和已有变更；不覆盖用户改动。
+- [x] 对比本计划核查时的上游提交与最新上游 `main`；路径变化时更新审计表，不盲套文件名。
+- [x] 搜索平台耦合：`Cocoa`、`AppKit`、`Metal`、`Mach`、`dyld`、`.dylib`、`/opt/homebrew`、`/Library`、`mmap`、`pthread`、`sigaction`、`x18`、`TPIDR_EL0`、`svc`。
+- [x] 阅读 `runtime/CMakeLists.txt`、`runtime/translator/CMakeLists.txt`、`runtime/scripts/build.sh` 和 `scripts/build_framework_res.sh`。
+- [x] 从既有构建脚本提取 Java 编译、资源打包、module patches 和启动选项；不只把 `.sh` 改名为 `.ps1`。
+- [x] 为宿主、客体和 Java 工具链分别记录版本、target triple、来源、校验值、许可证与用途。
+- [ ] 检查生成 PE 的机器类型、JVM/DLL 架构、NDK ELF 的架构。构建期工具可以通过 x64 仿真运行，但不得与原生运行时验证混淆。（2026-11-03：PE 与 JVM/DLL 已检查，均为 ARM64；NDK ELF 待安装 NDK 后在 P2 检查。）
+- [x] 核实 JDK 的 `java.desktop`、JNI headers、`jvm.dll`、Java2D/字体支持，以及上游需要的 `--patch-module`、`--add-opens`。
+- [x] 编写 `doctor`：检查运行时、JVM、图形后端及可选依赖，输出机器可读 JSON。
+- [x] 锁定 Mac.apk、Go、MyGo 以外的依赖版本（这三者跟随最新，只记录每次构建实际使用的版本）；不得依赖 macOS 预编译产物。ANGLE/Skia 若没有合适 ARM64 二进制，建立独立构建任务。
+- [ ] 建立公开、自建的 APK/ELF 测试集；上游私人回归集不可作为验收前提。（2026-11-03：T01 已建立；APK 与 ELF 夹具需要 Android SDK/NDK，见 `build-lock.json`。）
 
 ### `doctor` 最低字段
 

@@ -1,18 +1,18 @@
 # 上游契约
 
 Windows-ARM64.apk 依赖上游的哪些行为，以及每一点核实到了什么程度。Mac.apk、Go 与 MyGo 跟随各自最新版本，因此上游变化时
-每一点都要重新核对。下列 Mac.apk 要点读自提交 `f87be03`（代码与 2026-11-03 的 `main` `367fd1a` 相同），未构建或运行任何东西。
-subtree 已在 `367fd1a` 引入，下文提到的每个路径都存在；行为要点在 P0 的审计和构建给出结果前仍为“已阅读”。
+每一点都要重新核对。下列 Mac.apk 要点在 `ff2afbf`（2026-11-03 合并）上成立；“已阅读”表示读过源码，“已构建”或“已验证”表示 P0 在
+Windows 11 ARM64 上构建或运行过（[port-audit.md](port-audit.md)）。
 
 ## Mac.apk
 
 | 要点 | 影响 | 核实程度 |
 |---|---|---|
-| Framework 与 DEX 转换器是 Java（`runtime/java/`、`runtime/java/com/macapk/dex/`） | 保持原样；只隔离平台调用和路径假设 | 已阅读 |
+| Framework 与 DEX 转换器是 Java（`runtime/java/`、`runtime/java/com/macapk/dex/`） | 保持原样；只隔离平台调用和路径假设 | 已构建：在 Windows ARM64 JDK 上不经修改即可编译 |
 | `Boot.java` 的启动流程耦合 `NativeCocoa`、本地库和 macOS 路径 | 拆出宿主启动服务；保留应用生命周期 | 已阅读 |
 | `NativeCocoa.java` 承载窗口、Surface、呈现和宿主服务的 JNI 方法 | 新增平台中立入口，调用逐步迁移过去 | 已阅读 |
-| `runtime/src/jvm_loader.cpp` 以 macOS 加载假设嵌入 JVM | 需要 Windows `jvm.dll` 加载器及其自己的选项 | 已阅读 |
-| `runtime/CMakeLists.txt` 在顶层启用 OBJCXX，并查找 Apple 与 Homebrew 依赖 | 语言、源文件、链接和依赖发现改为按平台条件化 | 已阅读 |
+| `runtime/src/jvm_loader.cpp` 以 macOS 加载假设嵌入 JVM | 需要 Windows `jvm.dll` 加载器及其自己的选项 | 已验证：Windows 加载器在 `platform/windows` 中，JDK 接受上游的模块选项（T01） |
+| `runtime/CMakeLists.txt` 在顶层启用 OBJCXX，并查找 Apple 与 Homebrew 依赖 | 语言、源文件、链接和依赖发现改为按平台条件化 | 已构建：`if(WIN32)` 分支在 macOS 项目之前引入 `platform/windows/windows.cmake` |
 | `runtime/translator/src/arm64_native.cpp` 将 ELF 映射/重定位与 macOS 内存、寄存器和补丁机制交织 | 复用解析逻辑；分离宿主内存与执行策略 | 已阅读 |
 | `arm64_pack.cpp` 与 `arm64_macho_emit.cpp` 把客体代码包装为 Mach-O | Windows 改用一个宿主 PE 桥和虚拟客体库注册表 | 已阅读 |
 | `bionic_shim.cpp` 将 Bionic、系统调用和线程绑定到 Darwin 机制 | 按能力拆分，绝不整文件移植 | 已阅读 |
@@ -31,6 +31,9 @@ subtree 已在 `367fd1a` 引入，下文提到的每个路径都存在；行为�
 | `x18` 指向 TEB，`TPIDR_EL0` 保留 | 客体 TLS 和影子调用栈方案绝不使用它们；进入时不做交换 | 已阅读 |
 | 数据模型为 LLP64：`long` 为 32 位 | 跨边界的客体 `long` 使用独立的 64 位类型 | 已阅读 |
 | 展开使用专门的 `.pdata`/`.xdata` 元数据与 SEH | 客体 DWARF 展开与宿主 thunk 是两个不同的问题 | 已阅读 |
+
+| JVM 只在 `System.loadLibrary` 加载的库中查找 `Java_*` native，不在嵌入它的程序中查找 | 宿主 native 用 `RegisterNatives` 注册（[decisions.md](decisions.md)） | 已验证（T01） |
+| 在这台电脑上（Adreno 8cx Gen 3），Vulkan loader 只提供 Mesa Dozen，即转换到 Direct3D 12 的 Vulkan 1.2 | `doctor` 报告 `VULKAN_DRIVER_TRANSLATED`；图形关卡需要厂商驱动或一项已记录的决定 | 已验证（`doctor`） |
 
 ## Android NDK
 

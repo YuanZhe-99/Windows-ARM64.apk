@@ -54,6 +54,9 @@ and Latin words only where it helps readability.
 | group (of panes) | 组 |
 | sample data | 示例数据 |
 | sheet | 面板 |
+| translated (Vulkan driver) | 转换层（Vulkan 驱动） |
+| baseline (vcpkg) | 基线 |
+| requirement | 环境要求 |
 
 ## 6. Review checklist
 

@@ -10,6 +10,8 @@ MyGo 前端在手机式窗格或独立窗口中打开每个应用，每个 APK �
 | 文档 | 内容 |
 |---|---|
 | [gui.md](gui.md) | 界面：窗口、窗格和组、面板、它的文件、运行时契约草案、示例数据 |
+| [port-audit.md](port-audit.md) | P0：Mac.apk 中哪些部分与 macOS 绑定，以及在 Windows 上如何处理 |
+| [decisions.md](decisions.md) | 架构决策（ADR） |
 | [upstream.md](upstream.md) | 上游契约与特殊行为：Mac.apk、Windows ARM64 ABI、Android NDK、MyGo |
 | [third-party.md](third-party.md) | 复用的代码与依赖、许可证与义务 |
 | [platform-notes.md](platform-notes.md) | 各平台已实现与已验证的内容、关卡状态 |
@@ -21,12 +23,13 @@ MyGo 前端在手机式窗格或独立窗口中打开每个应用，每个 APK �
 ## 上游版本
 
 Go、MyGo 与 Mac.apk 不固定版本：始终跟随各自的最新版本。下表为最近一次检查（2026-11-03）时的最新版本；
-P0 创建 `build-lock.json` 后，由它记录每次构建实际使用的版本。
+其余依赖锁定在 `build-lock.json` 中，它也记录上次构建实际使用的这三者的版本。
 
 | 组件 | 策略 | 最近检查时的最新版本 |
 |---|---|---|
 | Go | 最新发行版 | 1.27.3 |
 | MyGo | 最新标签 | v0.7.4 |
-| Mac.apk | 最新 `main`，作为 `macapk/` subtree | `ff2afbf`（自 subtree 的 `367fd1a` 起只改了上游的 `README.md`；尚未合并，由运行时 Agent 下次合并） |
-| OpenJDK（ARM64）、Android SDK/NDK、ANGLE、Vulkan Loader、Skia | 在 P0 选定并锁定 | 尚未选定 |
-| clang-cl、Windows SDK、CMake、Ninja | 在 P0 选定并锁定 | 尚未选定 |
+| Mac.apk | 最新 `main`，作为 `macapk/` subtree | `ff2afbf`，已合并 |
+| OpenJDK（ARM64）、clang-cl、MSVC、Windows SDK、CMake、Ninja、vcpkg、Vulkan 头文件 | 锁定在 `build-lock.json` | Microsoft OpenJDK 21.0.13；clang-cl 22.1.3；MSVC 14.51；SDK 10.0.26100；CMake 4.3.1；Ninja 1.13.2；vcpkg 基线 `afa249f`；Vulkan 头文件 1.4.363 |
+| Android SDK/NDK、AOSP 框架资源 | 已在 `build-lock.json` 选定，尚未安装 | build-tools 36.0.0、android-36；NDK r30（30.0.16248370）；`android-16.0.0_r2` |
+| ANGLE、Skia | 在 P5a 和 P8 选定 | 尚未选定；Vulkan loader 使用 Windows 自带的 |

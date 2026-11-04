@@ -2,20 +2,18 @@
 
 What Windows-ARM64.apk relies on from its upstreams, and how far each point has been checked.
 Mac.apk, Go and MyGo follow their latest version, so every point is re-checked when that upstream
-moves. The Mac.apk points below were read from commit `f87be03` (identical code to `main` at
-`367fd1a`, 2026-11-03) without building or running anything. The subtree was imported at
-`367fd1a` and every path named below exists in it; the behavior points stay "read" until P0's
-audit and builds replace them with results.
+moves. The Mac.apk points below hold at `ff2afbf` (merged 2026-11-03); "read" means read in the source,
+"built" or "verified" that P0 built or ran it on Windows 11 ARM64 ([port-audit.md](port-audit.md)).
 
 ## Mac.apk
 
 | Point | Consequence | Checked |
 |---|---|---|
-| The Framework and the DEX translator are Java (`runtime/java/`, `runtime/java/com/macapk/dex/`) | kept as they are; only platform calls and path assumptions are isolated | read |
+| The Framework and the DEX translator are Java (`runtime/java/`, `runtime/java/com/macapk/dex/`) | kept as they are; only platform calls and path assumptions are isolated | built: compiles unchanged on the Windows ARM64 JDK |
 | `Boot.java` couples start-up to `NativeCocoa`, native libraries and macOS paths | a host start-up service is split out; the app lifecycle stays | read |
 | `NativeCocoa.java` carries the window, Surface, presentation and host-service JNI methods | a platform-neutral entry is added and calls move to it step by step | read |
-| `runtime/src/jvm_loader.cpp` embeds the JVM with macOS loading assumptions | a Windows `jvm.dll` loader with its own options is needed | read |
-| `runtime/CMakeLists.txt` enables OBJCXX at the top level and finds Apple and Homebrew dependencies | languages, sources, links and discovery become platform-conditional | read |
+| `runtime/src/jvm_loader.cpp` embeds the JVM with macOS loading assumptions | a Windows `jvm.dll` loader with its own options is needed | verified: the Windows loader is in `platform/windows`, and the JDK accepts upstream's module options (T01) |
+| `runtime/CMakeLists.txt` enables OBJCXX at the top level and finds Apple and Homebrew dependencies | languages, sources, links and discovery become platform-conditional | built: an `if(WIN32)` branch includes `platform/windows/windows.cmake` before the macOS project |
 | `runtime/translator/src/arm64_native.cpp` interleaves ELF mapping and relocation with macOS memory, register and patching | the parsing is reused; host memory and execution policy are separated | read |
 | `arm64_pack.cpp` and `arm64_macho_emit.cpp` wrap guest code as Mach-O | Windows uses one host PE bridge and a virtual guest library registry instead | read |
 | `bionic_shim.cpp` ties Bionic, syscalls and threads to Darwin mechanisms | split by capability, never ported file-wide | read |
@@ -34,6 +32,9 @@ audit and builds replace them with results.
 | `x18` holds the TEB and `TPIDR_EL0` is reserved | guest TLS and shadow-call-stack schemes never use them; no swap on entry | read |
 | The data model is LLP64: `long` is 32-bit | guest `long` uses its own 64-bit type across the boundary | read |
 | Unwinding uses its own `.pdata`/`.xdata` metadata and SEH | guest DWARF unwinding and host thunks are separate problems | read |
+
+| The JVM finds `Java_*` natives only in libraries loaded by `System.loadLibrary`, not in the program embedding it | host natives are registered with `RegisterNatives` ([decisions.md](decisions.md)) | verified (T01) |
+| On this PC (Adreno 8cx Gen 3) the Vulkan loader offers only Mesa Dozen, Vulkan 1.2 translated to Direct3D 12 | `doctor` reports `VULKAN_DRIVER_TRANSLATED`; graphics gates need a vendor driver or a recorded decision | verified (`doctor`) |
 
 ## Android NDK
 
