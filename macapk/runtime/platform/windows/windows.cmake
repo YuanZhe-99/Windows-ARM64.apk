@@ -3,7 +3,7 @@
 # never breaking the macOS build). Built by scripts/windows/build.ps1 -Component Host.
 #
 # Inputs: JAVA_HOME (a JDK 21 for ARM64: jni.h only, jvm.dll is loaded at run time) and
-# WINAPK_BIN_DIR (where winapk.exe goes). Vulkan headers, zlib and SQLite come from vcpkg (vcpkg.json here).
+# WINAPK_BIN_DIR (where winapk.exe goes). Vulkan headers, zlib, SQLite and Capstone come from vcpkg (vcpkg.json here).
 
 if(NOT CMAKE_SYSTEM_PROCESSOR MATCHES "ARM64|arm64|aarch64")
   message(FATAL_ERROR "Windows-ARM64.apk's host builds for ARM64 only (got ${CMAKE_SYSTEM_PROCESSOR}); no ARM64EC or x64")
@@ -17,6 +17,7 @@ endif()
 find_package(VulkanHeaders CONFIG REQUIRED)
 find_package(ZLIB REQUIRED)
 find_package(unofficial-sqlite3 CONFIG REQUIRED)
+find_package(capstone CONFIG REQUIRED)
 
 # One version for the front end and the runtime (AGENTS.md, "Release, version").
 file(STRINGS "${CMAKE_CURRENT_LIST_DIR}/../../../../internal/version/version.go" _ver REGEX "^const Version = \"")
@@ -54,6 +55,18 @@ target_compile_definitions(winapk-bridge PRIVATE UNICODE _UNICODE WIN32_LEAN_AND
 target_compile_options(winapk-bridge PRIVATE /W4 /EHsc -Wno-missing-field-initializers)
 target_link_libraries(winapk-bridge PRIVATE unofficial::sqlite3::sqlite3 user32 gdi32 shcore)
 
+# The standalone guest ELF experiment (PLAN.md §9.1): the N0 loader and its ABI suite, without
+# the JVM or a window. Same compiler flags and mitigations as winapk.exe, the process guest code
+# will run in. The ELF record layouts come from upstream's translator headers.
+add_executable(native-probe
+  ${_win}/src/native_probe/main.cpp
+  ${CMAKE_CURRENT_LIST_DIR}/../../guest/loader/elf_loader.cpp)
+target_include_directories(native-probe PRIVATE
+  "${CMAKE_CURRENT_LIST_DIR}/../../guest/loader" "${CMAKE_CURRENT_LIST_DIR}/../../translator/include")
+target_compile_definitions(native-probe PRIVATE WINAPK_VERSION="${WINAPK_VERSION}" UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX _CRT_SECURE_NO_WARNINGS)
+target_compile_options(native-probe PRIVATE /W4 /EHsc -Wno-missing-field-initializers)
+target_link_libraries(native-probe PRIVATE capstone::capstone psapi)
+
 if(WINAPK_BIN_DIR)
-  set_target_properties(winapk winapk-bridge PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${WINAPK_BIN_DIR}")
+  set_target_properties(winapk winapk-bridge native-probe PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${WINAPK_BIN_DIR}")
 endif()

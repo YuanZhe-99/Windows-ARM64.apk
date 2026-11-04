@@ -332,7 +332,7 @@ GPU 记录至少包含 vendor/device ID、驱动版本、API 版本、queue fami
 
 ## 8. P1 — 纯 Java APK 与 Win32 基础界面
 
-状态（2026-11-04）：G1 在本机通过，含 G1.6，100% 与 200% 缩放下均通过（运行中改变缩放为 NOT_RUN），结果见 `doc/en-us/platform-notes.md`、`port-audit.md`、ADR-0002 与 ADR-0003；界面接入 `winapk run` 属于 P7。
+状态（2026-11-04）：G1 在本机通过，含 G1.6，100% 与 200% 缩放下均通过（运行中改变缩放为 NOT_RUN），结果见 `doc/en-us/platform-notes.md`、`port-audit.md`、ADR-0002 与 ADR-0003；界面接入 `winapk run` 属于 P7。G2 也已在本机通过（见 §9 与 `doc/en-us/native-profiles.md`、`abi-compatibility.md`）。
 
 ### 8.1 拆分构建
 
@@ -392,25 +392,25 @@ GPU 记录至少包含 vendor/device ID、驱动版本、API 版本、queue fami
 
 ### 9.2 解析、内存和重定位
 
-- [ ] 先接受 little-endian ELF64、`EM_AARCH64`、`ET_DYN`；验证所有偏移、长度、溢出和 segment 重叠。
-- [ ] 按 program headers 处理 `PT_LOAD`、`PT_DYNAMIC`、BSS 和对齐，不把完整 section headers 作为正常加载前提。
-- [ ] 查询 Windows 页大小与 allocation granularity；计算 load bias、reserve/commit 范围和最终权限。
-- [ ] 使用 `VirtualAlloc`/`VirtualProtect` 等宿主实现，并在代码修改后 `FlushInstructionCache`。
-- [ ] 保持构造期间可写、执行前设定最终权限；不以长期 RWX 规避问题。不能可靠表达的 page 权限组合应报告并拒绝。
-- [ ] 第一批实现 `RELATIVE`、`ABS64`、`GLOB_DAT`、`JUMP_SLOT`；按用例加入 GNU hash/symbol versions 等。
-- [ ] 明确记录 RELR、Android packed relocations、TLS relocations、IFUNC/IRELATIVE 的支持状态；未知类型不得跳过。
-- [ ] 解析阶段完成不等于可执行：依赖、重定位、执行 profile 检查完成前，不运行构造函数或 IFUNC resolver。
-- [ ] 支持失败回滚，避免半初始化模块进入全局可查找状态。
+- [x] 先接受 little-endian ELF64、`EM_AARCH64`、`ET_DYN`；验证所有偏移、长度、溢出和 segment 重叠。
+- [x] 按 program headers 处理 `PT_LOAD`、`PT_DYNAMIC`、BSS 和对齐，不把完整 section headers 作为正常加载前提。
+- [x] 查询 Windows 页大小与 allocation granularity；计算 load bias、reserve/commit 范围和最终权限。
+- [x] 使用 `VirtualAlloc`/`VirtualProtect` 等宿主实现，并在代码修改后 `FlushInstructionCache`。
+- [x] 保持构造期间可写、执行前设定最终权限；不以长期 RWX 规避问题。不能可靠表达的 page 权限组合应报告并拒绝。
+- [x] 第一批实现 `RELATIVE`、`ABS64`、`GLOB_DAT`、`JUMP_SLOT`；按用例加入 GNU hash/symbol versions 等。（P2：另有 RELR、GNU 与 SysV hash；带版本的导入拒绝。）
+- [x] 明确记录 RELR、Android packed relocations、TLS relocations、IFUNC/IRELATIVE 的支持状态；未知类型不得跳过。（`doc/en-us/native-profiles.md`）
+- [x] 解析阶段完成不等于可执行：依赖、重定位、执行 profile 检查完成前，不运行构造函数或 IFUNC resolver。（N0 完全不运行它们。）
+- [x] 支持失败回滚，避免半初始化模块进入全局可查找状态。
 
 ### 9.3 ABI 测试
 
-- [ ] NDK 生成 N0 fixtures，并记录 API level、编译器/链接器版本、优化和安全选项。
-- [ ] 测试整数、指针、浮点、混合参数、超过寄存器容量的参数、HFA、小/大结构体返回。
-- [ ] 验证保存寄存器、栈对齐、返回地址和回调重入；`x18` 检测只读，不主动给宿主 x18 写 sentinel。
-- [ ] 对 thunk 使用明确的 guest/host 参数模型；有证明的固定签名才允许直接调用。
-- [ ] 动态产生的宿主 thunk 按 Windows 要求处理可调用目标和展开信息；用目标进程实际缓解策略进行测试。
-- [ ] 扫描 x18、TPIDR、svc 等风险并结合构建来源决定准入；仅报告支持的 N0 语义。
-- [ ] 加入损坏 ELF、错误架构、未知重定位、缺失符号和禁止指令的负例。
+- [x] NDK 生成 N0 fixtures，并记录 API level、编译器/链接器版本、优化和安全选项。
+- [x] 测试整数、指针、浮点、混合参数、超过寄存器容量的参数、HFA、小/大结构体返回。
+- [x] 验证保存寄存器、栈对齐、返回地址和回调重入；`x18` 检测只读，不主动给宿主 x18 写 sentinel。
+- [x] 对 thunk 使用明确的 guest/host 参数模型；有证明的固定签名才允许直接调用。（`doc/en-us/abi-compatibility.md`；N0 尚无 thunk。）
+- [ ] 动态产生的宿主 thunk 按 Windows 要求处理可调用目标和展开信息；用目标进程实际缓解策略进行测试。（P2：N0 不生成 thunk；以 `winapk.exe` 的编译选项与缓解策略（CFG 关闭）测试，启用 CFG 为 NOT_RUN。）
+- [x] 扫描 x18、TPIDR、svc 等风险并结合构建来源决定准入；仅报告支持的 N0 语义。
+- [x] 加入损坏 ELF、错误架构、未知重定位、缺失符号和禁止指令的负例。
 
 ### G2 验收
 

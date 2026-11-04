@@ -35,9 +35,11 @@ The runtime's commands are in the next section.
 
 ```powershell
 .\scripts\windows\check-requirements.ps1
-.\scripts\windows\build.ps1 -Component All          # or Java, FrameworkRes, Fixtures, Host
+.\scripts\windows\build.ps1 -Component All          # or Java, FrameworkRes, Fixtures, Host, NativeProbe
 .\scripts\windows\test.ps1 -Suite Host
 .\scripts\windows\test.ps1 -Suite Java
+.\scripts\windows\test.ps1 -Suite Native
+.\build\windows-arm64\bin\native-probe.exe suite .\tests\fixtures\elf\libn0abi.so
 .\build\windows-arm64\bin\winapk.exe doctor --json
 .\build\windows-arm64\bin\winapk.exe inspect .\tests\fixtures\hello-java.apk --json
 .\build\windows-arm64\bin\winapk.exe run .\tests\fixtures\hello-java.apk --native=off
@@ -53,10 +55,12 @@ The runtime's commands are in the next section.
 `d8`, `zipalign` and `apksigner`, for `src/**/*.kt` kotlinc (the Kotlin standard library is
 dexed in) and, for `jni/*.c`, the NDK's clang; each gets a
 `<name>.json` with its build parameters and hashes, and every library is checked to be ELF64
-AArch64. `-Component Host` builds `winapk.exe`, `winapk-bridge.dll` and `winapk-probe.jar` into
-`build/windows-arm64/bin` with clang-cl in Visual Studio's ARM64 developer environment, fetching
-the Vulkan headers, zlib and SQLite through vcpkg the first time, and fails if any PE it makes is not
-ARM64.
+AArch64. `-Component Host` builds `winapk.exe`, `winapk-bridge.dll`, `native-probe.exe` and
+`winapk-probe.jar` into `build/windows-arm64/bin` with clang-cl in Visual Studio's ARM64 developer
+environment, fetching the Vulkan headers, zlib, SQLite and Capstone through vcpkg the first time,
+and fails if any PE it makes is not ARM64. `-Component NativeProbe` builds `native-probe.exe` alone
+and the guest ELF fixtures of `tests/windows-arm64/guest-elf/fixtures.psd1` into `tests/fixtures/elf`
+with the NDK's clang (never committed; hashes in `fixtures.json` there).
 
 `test.ps1 -Suite Host` is fixture T01. `test.ps1 -Suite Java` is G1 (T02, T03, T04 and the `hello-jni`
 negative case): it runs the fixtures with `winapk run`, posts clicks, keys, characters, a resize,
@@ -64,7 +68,9 @@ minimise, restore and deactivation to the app's window, suspends the UI thread o
 UI-call timeout (with upstream's `MACAPK_INJECT_FILE` input driver sending Back), runs a copy from
 a Unicode path, and reads the runtime's log; it needs a desktop session and writes its data and logs
 to `build/windows-arm64/test-data`. `doctor --present` also opens a small test window to check
-Vulkan presentation; without it that check is `not-run`.
+Vulkan presentation; without it that check is `not-run`. `test.ps1 -Suite Native` is G2 (T05, T06):
+no JVM and no window; it runs `native-probe.exe suite` on each T05 build, `load` on each T06 file
+(checking the refusal against `fixtures.psd1`) and `stress`.
 
 `winapk run` keeps each app's data under `%LOCALAPPDATA%\Windows-ARM64.apk\Apps` (`--data-dir`
 moves it): `android\` is the Android root the app sees (`data\data\<package>`, `sdcard`),

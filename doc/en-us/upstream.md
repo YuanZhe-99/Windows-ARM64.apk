@@ -2,7 +2,7 @@
 
 What Windows-ARM64.apk relies on from its upstreams, and how far each point has been checked.
 Mac.apk, Go and MyGo follow their latest version, so every point is re-checked when that upstream
-moves. The Mac.apk points below hold at `ff2afbf` (merged 2026-11-03); "read" means read in the source,
+moves. The Mac.apk points below hold at `8b45e48` (merged 2026-11-04); "read" means read in the source,
 "built" or "verified" that P0 built or ran it on Windows 11 ARM64 ([port-audit.md](port-audit.md)).
 
 ## Mac.apk
@@ -20,7 +20,9 @@ moves. The Mac.apk points below hold at `ff2afbf` (merged 2026-11-03); "read" me
 | `runtime/src/native_sqlite.cpp` is portable C++ apart from CoreFoundation case mapping and collation | built on Windows with a `_WIN32` branch for those | verified (T03 SQLite) |
 | `runtime/src/jvm_loader.cpp` embeds the JVM with macOS loading assumptions | a Windows `jvm.dll` loader with its own options is needed | verified: the Windows loader is in `platform/windows`, and the JDK accepts upstream's module options (T01) |
 | `runtime/CMakeLists.txt` enables OBJCXX at the top level and finds Apple and Homebrew dependencies | languages, sources, links and discovery become platform-conditional | built: an `if(WIN32)` branch includes `platform/windows/windows.cmake` before the macOS project |
-| `runtime/translator/src/arm64_native.cpp` interleaves ELF mapping and relocation with macOS memory, register and patching | the parsing is reused; host memory and execution policy are separated | read |
+| `runtime/translator/src/arm64_native.cpp` interleaves ELF mapping and relocation with macOS memory, register and patching | the N0 loader reuses only the ELF record layouts (`elf64_reader.h`); code that uses `x18`, `TPIDR_EL0` or `svc` is refused rather than patched | read; layouts built (G2) |
+| `runtime/scripts/build.sh` puts `thirdparty/apache-http-legacy/org.apache.http.legacy.jvm.jar` on the framework's classpath and unpacks it into `android-framework.jar`, never over a compiled class | `build.ps1 -Component Java` does the same | built (`8b45e48`) |
+| `main.cpp` names an app's folders `<package>_<version>` with the version's dots folded (`dir_naming.h`) | `winapk run` names them after the package alone, so no version dot appears in an app's paths | read |
 | `arm64_pack.cpp` and `arm64_macho_emit.cpp` wrap guest code as Mach-O | Windows uses one host PE bridge and a virtual guest library registry instead | read |
 | `bionic_shim.cpp` ties Bionic, syscalls and threads to Darwin mechanisms | split by capability, never ported file-wide | read |
 | `bionic_shim_vulkan.cpp` adapts guest Vulkan to MoltenVK and Metal surfaces | its extension handling is reused; a Win32 backend is added | read |
@@ -35,7 +37,8 @@ moves. The Mac.apk points below hold at `ff2afbf` (merged 2026-11-03); "read" me
 
 | Point | Consequence | Checked |
 |---|---|---|
-| `x18` holds the TEB and `TPIDR_EL0` is reserved | guest TLS and shadow-call-stack schemes never use them; no swap on entry | read |
+| `x18` holds the TEB and `TPIDR_EL0` is reserved | guest TLS and shadow-call-stack schemes never use them; no swap on entry | verified: x18 is the TEB in every guest callback (T05 `host.state`) |
+| Fixed-signature calls follow AAPCS64 (registers, stack slots, HFAs, `x8`, callee-saved registers); variadic calls pass floating point in integer registers | fixed signatures call directly, variadic ones never cross ([abi-compatibility.md](abi-compatibility.md)) | verified for fixed signatures (T05); the variadic difference read |
 | The data model is LLP64: `long` is 32-bit | guest `long` uses its own 64-bit type across the boundary | read |
 | Unwinding uses its own `.pdata`/`.xdata` metadata and SEH | guest DWARF unwinding and host thunks are separate problems | read |
 
@@ -46,7 +49,8 @@ moves. The Mac.apk points below hold at `ff2afbf` (merged 2026-11-03); "read" me
 
 | Point | Consequence | Checked |
 |---|---|---|
-| `x18` is reserved for the platform on Android ARM64 | each binary is still checked; absence in one binary proves nothing general | read |
+| `x18` is reserved for the platform on Android ARM64 | each binary is still checked; absence in one binary proves nothing general | verified for T05's builds: the screen finds no `x18` in them |
+| NDK r30 links with a 16 KiB maximum page size and, at API 30, packs relative relocations as `DT_ANDROID_RELR` | segments share a 4 KiB host page only with the same permissions; RELR is applied | verified (T05 builds) |
 | ELF TLS has several access models and TLSDESC (AOSP `elf-tls.md`) | each model is supported or refused explicitly | read |
 
 ## MyGo

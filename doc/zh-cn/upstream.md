@@ -1,7 +1,7 @@
 # 上游契约
 
 Windows-ARM64.apk 依赖上游的哪些行为，以及每一点核实到了什么程度。Mac.apk、Go 与 MyGo 跟随各自最新版本，因此上游变化时
-每一点都要重新核对。下列 Mac.apk 要点在 `ff2afbf`（2026-11-03 合并）上成立；“已阅读”表示读过源码，“已构建”或“已验证”表示 P0 在
+每一点都要重新核对。下列 Mac.apk 要点在 `8b45e48`（2026-11-04 合并）上成立；“已阅读”表示读过源码，“已构建”或“已验证”表示 P0 在
 Windows 11 ARM64 上构建或运行过（[port-audit.md](port-audit.md)）。
 
 ## Mac.apk
@@ -19,7 +19,9 @@ Windows 11 ARM64 上构建或运行过（[port-audit.md](port-audit.md)）。
 | `runtime/src/native_sqlite.cpp` 除 CoreFoundation 的大小写映射和排序外都是可移植的 C++ | 在 Windows 上构建，用 `_WIN32` 分支替换这两部分 | 已验证（T03 SQLite） |
 | `runtime/src/jvm_loader.cpp` 以 macOS 加载假设嵌入 JVM | 需要 Windows `jvm.dll` 加载器及其自己的选项 | 已验证：Windows 加载器在 `platform/windows` 中，JDK 接受上游的模块选项（T01） |
 | `runtime/CMakeLists.txt` 在顶层启用 OBJCXX，并查找 Apple 与 Homebrew 依赖 | 语言、源文件、链接和依赖发现改为按平台条件化 | 已构建：`if(WIN32)` 分支在 macOS 项目之前引入 `platform/windows/windows.cmake` |
-| `runtime/translator/src/arm64_native.cpp` 将 ELF 映射/重定位与 macOS 内存、寄存器和补丁机制交织 | 复用解析逻辑；分离宿主内存与执行策略 | 已阅读 |
+| `runtime/translator/src/arm64_native.cpp` 将 ELF 映射/重定位与 macOS 内存、寄存器和补丁机制交织 | N0 加载器只复用 ELF 记录布局（`elf64_reader.h`）；使用 `x18`、`TPIDR_EL0` 或 `svc` 的代码被拒绝而不是打补丁 | 已阅读；布局已构建（G2） |
+| `runtime/scripts/build.sh` 把 `thirdparty/apache-http-legacy/org.apache.http.legacy.jvm.jar` 放到框架的 classpath 上，并解包进 `android-framework.jar`，绝不覆盖已编译的类 | `build.ps1 -Component Java` 同样处理 | 已构建（`8b45e48`） |
+| `main.cpp` 把应用的文件夹命名为 `<package>_<version>`，并去掉版本号里的点（`dir_naming.h`） | `winapk run` 只用包名命名，因此应用路径中不出现版本号的点 | 已阅读 |
 | `arm64_pack.cpp` 与 `arm64_macho_emit.cpp` 把客体代码包装为 Mach-O | Windows 改用一个宿主 PE 桥和虚拟客体库注册表 | 已阅读 |
 | `bionic_shim.cpp` 将 Bionic、系统调用和线程绑定到 Darwin 机制 | 按能力拆分，绝不整文件移植 | 已阅读 |
 | `bionic_shim_vulkan.cpp` 将客体 Vulkan 适配到 MoltenVK 与 Metal Surface | 复用其扩展处理；新增 Win32 后端 | 已阅读 |
@@ -34,7 +36,8 @@ Windows 11 ARM64 上构建或运行过（[port-audit.md](port-audit.md)）。
 
 | 要点 | 影响 | 核实程度 |
 |---|---|---|
-| `x18` 指向 TEB，`TPIDR_EL0` 保留 | 客体 TLS 和影子调用栈方案绝不使用它们；进入时不做交换 | 已阅读 |
+| `x18` 指向 TEB，`TPIDR_EL0` 保留 | 客体 TLS 和影子调用栈方案绝不使用它们；进入时不做交换 | 已验证：每次客体回调中 x18 都是 TEB（T05 `host.state`） |
+| 固定签名调用遵循 AAPCS64（寄存器、栈槽、HFA、`x8`、被调用方保存的寄存器）；可变参数调用把浮点放在整数寄存器中 | 固定签名直通，可变参数调用绝不跨越（[abi-compatibility.md](abi-compatibility.md)） | 固定签名已验证（T05）；可变参数的差异已阅读 |
 | 数据模型为 LLP64：`long` 为 32 位 | 跨边界的客体 `long` 使用独立的 64 位类型 | 已阅读 |
 | 展开使用专门的 `.pdata`/`.xdata` 元数据与 SEH | 客体 DWARF 展开与宿主 thunk 是两个不同的问题 | 已阅读 |
 
@@ -45,7 +48,8 @@ Windows 11 ARM64 上构建或运行过（[port-audit.md](port-audit.md)）。
 
 | 要点 | 影响 | 核实程度 |
 |---|---|---|
-| Android ARM64 上 `x18` 保留给平台 | 仍逐个检查二进制；某个二进制未使用不证明普遍成立 | 已阅读 |
+| Android ARM64 上 `x18` 保留给平台 | 仍逐个检查二进制；某个二进制未使用不证明普遍成立 | 已对 T05 的构建验证：筛查未在其中发现 `x18` |
+| NDK r30 以 16 KiB 的最大页大小链接，并在 API 30 下把相对重定位压缩为 `DT_ANDROID_RELR` | 段只有在权限相同时才共用 4 KiB 的宿主页；RELR 会被应用 | 已验证（T05 构建） |
 | ELF TLS 有多种访问 model 及 TLSDESC（AOSP `elf-tls.md`） | 每种 model 要么明确支持，要么明确拒绝 | 已阅读 |
 
 ## MyGo

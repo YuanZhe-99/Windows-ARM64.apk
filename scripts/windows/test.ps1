@@ -23,12 +23,20 @@ cases, a file that is not an APK, an unsupported --native mode, an APK library
 with guest native off and a query of a missing SQLite table. It
 needs a desktop session. Build first: build.ps1 -Component All.
 
+Suite Native is G2 (PLAN.md §9), without a JVM or a window: fixture T05 (the
+N0 ABI suite of native-probe.exe on four builds of one guest library: integers,
+pointers, floating point, the stack, HFAs and structures, imports, callbacks
+both ways, reentry, callee-saved registers, x18 and sp, then 2000 load/run/
+unload cycles and 32 copies at once) and T06 (malformed, foreign and out-of-
+profile ELF files, each refused with its category and reason). Build first:
+build.ps1 -Component NativeProbe.
+
 .PARAMETER Suite
-Host or Java.
+Host, Java or Native.
 #>
 [CmdletBinding()]
 param(
-    [ValidateSet('Host', 'Java')]
+    [ValidateSet('Host', 'Java', 'Native')]
     [string]$Suite = 'Host'
 )
 Set-StrictMode -Version Latest
@@ -453,7 +461,73 @@ function Test-Java {
     Check 'T04.G1.6.exit' ($code5 -eq 0) "exit $code5"
 }
 
-switch ($Suite) { 'Host' { Test-Host } 'Java' { Test-Java } }
+<#
+Suite Native: G2 (PLAN.md §9). T05 runs every case of native-probe suite on each build of the
+N0 library and the stress cycles; T06 loads each malformed or out-of-profile ELF and checks the
+refusal's category and reason, before any guest code runs.
+#>
+function Test-Native {
+    $probe = Join-Path $out 'bin\native-probe.exe'
+    $dir = Join-Path $repo 'tests\fixtures\elf'
+    $record = Join-Path $dir 'fixtures.json'
+    if (-not (Test-Path $probe) -or -not (Test-Path $record)) { throw "native-probe.exe or the ELF fixtures are missing: run scripts/windows/build.ps1 -Component NativeProbe" }
+    $built = (Get-Content $record -Raw | ConvertFrom-Json).fixtures
+    $table = Import-PowerShellDataFile (Join-Path $repo 'tests\windows-arm64\guest-elf\fixtures.psd1')
+
+    foreach ($pe in 'native-probe.exe', 'capstone.dll') {
+        $m = Get-PeMachine (Join-Path $out "bin\$pe")
+        Check "T05.pe.$pe" ($m -eq 'ARM64') $m
+    }
+    foreach ($f in $table.Fixtures) {
+        $file = Join-Path $dir $f.Name
+        $stem = [IO.Path]::GetFileNameWithoutExtension($f.Name)
+        $rec = $built | Where-Object name -EQ $f.Name
+        $sha = if (Test-Path $file) { (Get-FileHash $file -Algorithm SHA256).Hash.ToLower() } else { 'missing' }
+        if (-not $rec -or $rec.sha256 -ne $sha) { Check "$($f.Id).$stem.hash" $false "sha256 $sha is not the one fixtures.json records"; continue }
+        if ($f.Id -eq 'T05') {
+            $o = & $probe suite $file
+            $code = $LASTEXITCODE
+            $load = ($o | Select-String '^load ') -join ''
+            $fails = @($o | Select-String '^case \S+ FAIL' | ForEach-Object { $_.Line })
+            if ($f.Name -eq 'libn0abi.so') {
+                foreach ($c in $o | Select-String '^case (\S+) (PASS|FAIL)(.*)') {
+                    Check "T05.$($c.Matches[0].Groups[1].Value)" ($c.Matches[0].Groups[2].Value -eq 'PASS') "$($c.Matches[0].Groups[2].Value)$($c.Matches[0].Groups[3].Value)"
+                }
+                Check 'T05.screen' (($o -join "`n") -match 'screened 0x[0-9a-f]+ code bytes: \d+ instructions') (($o | Select-String 'screened').Line.Trim())
+            }
+            $result = ($o | Select-String '^result ').Line
+            Check "T05.$stem" ($code -eq 0 -and $fails.Count -eq 0 -and $result -match '^result (\d+)/\1 PASS$') "$result; $($load -replace '^load [^:]+: ', '')$(if ($fails) { '; ' + ($fails -join '; ') })"
+        } else {
+            $o = & $probe load $file
+            $code = $LASTEXITCODE
+            $line = ($o | Select-String '^reject ').Line
+            $ok = $code -eq 2 -and -not ($o | Select-String '^load ') -and $line -like "reject $($f.Expect) $($f.Name)*" -and $line -like "*$($f.Reason)*"
+            Check "T06.$stem" $ok "exit $code; $line"
+        }
+    }
+
+    # G2: repeated load/run/unload without growth, a refused load rolled back each time, and
+    # 32 copies at once at 32 distinct bases, all passing.
+    $o = & $probe stress (Join-Path $dir 'libn0abi.so') --iterations 2000 --copies 32 --rejected (Join-Path $dir 'neg-missing.so')
+    $code = $LASTEXITCODE
+    $cycles = ($o | Select-String 'load/run/unload cycles').Line
+    $copies = ($o | Select-String 'copies loaded at once').Line
+    Check 'T05.stress.cycles' ($code -eq 0 -and $cycles -match 'all PASS; per \d+ cycles heap allocations \+0 then \+0 bytes' -and $cycles -match 'private regions \+0, handles \+0') ($cycles -replace '^stress [^:]+: ', '')
+    Check 'T05.stress.copies' ($code -eq 0 -and $copies -match '32 copies loaded at once at 32 distinct bases, all PASS') ($copies -replace '^stress [^:]+: ', '')
+
+    # A second process places the module elsewhere and gets the same results.
+    $bases = foreach ($i in 1, 2) {
+        $o = & $probe suite (Join-Path $dir 'libn0abi.so')
+        if ($LASTEXITCODE -eq 0) { (($o | Select-String '^load ').Line -replace '.* at (0x[0-9a-f]+)$', '$1') } else { 'FAIL' }
+    }
+    Check 'T05.processes' (-not ($bases -contains 'FAIL')) "two processes, all cases PASS at $($bases -join ' and ')"
+
+    # The probe's own refusal of input it cannot read.
+    & $probe load (Join-Path $dir 'absent.so') 2> $null
+    Check 'T05.neg.unreadable' ($LASTEXITCODE -eq 1) "exit $LASTEXITCODE"
+}
+
+switch ($Suite) { 'Host' { Test-Host } 'Java' { Test-Java } 'Native' { Test-Native } }
 if ($script:failed -gt 0) { Write-Host "$script:failed check(s) failed"; exit 1 }
 Write-Host 'all checks passed'
 exit 0

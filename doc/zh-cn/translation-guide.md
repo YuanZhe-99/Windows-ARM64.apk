@@ -55,6 +55,12 @@ Microsoft），以及 API 与格式名称（JNI、ELF、PE、DEX、Bionic、EGL�
 | requirement | 环境要求 |
 | active code page | 活动代码页 |
 | build identity | 构建标识 |
+| direct (call) | 直通 |
+| screen, screening (of code) | 筛查 |
+| refusal, refuse (a module) | 拒绝 |
+| callee-saved register | 被调用方保存的寄存器 |
+| homogeneous floating-point aggregate (HFA) | 同质浮点聚合（HFA） |
+| variant calling convention | 变体调用约定 |
 
 ## 6. 审阅清单
 

@@ -2,9 +2,9 @@
 
 | 平台 | 状态 |
 |---|---|
-| Windows 11 ARM64 | G0 通过；G1 的检查在本机通过（T02、T03）：`winapk run` 在 Win32 窗口中运行纯 Java APK 的真实 DEX，支持触摸、按键和输入的 Unicode 文字、滚动、改变尺寸、最小化与恢复、返回、保存的状态和 SQLite，路径可含 Unicode 字符；Kotlin 夹具 T04 也能运行。界面仍对接示例数据（`winapk.Mock`）。 |
+| Windows 11 ARM64 | G0 通过；G1 的检查在本机通过（T02、T03）：`winapk run` 在 Win32 窗口中运行纯 Java APK 的真实 DEX，支持触摸、按键和输入的 Unicode 文字、滚动、改变尺寸、最小化与恢复、返回、保存的状态和 SQLite，路径可含 Unicode 字符；Kotlin 夹具 T04 也能运行。G2 同样通过：`native-probe.exe` 加载 N0 客体 ELF 库，在其上运行 ABI 测试集 T05，并拒绝格式错误和超出 profile 的库（T06）；`winapk run` 尚不加载 APK 的库。界面仍对接示例数据（`winapk.Mock`）。 |
 | Windows 11 x64 | 不是目标平台；只可承载构建工具和解析测试。 |
-| macOS（Apple Silicon） | 上游 Mac.apk 的平台；已在 `367fd1a` 引入为 `macapk/`；尚未在此运行 macOS 构建或 smoke（`NOT_RUN`）。 |
+| macOS（Apple Silicon） | 上游 Mac.apk 的平台；已引入为 `macapk/`，当前在 `8b45e48`；尚未在此运行 macOS 构建或 smoke（`NOT_RUN`）。 |
 
 ## Windows
 
@@ -18,8 +18,10 @@
 | 平台资源 | `build.ps1 -Component FrameworkRes`：由 AOSP `android-16.0.0_r2`（API 36）构建的 `framework-res.apk`，66.4 MB，sha256 `62eb212e…6d90`；它的 14,530 个公开资源 ID 与 android.jar（android-36）一致，一个资源（`string/user_switched`）因没有默认值被 aapt2 去掉 |
 | 夹具 | `build.ps1 -Component Fixtures`：`hello-java.apk`、`hello-jni.apk` 和 `hello-kotlin.apk`（内含转为 DEX 的 kotlin-stdlib 2.4.0）已签名，apksigner 校验通过；`libhello.so` 为 ELF64 AArch64（NDK r30）；哈希在 `tests/fixtures/*.json` |
 | G1 Java 路径 | `test.ps1 -Suite Java`：在 1080p 显示器 100% 缩放（density 160）下 41 项检查 PASS（在加入 DPI 检查和显示器 DPI 修复之前），在 3840×2160 显示器 200% 缩放（density 320）下 43 项 PASS（新增 DPI 检查）；`winapk.exe`、`winapk-bridge.dll`、`sqlite3.dll` 和 `zd.dll` 为 ARM64 |
-| Java 侧（Mac.apk `ff2afbf`） | `build.ps1 -Component Java`：不经修改即可编译，78 秒，没有错误（[port-audit.md](port-audit.md)） |
-| T01 宿主和 JVM | `test.ps1 -Suite Host`：21 项检查 PASS——`winapk.exe`、`winapk-bridge.dll`、zlib 和 SQLite 为 ARM64；`jvm.dll` 为 ARM64，在进程内以上游的模块选项创建 JVM；JNI 宿主 → Java → 宿主；Java2D；260 个字体族；补丁模块；以及负例（找不到 JVM、无效的 `--java-home`） |
+| Java 侧（Mac.apk `8b45e48`） | `build.ps1 -Component Java`：不经修改即可编译，84 秒，没有错误，并像上游一样把 Android 的 `org.apache.http.legacy` 解包进框架 jar（[port-audit.md](port-audit.md)） |
+| 客体 ELF 夹具 | `build.ps1 -Component NativeProbe`：用 NDK r30 的 clang 21 构建 T05 和 T06 的 27 个夹具，哈希在 `tests/fixtures/elf/fixtures.json`（[native-profiles.md](native-profiles.md)） |
+| G2 原生路径 | `test.ps1 -Suite Native`：58 项检查 PASS（见下）；`native-probe.exe` 和 `capstone.dll` 为 ARM64 |
+| T01 宿主和 JVM | `test.ps1 -Suite Host`：23 项检查 PASS——`winapk.exe`、`winapk-bridge.dll`、`native-probe.exe`、zlib、SQLite 和 Capstone 为 ARM64；`jvm.dll` 为 ARM64，在进程内以上游的模块选项创建 JVM；JNI 宿主 → Java → 宿主；Java2D；260 个字体族；补丁模块；以及负例（找不到 JVM、无效的 `--java-home`） |
 | Vulkan | ARM64 loader 可用；两个 Mesa Dozen 设备（基于 Direct3D 12 的 Vulkan 1.2）；`doctor --present`：Win32 surface 测试通过。没有厂商 Vulkan 驱动 |
 | 界面 | `go tool mygo vet .` 与 `go tool mygo i18n check` 通过；`design/` 的每个界面在 `ui.Tester` 中以两种语言和两种外观渲染；在 `ui.Tester` 中用指针拖动的窗格会拆分目标窗格；原生窗口能打开并保持运行（smoke 运行，示例数据） |
 
@@ -29,7 +31,7 @@
 |---|---|
 | G0 宿主就绪 | PASS（2026-11-03，本机：T01，工具链已锁定） |
 | G1 Java MVP | 本机 PASS（2026-11-04），含 G1.6，100% 与 200% 缩放下均通过；应用运行中改变缩放为 NOT_RUN（见下） |
-| G2 Native 最小执行 | NOT_RUN |
+| G2 Native 最小执行 | 本机 PASS（2026-11-04）：`native-probe.exe` 中的 profile N0；`winapk run` 中客体原生仍关闭 |
 | G3 Native 集成 | NOT_RUN |
 | G4 图形 | NOT_RUN |
 | G5 实验版 | NOT_RUN |
@@ -50,12 +52,25 @@
 | T02 呈现器 | PASS | Android 视图就是客户区（400×800 px）；客户区像素等于主题的 `windowBackground` #EFEDF1 |
 | 负例 | PASS | 不是 APK 的文件：退出码 65，`INSTALL_FAILED_INVALID_APK`；`--native=restricted`：退出码 64，`GUEST_NATIVE_NOT_IMPLEMENTED`；正常运行不记录 `UI_THREAD_BLOCKED` |
 
+## G2 检查
+
+`test.ps1 -Suite Native`，2026-11-04，在上述机器上，12 秒。
+
+| 条目（`PLAN.md` §9） | 结果 | 证据 |
+|---|---|---|
+| N0 正例返回精确值，包括双向回调、浮点和结构体 | PASS | T05：四个构建（带 RELR 的 `libn0abi.so`、`-rela`、`-sysv`、`-4k`）上各 27 个用例：整数、客体 `long`、高位带垃圾值的窄参数、指针、浮点、经栈传递的 20 个参数、HFA、经寄存器/引用/`x8` 传递的结构体、客体可变参数函数、RELATIVE/RELR、ABS64、GLOB_DAT 和 JUMP_SLOT 数据、BSS、宿主导入、客体调用的宿主函数指针、五层客体 → 宿主 → 客体重入、被调用方保存的寄存器（以及能发现被破坏寄存器的检查）、sp 对齐；每次回调中 x18 都是 TEB |
+| 负例在任何入口或构造函数之前被拒绝，并给出模块、偏移和原因 | PASS | T06：21 个文件（17 个构建所得，4 个修补一个字段派生），每个都以预期的类别和原因输出 `reject CATEGORY file where: reason`，退出码 2，未运行任何代码（[native-profiles.md](native-profiles.md)） |
+| 循环加载/执行无崩溃、无资源增长；地址随机化下可重复 | PASS | 2000 次加载/运行/卸载循环，每次都附带一次被拒绝的加载：两半中堆分配均 +0 字节，私有区域 +0，句柄 +0；同时加载 32 份副本，位于 32 个不同基址，全部通过；两个进程位于两个基址，全部通过 |
+| 在真实 ARM64 上 | PASS | 上述机器；`native-probe.exe` 和 `capstone.dll` 为 ARM64 |
+| `abi-compatibility.md` | PASS | [abi-compatibility.md](abi-compatibility.md)：直通、需 thunk 和不支持的签名及其用例 |
+
 ## 已知限制
 
 - Mac.apk 的 Windows 改动：`runtime/CMakeLists.txt` 的 `if(WIN32)` 分支、`AppClassLoader.findLibrary` 的
-  `winapk.guestNative` 检查，以及 `runtime/src/native_sqlite.cpp` 的 `_WIN32` Unicode 辅助函数；其余都是 `runtime/platform/windows` 下的新代码。Windows 实现了 `NativeCocoa` 和其他宿主
+  `winapk.guestNative` 检查，以及 `runtime/src/native_sqlite.cpp` 的 `_WIN32` Unicode 辅助函数；其余都是 `runtime/platform/windows` 和 `runtime/guest` 下的新代码。Windows 实现了 `NativeCocoa` 和其他宿主
   native 中的哪些、哪些仍未绑定，见 [port-audit.md](port-audit.md)。
 - 界面还没有启动 `winapk run`；它仍使用 `winapk.Mock`。
+- 客体原生：只有 profile N0，且只在 `native-probe.exe` 中；`winapk run` 不加载任何 APK 库（P4）。客体代码中的故障尚未被捕获（P3，`PLAN.md` §10.3）：它会结束探测程序。以 `winapk.exe` 的编译选项构建，关闭 Control Flow Guard；启用 CFG 的构建为 NOT_RUN（[abi-compatibility.md](abi-compatibility.md)）。
 - 这台电脑没有厂商 Vulkan 驱动：Vulkan 是基于 Direct3D 12 的 Mesa Dozen（[decisions.md](decisions.md)）。
 - `CMakeLists.txt`、`AppClassLoader` 与 `native_sqlite.cpp` 改动后的 macOS 构建和 smoke：NOT_RUN（这里没有 Mac）；该分支只在 `WIN32` 下返回，Java 检查在未设置 `winapk.guestNative` 时不起作用，`_WIN32` 之外的 CoreFoundation 辅助函数没有改变。
 - DPI：应用的 density 在启动时固定。把窗口移到另一缩放的显示器，或在运行中改变缩放，窗口会调整尺寸以保持其点数（`WM_DPICHANGED`），但应用保持最初的 density：NOT_RUN，也尚未作为 Android 的配置变更处理。

@@ -36,6 +36,8 @@ about to change, verify against the code, then fix the docs in the same commit.
 | The interface as built: windows, panes, sheets, its files, the runtime contract draft | `doc/en-us/gui.md` |
 | Verified upstream contracts (Mac.apk, Windows ARM64 ABI, Android NDK, MyGo) and quirks | `doc/en-us/upstream.md` |
 | What in Mac.apk is tied to macOS and how each part is handled (the P0 port audit) | `doc/en-us/port-audit.md` |
+| Which host ↔ guest calls go directly, need a thunk or are unsupported, with evidence | `doc/en-us/abi-compatibility.md` |
+| Guest native profiles (N0): what the ELF loader admits, how it loads, its refusals | `doc/en-us/native-profiles.md` |
 | Architecture decisions (ADRs) | `doc/en-us/decisions.md` |
 | Locked toolchain and dependency versions | `build-lock.json` |
 | Reused third-party code, licenses and obligations | `doc/en-us/third-party.md` |

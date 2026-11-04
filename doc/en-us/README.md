@@ -13,6 +13,8 @@ per APK.
 | Document | Covers |
 |---|---|
 | [gui.md](gui.md) | The interface: windows, panes and groups, sheets, its files, the runtime contract draft, sample data |
+| [abi-compatibility.md](abi-compatibility.md) | Which calls between host and guest code go directly, which need a thunk, which are unsupported, with evidence |
+| [native-profiles.md](native-profiles.md) | The guest native profiles (N0): what the ELF loader admits, how it loads, and its refusals |
 | [port-audit.md](port-audit.md) | P0: what in Mac.apk is tied to macOS and how each part is handled on Windows |
 | [decisions.md](decisions.md) | Architecture decisions (ADRs) |
 | [upstream.md](upstream.md) | Upstream contracts and quirks: Mac.apk, Windows ARM64 ABI, Android NDK, MyGo |
@@ -26,14 +28,14 @@ per APK.
 ## Upstream versions
 
 Go, MyGo and Mac.apk are not pinned: they always follow their latest version. The table shows the
-latest version at the last check (2026-11-03); everything else is locked in `build-lock.json`,
+latest version at the last check (2026-11-04); everything else is locked in `build-lock.json`,
 which also records what the last build used of the three.
 
 | Component | Policy | Latest at last check |
 |---|---|---|
 | Go | latest release | 1.27.3 |
 | MyGo | latest tag | v0.7.4 |
-| Mac.apk | latest `main`, as the `macapk/` subtree | `ff2afbf`, merged |
-| OpenJDK (ARM64), clang-cl, MSVC, Windows SDK, CMake, Ninja, vcpkg, Vulkan headers | locked in `build-lock.json` | Microsoft OpenJDK 21.0.13; clang-cl 22.1.3; MSVC 14.51; SDK 10.0.26100; CMake 4.3.1; Ninja 1.13.2; vcpkg baseline `afa249f`; Vulkan headers 1.4.363 |
+| Mac.apk | latest `main`, as the `macapk/` subtree | `8b45e48`, merged |
+| OpenJDK (ARM64), clang-cl, MSVC, Windows SDK, CMake, Ninja, vcpkg, Vulkan headers | locked in `build-lock.json` | Microsoft OpenJDK 21.0.13; clang-cl 22.1.3; MSVC 14.51; SDK 10.0.26100; CMake 4.3.1; Ninja 1.13.2; vcpkg baseline `afa249f`; Vulkan headers 1.4.363; Capstone 5.0.9 |
 | Android SDK/NDK, AOSP framework resources | chosen in `build-lock.json`, not installed yet | build-tools 36.0.0, android-36; NDK r30 (30.0.16248370); `android-16.0.0_r2` |
 | ANGLE, Skia | chosen in P5a and P8 | not chosen yet; the Vulkan loader is Windows' own |

@@ -1,7 +1,7 @@
 # 移植审计
 
 Mac.apk 中哪些部分与 macOS 绑定、在 Windows ARM64 上如何处理、在哪个阶段处理。审计基于 Mac.apk
-`ff2afbf`（以 `macapk/` subtree 合入），2026-11-03，在 Windows 11 ARM64（build 26300）上进行。每次合并
+`ff2afbf`（2026-11-03）并在 `8b45e48`（2026-11-04，上游 v1.0.2377 同步）上复核，以 `macapk/` subtree 合入，在 Windows 11 ARM64（build 26300）上进行。每次合并
 Mac.apk 后重新执行下面的搜索并更新各表。
 
 ## 方法
@@ -13,46 +13,48 @@ Mac.apk 后重新执行下面的搜索并更新各表。
 - 在 `macapk/` 中搜索 `PLAN.md` §7 列出的平台耦合（计数见下）。
 - 构建：用 Windows ARM64 JDK 构建整个 Java 侧（`scripts/windows/build.ps1 -Component Java`）；嵌入 JVM
   的 Windows 宿主（`-Component Host`，夹具 T01）。
-- P1：AOSP 框架资源（用 SDK 的 `aapt2` 构建），以及纯 Java APK 的 Java 路径（见下）。尚未：深入构建或阅读 `runtime/translator`（P2）。
+- P1：AOSP 框架资源（用 SDK 的 `aapt2` 构建），以及纯 Java APK 的 Java 路径（见下）。
+- P2：为客体加载器阅读了 `runtime/translator/include/macapk/elf64_reader.h`、`elf_reader.h`、`elf64_reader.cpp` 以及新增的
+  `guest_rwx.h` 和 `guest_jit_pages.h`（见下）。
 
 ## 各部分
 
 | 部分 | 上游路径 | 规模 | macOS 耦合 | Windows 处理 | 阶段 |
 |---|---|---|---|---|---|
-| Android 框架 | `runtime/java/android`、`androidx`、`dalvik`、`javax`、`libcore`、`org` | 3,049 个 Java 文件，57.8 万行（含 `runtime/java` 其余部分） | 26 个文件调用 `NativeCocoa`；字体和存储代码写有 macOS 路径 | 原样复用；调用逐步改到平台中立的宿主接口 | P1 |
+| Android 框架 | `runtime/java/android`、`androidx`、`dalvik`、`javax`、`libcore`、`org` | 3,017 个 Java 文件，59.3 万行（含 `runtime/java` 其余部分） | 26 个文件调用 `NativeCocoa`；字体和存储代码写有 macOS 路径 | 原样复用；调用逐步改到平台中立的宿主接口 | P1 |
 | DEX 转换器 | `runtime/java/com/macapk/dex` | 含在上面 | `AndroidSdk.java` 在 macOS 和 Linux 的位置查找 SDK | 复用；SDK 查找增加 Windows 位置 | P1 |
 | 启动与加载 | `runtime/java/com/macapk/loader`（`Boot.java`、`NativeCocoa.java` 等） | `NativeCocoa` 有 57 个 native | 窗口、Surface、输入、宿主服务经 Cocoa JNI；macOS 路径 | 宿主启动服务和 `HostWindow`/`HostEventLoop`/`HostFramePresenter`（`PLAN.md` §4.3） | P1 |
-| JNI 宿主 | `runtime/src/*.cpp` | 17 个文件，2.1 万行 | `dlfcn`、`mach`、`sys/*`（见下） | 逐文件：POSIX 调用在平台接口后换成 Windows 实现 | P1–P4 |
-| macOS 宿主服务 | `runtime/src/*.mm` | 22 个文件，3 万行（`cocoa_bridge.mm` 1.4 万） | Objective-C++、AppKit、AVFoundation、Metal、VideoToolbox | 不在 Windows 上构建；只在某个阶段需要该服务时替换 | P1、P8 |
-| 客体原生 | `runtime/translator` | 25 个文件，12.1 万行（`bionic_shim.cpp` 6.7 万、`arm64_native.cpp` 1.6 万） | Mach 内存、`x18`/`TPIDR_EL0` 补丁、Mach-O 包装、Darwin 信号 | 复用 ELF 解析；内存、执行、TLS 和 Bionic 按能力重建（`PLAN.md` §5） | P2–P4 |
+| JNI 宿主 | `runtime/src/*.cpp` | 19 个文件，2.2 万行 | `dlfcn`、`mach`、`sys/*`（见下） | 逐文件：POSIX 调用在平台接口后换成 Windows 实现 | P1–P4 |
+| macOS 宿主服务 | `runtime/src/*.mm` | 26 个文件，3.2 万行（`cocoa_bridge.mm` 1.4 万） | Objective-C++、AppKit、AVFoundation、Metal、VideoToolbox | 不在 Windows 上构建；只在某个阶段需要该服务时替换 | P1、P8 |
+| 客体原生 | `runtime/translator` | 34 个文件，15.2 万行（`bionic_shim.cpp` 6.9 万、`arm64_native.cpp` 1.6 万） | Mach 内存、`x18`/`TPIDR_EL0` 补丁、Mach-O 包装、Darwin 信号 | 复用 ELF 记录布局；N0 加载器依据 program header 映射（P2，见下）；内存、执行、TLS 和 Bionic 按能力重建（`PLAN.md` §5） | P2（N0 已完成）–P4 |
 | 图形 | `runtime/src/angle_glue.cpp`、`gles_bridge.cpp`、`egl14/gles*_bridges.inc`、`translator/src/bionic_shim_vulkan.cpp` | 6 千行 | Metal 上的 ANGLE、MoltenVK | Windows ARM64 的 ANGLE（Vulkan、Direct3D 11）；客体 Vulkan 到 Windows loader | P5、P6 |
 | Skia | `thirdparty/skia-prebuilt`、`skia_metal_bridge.mm` | 预编译 `.dylib` | Metal | 以后：Windows ARM64 的 Skia GPU 桥 | P8 |
 | 构建 | `runtime/CMakeLists.txt`、`runtime/scripts/build.sh`、`scripts/*.sh` | 835 行的构建脚本 | OBJCXX、Homebrew、`codesign`、entitlement、`.dylib` 暂存、`python3` | `scripts/windows/*.ps1`；`CMakeLists.txt` 分支到 `platform/windows/windows.cmake` | P0（Java 和 Host 已完成） |
-| Translator 构建 | `runtime/translator/CMakeLists.txt` | 2 个目标 | `macapk-translator` 把 ELF `.so` 转成 Mach-O `.dylib`；`libmacapk-bionic-shim.dylib` 链接 capstone、zlib、libpng、ANGLE 以及 Security 和 CoreFoundation 框架 | 不在 Windows 上构建：P2 的客体加载器自己映射 ELF（不做 Mach-O 或 PE 包装）；如复用 capstone、zlib 和 libpng，则从 vcpkg 获取 | P2 |
+| Translator 构建 | `runtime/translator/CMakeLists.txt` | 2 个目标 | `macapk-translator` 把 ELF `.so` 转成 Mach-O `.dylib`；`libmacapk-bionic-shim.dylib` 链接 capstone、zlib、libpng、ANGLE 以及 Security 和 CoreFoundation 框架 | 不在 Windows 上构建：P2 的客体加载器自己映射 ELF（不做 Mach-O 或 PE 包装）；加载器的筛查使用 vcpkg 提供的 Capstone 5.0.9 | P2 |
 | 框架资源 | `scripts/build_framework_res.sh` | 一次性 | 需要 `aapt2`（SDK build-tools 或 apktool 的 macOS 二进制）和约 20 MB 的 AOSP 源码包；生成约 48 MB 的 `framework-res-api36.apk`，从不提交 | 已完成：在 `build.ps1 -Component FrameworkRes` 中用 SDK 的 `aapt2`（build-tools 36.0.0）执行同样的步骤；`resources.arsc` 保持 stored、不再压缩，所以包为 66 MB | P1 |
 | 启动器 | `launcher/*.swift` | 8 个文件 | SwiftUI 应用包 | 由 MyGo 前端取代 | 已完成（前端） |
 | 预编译产物 | `thirdparty/angle-prebuilt`、`skia-prebuilt`、MoltenVK | macOS 二进制 | 仅 macOS | 绝不随 Windows 包发布 | — |
 
 ## 耦合计数
 
-各模式匹配的行数（`grep -c` 求和），基于 `ff2afbf`。
+各模式匹配的行数（`grep -c` 求和），基于 `8b45e48`。
 
 | 模式 | `runtime/src` | `runtime/translator` | `runtime/java` | `launcher` | `scripts` |
 |---|---|---|---|---|---|
-| `Cocoa` | 579 | 32 | 274 | 4 | 0 |
-| `AppKit` | 157 | 7 | 139 | 14 | 3 |
-| `Metal` | 264 | 76 | 124 | 1 | 38 |
-| Mach（`mach_`、`<mach/`、Mach-O） | 38 | 268 | 16 | 1 | 19 |
-| `dyld` | 34 | 125 | 4 | 3 | 5 |
-| `.dylib` | 19 | 134 | 51 | 18 | 158 |
-| `/opt/homebrew` | 2 | 16 | 3 | 1 | 31 |
-| `/Library` | 20 | 10 | 33 | 34 | 13 |
-| `mmap` | 8 | 178 | 20 | 0 | 0 |
-| `pthread_` | 26 | 914 | 2 | 0 | 0 |
+| `Cocoa` | 581 | 33 | 275 | 4 | 0 |
+| `AppKit` | 161 | 7 | 141 | 14 | 3 |
+| `Metal` | 264 | 77 | 124 | 1 | 38 |
+| Mach（`mach_`、`<mach/`、Mach-O） | 132 | 234 | 18 | 3 | 21 |
+| `dyld` | 34 | 133 | 4 | 4 | 5 |
+| `.dylib` | 22 | 140 | 63 | 21 | 158 |
+| `/opt/homebrew` | 2 | 16 | 3 | 1 | 32 |
+| `/Library` | 22 | 11 | 35 | 37 | 16 |
+| `mmap` | 9 | 226 | 29 | 0 | 1 |
+| `pthread_` | 42 | 963 | 2 | 0 | 0 |
 | `sigaction` | 1 | 218 | 0 | 0 | 0 |
-| `x18` | 3 | 383 | 5 | 5 | 20 |
-| `TPIDR_EL0` | 0 | 87 | 0 | 1 | 1 |
-| `svc` | 0 | 95 | 80 | 1 | 0 |
+| `x18` | 6 | 643 | 25 | 9 | 22 |
+| `TPIDR_EL0` | 0 | 83 | 0 | 1 | 1 |
+| `svc` | 0 | 149 | 128 | 1 | 0 |
 
 寄存器、信号、线程和内存方面的耦合几乎都在客体原生代码中；Java 侧的耦合主要是 `NativeCocoa` 调用和
 宿主路径。
@@ -70,13 +72,14 @@ Mac.apk 后重新执行下面的搜索并更新各表。
 
 `build.ps1 -Component Java` 重复 `runtime/scripts/build.sh` 的 Java 步骤：一次 `javac --release 21`，
 `android-framework.jar`（除 `com/macapk` 外的全部类）及内置字体，`macapk-loader.jar`（`com/macapk` 及解析器的
-`META-INF/services`），`java_base_patch` 与 `jdk_unsupported_patch` 模块，`net_spi` 和 `bcprov`。
+`META-INF/services`），`java_base_patch` 与 `jdk_unsupported_patch` 模块，`net_spi` 和 `bcprov`；自 `8b45e48` 起，还把 Android 的
+`org.apache.http.legacy`（上游转换好的 jar）放到 classpath 上并解包进 `android-framework.jar`，绝不覆盖已编译的类。
 
 | 检查 | 结果 |
 |---|---|
-| Java 侧不经修改即可用 Microsoft OpenJDK 21.0.13 ARM64 编译 | PASS：78 秒，120 个警告（内部 `Unsafe` API 和弃用），没有错误 |
-| `android-framework.jar` | 14,262 KB，5,981 个条目 |
-| `macapk-loader.jar` | 1,380 KB，475 个条目 |
+| Java 侧不经修改即可用 Microsoft OpenJDK 21.0.13 ARM64 编译 | 在 `8b45e48` 上 PASS：84 秒，达到 javac 的 100 个警告上限（内部 `Unsafe` API 和弃用），没有错误 |
+| `android-framework.jar` | 14,979 KB，6,415 个条目 |
+| `macapk-loader.jar` | 1,556 KB，530 个条目 |
 | 补丁模块能在 JVM 上加载（`--patch-module java.base=… --patch-module jdk.unsupported=…`） | PASS（T01） |
 | `build-id.txt`（上游的 DEX 缓存标识，`build_ids.py`） | NOT_RUN：需要 Python；在 P1 随读取它的运行时一起重写 |
 | `pairip-refs` | 公开仓库中没有（如上游所述）；不暂存 |
@@ -122,7 +125,20 @@ Mac.apk 后重新执行下面的搜索并更新各表。
 | Boot 会用到的其他宿主 native（`NativeOs.setenv`、`GamepadBridge`、Monet 壁纸） | 未绑定；Boot 逐一记录日志并继续 |
 | `AppClassLoader.findLibrary` 退回 stub | guest native 关闭时改为 `GUEST_NATIVE_DISABLED`（G1.5） |
 | `ClassFileRewriter` 把 `/proc/meminfo` 别名为 `/tmp/mcmeminf` | Windows 上没有这个文件夹：读取 `/proc/meminfo` 的应用什么也得不到（`Boot` 会记录）；需要同样长度的 Windows 路径或另一种重定向 |
-| 应用自己调用的 `System.load(absolutePath)` | 会到达 JVM，JVM 会把 ELF 交给 `LoadLibrary`；必须转到客体加载器（P2）——未完成 |
+| 应用自己调用的 `System.load(absolutePath)` | 会到达 JVM，JVM 会把 ELF 交给 `LoadLibrary`；必须转到客体加载器（P4）——未完成 |
+| `dir_naming.h`（`8b45e48` 新增：从应用文件夹名中去掉版本号里的点） | 不需要：`winapk run` 只用包名命名该文件夹 |
+
+## 客体 ELF 加载器（P2）
+
+N0 加载器（`runtime/guest/loader`，[native-profiles.md](native-profiles.md)）从上游取用的内容。
+
+| 上游部分 | Windows |
+|---|---|
+| `elf64_reader.h` 的记录布局（`Elf64Ehdr`、`Elf64Phdr`、`Elf64Sym`、`Elf64Rela`）和 `elf_reader.h` 的常量 | 原样使用 |
+| `elf64_reader.cpp` 的解析器 | 不使用：它通过 section header 查找符号，用 POSIX `open`/`pread` 读取，并为转换复制段；加载器依据 program header 工作（`PLAN.md` §9.2） |
+| `arm64_native.cpp` 的内存与补丁（改写 `x18` 和 `TPIDR_EL0` 的使用、Mach VM） | 不使用：N0 拒绝这类代码而不是给它打补丁（`PLAN.md` §5.3） |
+| `guest_rwx.h`、`guest_jit_pages.h`（`8b45e48` 新增：供客体 JIT 使用的可执行页） | 不使用：N0 不允许任何可执行分配 |
+| translator 链接的 Capstone | 加载器的筛查使用 vcpkg 提供的 Capstone 5.0.9 |
 
 ## 改变计划假设的发现
 
@@ -136,6 +152,7 @@ Mac.apk 后重新执行下面的搜索并更新各表。
 
 ## 下一步
 
-P1 尚未完成的是应用运行中的 density 变化（另一台显示器的缩放，或用户改变缩放），以及应用接下来可能需要的宿主 native（`NativeOs`、宿主字体）；界面从
-`winapk.Mock` 切换到 `winapk run` 属于 P7（`PLAN.md` §14）。P2 从
-`elf64_reader.cpp`、`elf_reader.cpp` 和 `arm64_native.cpp` 的内存部分开始。
+P2 的 profile N0 已完成（G2）。原生路径的下一步是 P3：为 profile N1 实现 Bionic、客体线程、errno 和 TLS，从
+[abi-compatibility.md](abi-compatibility.md) 中的导入 thunk 开始；之后 P4 把 APK 的库和 `System.load` 转到加载器。P1 尚未完成的是
+应用运行中的 density 变化，以及应用接下来可能需要的宿主 native（`NativeOs`、宿主字体）；界面从 `winapk.Mock` 切换到
+`winapk run` 属于 P7（`PLAN.md` §14）。

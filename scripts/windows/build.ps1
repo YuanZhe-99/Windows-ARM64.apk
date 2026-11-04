@@ -8,21 +8,23 @@ loader and the DEX converter) the way macapk/runtime/scripts/build.sh does:
 one javac pass over macapk/runtime/java, android-framework.jar (everything but
 com/macapk) and macapk-loader.jar (com/macapk), the bundled fonts, the
 java.base and jdk.unsupported patch modules, the net_spi resolver provider and
-bcprov. Component Host builds the native host (winapk.exe) and its Java probe
-with CMake, Ninja and clang-cl from Visual Studio, for ARM64.
+bcprov. Component Host builds the native host (winapk.exe, native-probe.exe) and its
+Java probe with CMake, Ninja and clang-cl from Visual Studio, for ARM64. Component
+NativeProbe builds native-probe.exe alone and the guest ELF fixtures (T05, T06) with
+the NDK.
 
 Output goes to build/windows-arm64/ (lib/ and bin/). Nothing outside the
 repository is changed, and nothing is installed.
 
 .PARAMETER Component
-Java, Host, or All.
+Java, FrameworkRes, Fixtures (the APKs), Host, NativeProbe, or All.
 
 .PARAMETER Configuration
 Debug or Release (Host only).
 #>
 [CmdletBinding()]
 param(
-    [ValidateSet('Java', 'FrameworkRes', 'Fixtures', 'Host', 'All')]
+    [ValidateSet('Java', 'FrameworkRes', 'Fixtures', 'Host', 'NativeProbe', 'All')]
     [string]$Component = 'All',
     [ValidateSet('Debug', 'Release')]
     [string]$Configuration = 'Debug'
@@ -54,7 +56,26 @@ function Build-Java {
         Sort-Object FullName | ForEach-Object { Quote-ArgFile $_.FullName }
     $list = Join-Path $out '.java.list'
     Set-Content -Path $list -Value $sources -Encoding utf8NoBOM
-    Invoke-Checked $javac @('-d', $classes, '--release', '21', '-encoding', 'UTF-8', '-Xlint:-options', "@$list")
+    # Android's org.apache.http.legacy (macapk/thirdparty/apache-http-legacy): on
+    # the classpath so the framework's own org.apache.http slice compiles against
+    # it, then unpacked beside the classes (never over one javac wrote, nor
+    # META-INF) so it lands in android-framework.jar, as build.sh does.
+    $legacy = Join-Path $repo 'macapk\thirdparty\apache-http-legacy\org.apache.http.legacy.jvm.jar'
+    $cp = if (Test-Path $legacy) { @('-cp', $legacy) } else { @() }
+    Invoke-Checked $javac (@('-d', $classes, '--release', '21', '-encoding', 'UTF-8', '-Xlint:-options') + $cp + @("@$list"))
+    if (Test-Path $legacy) {
+        Add-Type -AssemblyName System.IO.Compression.FileSystem
+        $zip = [IO.Compression.ZipFile]::OpenRead($legacy)
+        try {
+            foreach ($e in $zip.Entries) {
+                if ($e.FullName.StartsWith('META-INF/') -or $e.FullName.EndsWith('/')) { continue }
+                $dest = Join-Path $classes $e.FullName
+                if (Test-Path $dest) { continue }
+                New-Item -ItemType Directory -Force (Split-Path $dest) | Out-Null
+                [IO.Compression.ZipFileExtensions]::ExtractToFile($e, $dest)
+            }
+        } finally { $zip.Dispose() }
+    }
 
     Write-Step 'Packaging android-framework.jar'
     Push-Location $classes
@@ -298,8 +319,84 @@ function Build-Fixtures {
     }
 }
 
-<# Builds winapk.exe and its Java probe into $out\bin. #>
-function Build-Host {
+<#
+Writes $dest, a copy of the ELF file $src with one field patched (tests/windows-arm64/guest-elf/
+fixtures.psd1, Mutation): T06's structural cases, each differing from a valid library by that
+field alone. Notes: little-endian ELF64 offsets; program header i is at e_phoff + 56 * i.
+#>
+function Write-ElfMutation([string]$src, [string]$dest, [string]$mutation) {
+    $b = [IO.File]::ReadAllBytes($src)
+    $u16 = { param($o) [BitConverter]::ToUInt16($b, $o) }
+    $u32 = { param($o) [BitConverter]::ToUInt32($b, $o) }
+    $u64 = { param($o) [BitConverter]::ToUInt64($b, $o) }
+    $put = { param($o, [byte[]]$v) [Array]::Copy($v, 0, $b, $o, $v.Length) }
+    $phoff = & $u64 0x20
+    $phnum = & $u16 0x38
+    $ph = 0..($phnum - 1) | ForEach-Object { $at = $phoff + 56 * $_; [pscustomobject]@{ At = $at; Type = (& $u32 $at); Flags = (& $u32 ($at + 4)); Offset = (& $u64 ($at + 8)); Vaddr = (& $u64 ($at + 16)) } }
+    $loads = @($ph | Where-Object Type -EQ 1)
+    switch ($mutation) {
+        'bad-magic' { $b[3] = [byte][char]'X' }
+        'truncated' { $b = $b[0..0xFFF] }
+        'phdr-range' { & $put 0x38 ([BitConverter]::GetBytes([uint16]0xFFFF)) }
+        # PT_LOAD 1's p_memsz grows 16 bytes into PT_LOAD 2 (moving a vaddr would break alignment first).
+        'overlap' { & $put ($loads[1].At + 40) ([BitConverter]::GetBytes([uint64]($loads[2].Vaddr - $loads[1].Vaddr + 16))) }
+        'rwx' { $x = $loads | Where-Object { $_.Flags -band 1 } | Select-Object -First 1; & $put ($x.At + 4) ([BitConverter]::GetBytes([uint32]7)) }
+        'et-exec' { & $put 0x10 ([BitConverter]::GetBytes([uint16]2)) }
+        'unknown-reloc' {
+            # The first DT_RELA entry's type (the low half of r_info) becomes 0x7fff.
+            $dyn = $ph | Where-Object Type -EQ 2
+            for ($e = $dyn.Offset; ; $e += 16) {
+                $tag = & $u64 $e
+                if ($tag -eq 0) { throw "$src has no DT_RELA" }
+                if ($tag -eq 7) { $rela = & $u64 ($e + 8); break }
+            }
+            $seg = $loads | Where-Object { $_.Vaddr -le $rela } | Select-Object -Last 1
+            & $put ($rela - $seg.Vaddr + $seg.Offset + 8) ([BitConverter]::GetBytes([uint32]0x7FFF))
+        }
+        default { throw "unknown mutation $mutation" }
+    }
+    [IO.File]::WriteAllBytes($dest, $b)
+}
+
+<#
+Builds the guest ELF fixtures of P2 (T05, T06) that tests/windows-arm64/guest-elf/fixtures.psd1
+lists into tests\fixtures\elf with the NDK, and records their build parameters and hashes in
+fixtures.json there. Notes: generated, never committed (AGENTS.md).
+#>
+function Build-ElfFixtures {
+    $clang = Find-AndroidNdk
+    $lock = Get-Content (Join-Path $repo 'build-lock.json') -Raw | ConvertFrom-Json
+    $src = Join-Path $repo 'tests\windows-arm64\guest-elf'
+    $table = Import-PowerShellDataFile (Join-Path $src 'fixtures.psd1')
+    $dir = Join-Path $repo 'tests\fixtures\elf'
+    New-Item -ItemType Directory -Force $dir | Out-Null
+    # Only the files this table names are replaced (Reset-Dir clears under build\ alone).
+    foreach ($n in @($table.Fixtures.Name) + 'fixtures.json') { Remove-Item (Join-Path $dir $n) -ErrorAction SilentlyContinue }
+    $clangVersion = (& $clang --version | Select-Object -First 1)
+    $records = foreach ($f in $table.Fixtures) {
+        $dest = Join-Path $dir $f.Name
+        $rec = [ordered]@{ name = $f.Name; fixture = $f.Id }
+        if ($f.ContainsKey('Mutation')) {
+            Write-ElfMutation (Join-Path $dir $f.From) $dest $f.Mutation
+            $rec.from = $f.From
+            $rec.mutation = $f.Mutation
+        } else {
+            $cargs = @("--target=$($f.Target)") + $table.Common + $f.Flags + @("-Wl,-soname,$($f.Name)", '-o', $dest, (Join-Path $src $f.Source))
+            Invoke-Checked $clang $cargs
+            $rec.source = "tests/windows-arm64/guest-elf/$($f.Source)"
+            $rec.clang = ($cargs[0..($cargs.Count - 4)] -join ' ')
+        }
+        if ($f.ContainsKey('Expect')) { $rec.expect = "$($f.Expect): $($f.Reason)" }
+        $rec.sha256 = (Get-FileHash $dest -Algorithm SHA256).Hash.ToLower()
+        Write-Step "$($f.Id) $($f.Name): $($rec.sha256.Substring(0, 16))"
+        $rec
+    }
+    [ordered]@{ ndk = $lock.guest.androidNdk.version; compiler = $clangVersion; fixtures = @($records) } |
+        ConvertTo-Json -Depth 4 | Set-Content (Join-Path $dir 'fixtures.json') -Encoding utf8NoBOM
+}
+
+<# Builds winapk.exe, native-probe.exe and the Java probe into $out\bin (all targets, or only $Target). #>
+function Build-Host([string]$Target = '') {
     $vs = Find-VisualStudio
     $jdk = Find-Jdk
     $bin = Join-Path $out 'bin'
@@ -330,8 +427,8 @@ function Build-Host {
         "-DJAVA_HOME=$jdk",
         "-DWINAPK_BIN_DIR=$bin"
     )
-    Write-Step 'Building winapk.exe'
-    Invoke-InDevShell $vs @($cmake, '--build', $native)
+    Write-Step "Building $(if ($Target) { "$Target.exe" } else { 'winapk.exe and native-probe.exe' })"
+    Invoke-InDevShell $vs (@($cmake, '--build', $native) + $(if ($Target) { @('--target', $Target) } else { @() }))
     foreach ($f in Get-ChildItem $bin -Include *.exe, *.dll -Recurse) {
         $m = Get-PeMachine $f.FullName
         if ($m -ne 'ARM64') { throw "$($f.Name) is $m, not ARM64 (AGENTS.md: native means native)" }
@@ -344,5 +441,6 @@ switch ($Component) {
     'FrameworkRes' { Build-FrameworkRes }
     'Fixtures' { Build-Fixtures }
     'Host' { Build-Host }
-    'All' { Build-Java; Build-FrameworkRes; Build-Fixtures; Build-Host }
+    'NativeProbe' { Build-Host 'native-probe'; Build-ElfFixtures }
+    'All' { Build-Java; Build-FrameworkRes; Build-Fixtures; Build-Host; Build-ElfFixtures }
 }

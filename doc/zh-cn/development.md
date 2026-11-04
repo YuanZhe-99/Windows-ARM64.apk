@@ -29,9 +29,11 @@ go run ./tools/checkdocs           # doc/en-us and doc/zh-cn mirror each other
 
 ```powershell
 .\scripts\windows\check-requirements.ps1
-.\scripts\windows\build.ps1 -Component All          # or Java, FrameworkRes, Fixtures, Host
+.\scripts\windows\build.ps1 -Component All          # or Java, FrameworkRes, Fixtures, Host, NativeProbe
 .\scripts\windows\test.ps1 -Suite Host
 .\scripts\windows\test.ps1 -Suite Java
+.\scripts\windows\test.ps1 -Suite Native
+.\build\windows-arm64\bin\native-probe.exe suite .\tests\fixtures\elf\libn0abi.so
 .\build\windows-arm64\bin\winapk.exe doctor --json
 .\build\windows-arm64\bin\winapk.exe inspect .\tests\fixtures\hello-java.apk --json
 .\build\windows-arm64\bin\winapk.exe run .\tests\fixtures\hello-java.apk --native=off
@@ -44,13 +46,17 @@ go run ./tools/checkdocs           # doc/en-us and doc/zh-cn mirror each other
 `-Component Fixtures` 用 SDK 的 `aapt2`、`d8`、`zipalign`、`apksigner`，对 `src/**/*.kt` 用 kotlinc（Kotlin 标准库一并转为 DEX），以及（对 `jni/*.c`）NDK 的 clang，把
 `tests/windows-arm64/apk-fixtures` 的夹具 APK 构建到 `tests/fixtures`（从不提交）；每个夹具附带记录构建参数和
 哈希的 `<name>.json`，每个库都检查是否为 ELF64 AArch64。`-Component Host` 在 Visual Studio 的 ARM64 开发者环境中用
-clang-cl 把 `winapk.exe`、`winapk-bridge.dll` 和 `winapk-probe.jar` 构建到 `build/windows-arm64/bin`，首次构建时
-通过 vcpkg 获取 Vulkan 头文件、zlib 和 SQLite，生成的任何 PE 不是 ARM64 时即失败。
+clang-cl 把 `winapk.exe`、`winapk-bridge.dll`、`native-probe.exe` 和 `winapk-probe.jar` 构建到 `build/windows-arm64/bin`，首次构建时
+通过 vcpkg 获取 Vulkan 头文件、zlib、SQLite 和 Capstone，生成的任何 PE 不是 ARM64 时即失败。`-Component NativeProbe` 只构建
+`native-probe.exe`，并用 NDK 的 clang 把 `tests/windows-arm64/guest-elf/fixtures.psd1` 中的客体 ELF 夹具构建到 `tests/fixtures/elf`
+（从不提交；哈希在该目录的 `fixtures.json` 中）。
 
 `test.ps1 -Suite Host` 就是夹具 T01。`test.ps1 -Suite Java` 是 G1（T02、T03、T04 和 `hello-jni` 负例）：它用
 `winapk run` 运行夹具，向应用窗口发送点击、按键、字符、改变尺寸、最小化、恢复和失去激活，挂起一次 UI 线程以检查 UI 调用超时（由上游的
 `MACAPK_INJECT_FILE` 输入驱动发送返回），从 Unicode 路径运行一份副本，并读取运行时日志；需要桌面会话，数据和日志写到
-`build/windows-arm64/test-data`。`doctor --present` 还会打开一个小测试窗口检查 Vulkan 呈现；不加时该项为 `not-run`。
+`build/windows-arm64/test-data`。`doctor --present` 还会打开一个小测试窗口检查 Vulkan 呈现；不加时该项为 `not-run`。`test.ps1 -Suite Native` 是 G2（T05、T06）：
+不需要 JVM 和窗口；它对每个 T05 构建运行 `native-probe.exe suite`，对每个 T06 文件运行 `load`（对照 `fixtures.psd1` 检查拒绝），
+并运行 `stress`。
 
 `winapk run` 把每个应用的数据放在 `%LOCALAPPDATA%\Windows-ARM64.apk\Apps` 下（`--data-dir` 可改）：`android\`
 是应用看到的 Android 根目录（`data\data\<package>`、`sdcard`），`code\<package>\` 是转换后的代码及缓存戳，

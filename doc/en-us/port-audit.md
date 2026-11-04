@@ -1,7 +1,7 @@
 # Port audit
 
 What in Mac.apk is tied to macOS, how each part is handled on Windows ARM64, and in which phase.
-Audited at Mac.apk `ff2afbf` (merged as the `macapk/` subtree), 2026-11-03, on Windows 11 ARM64
+Audited at Mac.apk `ff2afbf` (2026-11-03) and re-checked at `8b45e48` (2026-11-04, upstream's v1.0.2377 sync), merged as the `macapk/` subtree, on Windows 11 ARM64
 (build 26300). Re-run the searches below after every Mac.apk merge and update the tables.
 
 ## Method
@@ -14,46 +14,48 @@ Audited at Mac.apk `ff2afbf` (merged as the `macapk/` subtree), 2026-11-03, on W
 - Built: the whole Java side with the Windows ARM64 JDK (`scripts/windows/build.ps1 -Component
   Java`); a Windows host with an embedded JVM (`-Component Host`, fixture T01).
 - P1: the AOSP framework resources (built with the SDK's `aapt2`) and the Java path of a pure-Java
-  APK (below). Not yet: building or reading `runtime/translator` in depth (P2).
+  APK (below).
+- P2: `runtime/translator/include/macapk/elf64_reader.h`, `elf_reader.h`, `elf64_reader.cpp` and the
+  new `guest_rwx.h` and `guest_jit_pages.h` read for the guest loader (below).
 
 ## Areas
 
 | Area | Upstream paths | Size | macOS coupling | Windows handling | Phase |
 |---|---|---|---|---|---|
-| Android framework | `runtime/java/android`, `androidx`, `dalvik`, `javax`, `libcore`, `org` | 3,049 Java files, 578k lines (with the rest of `runtime/java`) | 26 files call `NativeCocoa`; font and storage code names macOS paths | reused as is; calls move to platform-neutral host interfaces | P1 |
+| Android framework | `runtime/java/android`, `androidx`, `dalvik`, `javax`, `libcore`, `org` | 3,017 Java files, 593k lines (with the rest of `runtime/java`) | 26 files call `NativeCocoa`; font and storage code names macOS paths | reused as is; calls move to platform-neutral host interfaces | P1 |
 | DEX converter | `runtime/java/com/macapk/dex` | in the above | `AndroidSdk.java` looks for the SDK in macOS and Linux places | reused; the SDK lookup gains Windows places | P1 |
 | Boot and loader | `runtime/java/com/macapk/loader` (`Boot.java`, `NativeCocoa.java`, …) | 57 natives in `NativeCocoa` | windows, surfaces, input, host services through Cocoa JNI; macOS paths | a host start-up service and `HostWindow`/`HostEventLoop`/`HostFramePresenter` (`PLAN.md` §4.3) | P1 |
-| JNI host | `runtime/src/*.cpp` | 17 files, 21k lines | `dlfcn`, `mach`, `sys/*` (see below) | per file: POSIX calls get Windows equivalents behind platform interfaces | P1–P4 |
-| macOS host services | `runtime/src/*.mm` | 22 files, 30k lines (`cocoa_bridge.mm` 14k) | Objective-C++, AppKit, AVFoundation, Metal, VideoToolbox | never built on Windows; replaced only where a phase needs the service | P1, P8 |
-| Guest native | `runtime/translator` | 25 files, 121k lines (`bionic_shim.cpp` 67k, `arm64_native.cpp` 16k) | Mach memory, `x18`/`TPIDR_EL0` patching, Mach-O wrapping, Darwin signals | the ELF parsing is reused; memory, execution, TLS and Bionic are rebuilt per capability (`PLAN.md` §5) | P2–P4 |
+| JNI host | `runtime/src/*.cpp` | 19 files, 22k lines | `dlfcn`, `mach`, `sys/*` (see below) | per file: POSIX calls get Windows equivalents behind platform interfaces | P1–P4 |
+| macOS host services | `runtime/src/*.mm` | 26 files, 32k lines (`cocoa_bridge.mm` 14k) | Objective-C++, AppKit, AVFoundation, Metal, VideoToolbox | never built on Windows; replaced only where a phase needs the service | P1, P8 |
+| Guest native | `runtime/translator` | 34 files, 152k lines (`bionic_shim.cpp` 69k, `arm64_native.cpp` 16k) | Mach memory, `x18`/`TPIDR_EL0` patching, Mach-O wrapping, Darwin signals | the ELF record layouts are reused; the N0 loader maps from program headers (P2, below); memory, execution, TLS and Bionic are rebuilt per capability (`PLAN.md` §5) | P2 (N0 done)–P4 |
 | Graphics | `runtime/src/angle_glue.cpp`, `gles_bridge.cpp`, `egl14/gles*_bridges.inc`, `translator/src/bionic_shim_vulkan.cpp` | 6k lines | ANGLE on Metal, MoltenVK | ANGLE for Windows ARM64 (Vulkan, Direct3D 11); guest Vulkan to the Windows loader | P5, P6 |
 | Skia | `thirdparty/skia-prebuilt`, `skia_metal_bridge.mm` | prebuilt `.dylib` | Metal | later: a Windows ARM64 Skia GPU bridge | P8 |
 | Build | `runtime/CMakeLists.txt`, `runtime/scripts/build.sh`, `scripts/*.sh` | 835-line build script | OBJCXX, Homebrew, `codesign`, entitlements, `.dylib` staging, `python3` | `scripts/windows/*.ps1`; `CMakeLists.txt` branches to `platform/windows/windows.cmake` | P0 (done for Java and Host) |
-| Translator build | `runtime/translator/CMakeLists.txt` | 2 targets | `macapk-translator` turns an ELF `.so` into a Mach-O `.dylib`; `libmacapk-bionic-shim.dylib` links capstone, zlib, libpng, ANGLE and the Security and CoreFoundation frameworks | not built on Windows: the guest loader of P2 maps ELF itself (no Mach-O or PE wrapping); capstone, zlib and libpng come from vcpkg if reused | P2 |
+| Translator build | `runtime/translator/CMakeLists.txt` | 2 targets | `macapk-translator` turns an ELF `.so` into a Mach-O `.dylib`; `libmacapk-bionic-shim.dylib` links capstone, zlib, libpng, ANGLE and the Security and CoreFoundation frameworks | not built on Windows: the guest loader of P2 maps ELF itself (no Mach-O or PE wrapping); the loader's screen uses Capstone 5.0.9 from vcpkg | P2 |
 | Framework resources | `scripts/build_framework_res.sh` | one-time | needs `aapt2` (SDK build-tools or apktool's macOS binary) and a ~20 MB AOSP source tarball; makes a ~48 MB `framework-res-api36.apk`, never committed | done: the same recipe in `build.ps1 -Component FrameworkRes` with the SDK's `aapt2` (build-tools 36.0.0); `resources.arsc` stays stored rather than re-deflated, so the package is 66 MB | P1 |
 | Launcher | `launcher/*.swift` | 8 files | SwiftUI app bundle | replaced by the MyGo front end | done (front end) |
 | Prebuilts | `thirdparty/angle-prebuilt`, `skia-prebuilt`, MoltenVK | macOS binaries | macOS only | never shipped on Windows | — |
 
 ## Coupling counts
 
-Lines matching each pattern (`grep -c`, summed), at `ff2afbf`.
+Lines matching each pattern (`grep -c`, summed), at `8b45e48`.
 
 | Pattern | `runtime/src` | `runtime/translator` | `runtime/java` | `launcher` | `scripts` |
 |---|---|---|---|---|---|
-| `Cocoa` | 579 | 32 | 274 | 4 | 0 |
-| `AppKit` | 157 | 7 | 139 | 14 | 3 |
-| `Metal` | 264 | 76 | 124 | 1 | 38 |
-| Mach (`mach_`, `<mach/`, Mach-O) | 38 | 268 | 16 | 1 | 19 |
-| `dyld` | 34 | 125 | 4 | 3 | 5 |
-| `.dylib` | 19 | 134 | 51 | 18 | 158 |
-| `/opt/homebrew` | 2 | 16 | 3 | 1 | 31 |
-| `/Library` | 20 | 10 | 33 | 34 | 13 |
-| `mmap` | 8 | 178 | 20 | 0 | 0 |
-| `pthread_` | 26 | 914 | 2 | 0 | 0 |
+| `Cocoa` | 581 | 33 | 275 | 4 | 0 |
+| `AppKit` | 161 | 7 | 141 | 14 | 3 |
+| `Metal` | 264 | 77 | 124 | 1 | 38 |
+| Mach (`mach_`, `<mach/`, Mach-O) | 132 | 234 | 18 | 3 | 21 |
+| `dyld` | 34 | 133 | 4 | 4 | 5 |
+| `.dylib` | 22 | 140 | 63 | 21 | 158 |
+| `/opt/homebrew` | 2 | 16 | 3 | 1 | 32 |
+| `/Library` | 22 | 11 | 35 | 37 | 16 |
+| `mmap` | 9 | 226 | 29 | 0 | 1 |
+| `pthread_` | 42 | 963 | 2 | 0 | 0 |
 | `sigaction` | 1 | 218 | 0 | 0 | 0 |
-| `x18` | 3 | 383 | 5 | 5 | 20 |
-| `TPIDR_EL0` | 0 | 87 | 0 | 1 | 1 |
-| `svc` | 0 | 95 | 80 | 1 | 0 |
+| `x18` | 6 | 643 | 25 | 9 | 22 |
+| `TPIDR_EL0` | 0 | 83 | 0 | 1 | 1 |
+| `svc` | 0 | 149 | 128 | 1 | 0 |
 
 The guest-native code carries almost all register, signal, thread and memory coupling; the Java
 side's coupling is mostly `NativeCocoa` calls and host paths.
@@ -72,13 +74,15 @@ side's coupling is mostly `NativeCocoa` calls and host paths.
 `build.ps1 -Component Java` repeats the Java steps of `runtime/scripts/build.sh`: one `javac
 --release 21` pass, `android-framework.jar` (everything but `com/macapk`) with the bundled fonts,
 `macapk-loader.jar` (`com/macapk` with the resolver's `META-INF/services`), the `java_base_patch`
-and `jdk_unsupported_patch` modules, `net_spi` and `bcprov`.
+and `jdk_unsupported_patch` modules, `net_spi` and `bcprov`; since `8b45e48`, Android's `org.apache.http.legacy`
+(upstream's converted jar) on the classpath and unpacked into `android-framework.jar`, never over a
+compiled class.
 
 | Check | Result |
 |---|---|
-| The Java side compiles unchanged with Microsoft OpenJDK 21.0.13 ARM64 | PASS: 78 s, 120 warnings (internal `Unsafe` API and deprecations), no error |
-| `android-framework.jar` | 14,262 KB, 5,981 entries |
-| `macapk-loader.jar` | 1,380 KB, 475 entries |
+| The Java side compiles unchanged with Microsoft OpenJDK 21.0.13 ARM64 | PASS at `8b45e48`: 84 s, javac's limit of 100 warnings (internal `Unsafe` API and deprecations), no error |
+| `android-framework.jar` | 14,979 KB, 6,415 entries |
+| `macapk-loader.jar` | 1,556 KB, 530 entries |
 | Patch modules load on the JVM (`--patch-module java.base=… --patch-module jdk.unsupported=…`) | PASS (T01) |
 | `build-id.txt` (upstream's DEX-cache identity, `build_ids.py`) | NOT_RUN: needs Python; re-expressed in P1 with the runtime that reads it |
 | `pairip-refs` | absent in the public repository (as upstream says); not staged |
@@ -124,7 +128,20 @@ What a pure-Java APK needs from the host, as `winapk run` provides it (G1, [plat
 | Other host natives Boot reaches (`NativeOs.setenv`, `GamepadBridge`, Monet wallpaper) | unbound; Boot logs each and goes on |
 | `AppClassLoader.findLibrary`'s stub fallback | with guest native off, `GUEST_NATIVE_DISABLED` instead (G1.5) |
 | `ClassFileRewriter`'s `/proc/meminfo` alias `/tmp/mcmeminf` | no such folder on Windows: an app reading `/proc/meminfo` gets nothing (`Boot` logs it); needs a same-length Windows path or another redirect |
-| An app's own `System.load(absolutePath)` | reaches the JVM, which would hand an ELF to `LoadLibrary`; must be routed to the guest loader (P2) — open |
+| An app's own `System.load(absolutePath)` | reaches the JVM, which would hand an ELF to `LoadLibrary`; must be routed to the guest loader (P4) — open |
+| `dir_naming.h` (new at `8b45e48`: the version's dots folded out of an app's folder name) | not needed: `winapk run` names the folder after the package alone |
+
+## Guest ELF loader (P2)
+
+What the N0 loader (`runtime/guest/loader`, [native-profiles.md](native-profiles.md)) takes from upstream.
+
+| Upstream piece | Windows |
+|---|---|
+| `elf64_reader.h`'s record layouts (`Elf64Ehdr`, `Elf64Phdr`, `Elf64Sym`, `Elf64Rela`) and `elf_reader.h`'s constants | used as they are |
+| `elf64_reader.cpp`'s parser | not used: it finds symbols through section headers, reads with POSIX `open`/`pread` and copies segments for translation; the loader works from program headers (`PLAN.md` §9.2) |
+| `arm64_native.cpp`'s memory and patching (rewriting `x18` and `TPIDR_EL0` uses, Mach VM) | not used: N0 refuses such code instead of patching it (`PLAN.md` §5.3) |
+| `guest_rwx.h`, `guest_jit_pages.h` (new at `8b45e48`: executable pages for guest JITs) | not used: N0 allows no executable allocation |
+| Capstone, which the translator links | the loader's screen uses Capstone 5.0.9 from vcpkg |
 
 ## Findings that change the plan's assumptions
 
@@ -141,7 +158,8 @@ What a pure-Java APK needs from the host, as `winapk run` provides it (G1, [plat
 
 ## Next
 
-P1's open items are a density change while an app runs (another display's scale, or the person
-changing it) and the host natives an app may need next (`NativeOs`, host fonts); the interface's switch from
-`winapk.Mock` to `winapk run` belongs to P7 (`PLAN.md` §14). P2 starts from `elf64_reader.cpp`, `elf_reader.cpp` and the memory parts of
-`arm64_native.cpp`.
+P2's profile N0 is done (G2). Next on the native path is P3: Bionic, guest threads, errno and TLS
+for profile N1, starting from the import thunks of [abi-compatibility.md](abi-compatibility.md);
+then P4 routes an APK's libraries and `System.load` to the loader. P1's open items are a density
+change while an app runs and the host natives an app may need next (`NativeOs`, host fonts); the
+interface's switch from `winapk.Mock` to `winapk run` belongs to P7 (`PLAN.md` §14).
