@@ -3155,3 +3155,143 @@ func LogsPrivate() string { return In(i18n.Locale()).LogsPrivate() }
 func (msgs Messages) LogsPrivate() string {
 	return Catalog.Format(msgs.locale, "LogsPrivate", nil)
 }
+
+// DropHere says "Put it here"
+// in the language the app shows.
+func DropHere() string { return In(i18n.Locale()).DropHere() }
+
+// DropHere says "Put it here"
+// in the language of msgs.
+func (msgs Messages) DropHere() string {
+	return Catalog.Format(msgs.locale, "DropHere", nil)
+}
+
+// DropSwap says "Swap places"
+// in the language the app shows.
+func DropSwap() string { return In(i18n.Locale()).DropSwap() }
+
+// DropSwap says "Swap places"
+// in the language of msgs.
+func (msgs Messages) DropSwap() string {
+	return Catalog.Format(msgs.locale, "DropSwap", nil)
+}
+
+// DropLeft says "On the left"
+// in the language the app shows.
+func DropLeft() string { return In(i18n.Locale()).DropLeft() }
+
+// DropLeft says "On the left"
+// in the language of msgs.
+func (msgs Messages) DropLeft() string {
+	return Catalog.Format(msgs.locale, "DropLeft", nil)
+}
+
+// DropRight says "On the right"
+// in the language the app shows.
+func DropRight() string { return In(i18n.Locale()).DropRight() }
+
+// DropRight says "On the right"
+// in the language of msgs.
+func (msgs Messages) DropRight() string {
+	return Catalog.Format(msgs.locale, "DropRight", nil)
+}
+
+// DropAbove says "Above"
+// in the language the app shows.
+func DropAbove() string { return In(i18n.Locale()).DropAbove() }
+
+// DropAbove says "Above"
+// in the language of msgs.
+func (msgs Messages) DropAbove() string {
+	return Catalog.Format(msgs.locale, "DropAbove", nil)
+}
+
+// DropBelow says "Below"
+// in the language the app shows.
+func DropBelow() string { return In(i18n.Locale()).DropBelow() }
+
+// DropBelow says "Below"
+// in the language of msgs.
+func (msgs Messages) DropBelow() string {
+	return Catalog.Format(msgs.locale, "DropBelow", nil)
+}
+
+// DragHint says "Drag onto another pane to split, onto the sidebar to give it a place of its own, or out of the window to open it in a…"
+// in the language the app shows.
+func DragHint() string { return In(i18n.Locale()).DragHint() }
+
+// DragHint says "Drag onto another pane to split, onto the sidebar to give it a place of its own, or out of the window to open it in a…"
+// in the language of msgs.
+func (msgs Messages) DragHint() string {
+	return Catalog.Format(msgs.locale, "DragHint", nil)
+}
+
+// ErrorsOnly says "Errors and warnings only"
+// in the language the app shows.
+func ErrorsOnly() string { return In(i18n.Locale()).ErrorsOnly() }
+
+// ErrorsOnly says "Errors and warnings only"
+// in the language of msgs.
+func (msgs Messages) ErrorsOnly() string {
+	return Catalog.Format(msgs.locale, "ErrorsOnly", nil)
+}
+
+// NoLines says "No errors or warnings."
+// in the language the app shows.
+func NoLines() string { return In(i18n.Locale()).NoLines() }
+
+// NoLines says "No errors or warnings."
+// in the language of msgs.
+func (msgs Messages) NoLines() string {
+	return Catalog.Format(msgs.locale, "NoLines", nil)
+}
+
+// SaveLog says "Save for a bug report…"
+// in the language the app shows.
+func SaveLog() string { return In(i18n.Locale()).SaveLog() }
+
+// SaveLog says "Save for a bug report…"
+// in the language of msgs.
+func (msgs Messages) SaveLog() string {
+	return Catalog.Format(msgs.locale, "SaveLog", nil)
+}
+
+// StoppedByYou says "stopped by you"
+// in the language the app shows.
+func StoppedByYou() string { return In(i18n.Locale()).StoppedByYou() }
+
+// StoppedByYou says "stopped by you"
+// in the language of msgs.
+func (msgs Messages) StoppedByYou() string {
+	return Catalog.Format(msgs.locale, "StoppedByYou", nil)
+}
+
+// FileMissing says "File not found"
+// in the language the app shows.
+func FileMissing() string { return In(i18n.Locale()).FileMissing() }
+
+// FileMissing says "File not found"
+// in the language of msgs.
+func (msgs Messages) FileMissing() string {
+	return Catalog.Format(msgs.locale, "FileMissing", nil)
+}
+
+// Locate says "Locate…"
+// in the language the app shows.
+func Locate() string { return In(i18n.Locale()).Locate() }
+
+// Locate says "Locate…"
+// in the language of msgs.
+func (msgs Messages) Locate() string {
+	return Catalog.Format(msgs.locale, "Locate", nil)
+}
+
+// LocateTitle says "Where is {app}'s APK?"
+// in the language the app shows.
+func LocateTitle(app string) string { return In(i18n.Locale()).LocateTitle(app) }
+
+// LocateTitle says "Where is {app}'s APK?"
+// in the language of msgs.
+func (msgs Messages) LocateTitle(app string) string {
+	return Catalog.Format(msgs.locale, "LocateTitle", map[string]any{"app": app})
+}

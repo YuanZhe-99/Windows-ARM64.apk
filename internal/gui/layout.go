@@ -207,3 +207,113 @@ func (a *App) removeTab(t string) {
 		a.cur = g
 	}
 }
+
+// dropZone is where on a pane another was dropped: its middle (in its
+// place) or one of its edges (beside it, splitting it).
+type dropZone int
+
+const (
+	zoneMiddle dropZone = iota
+	zoneLeft
+	zoneRight
+	zoneTop
+	zoneBottom
+)
+
+// zoneRect is a drop zone's place on a pane, in percent of its room.
+type zoneRect struct {
+	zone       dropZone
+	x, y, w, h float32
+}
+
+// dropZones are where a pane may go on a pane: beside it on each side that
+// has room, else in its place, which takes the room of the sides that
+// don't.
+func dropZones(across, down bool) []zoneRect {
+	switch {
+	case across && down:
+		return []zoneRect{
+			{zoneLeft, 0, 0, 25, 100}, {zoneRight, 75, 0, 25, 100},
+			{zoneTop, 25, 0, 50, 25}, {zoneBottom, 25, 75, 50, 25}, {zoneMiddle, 25, 25, 50, 50},
+		}
+	case across:
+		return []zoneRect{{zoneLeft, 0, 0, 25, 100}, {zoneRight, 75, 0, 25, 100}, {zoneMiddle, 25, 0, 50, 100}}
+	case down:
+		return []zoneRect{{zoneTop, 0, 0, 100, 25}, {zoneBottom, 0, 75, 100, 25}, {zoneMiddle, 0, 25, 100, 50}}
+	}
+	return []zoneRect{{zoneMiddle, 0, 0, 100, 100}}
+}
+
+// splitAt puts t on side z of target, halving target's pane; t takes the
+// focus. Returns: false when target isn't shown or the group is full.
+func (g *group) splitAt(t, target string, z dropZone) bool {
+	n, _ := g.leaf(target)
+	if n == nil || len(g.tabs()) >= maxPanes {
+		return false
+	}
+	old, added := &node{tab: n.tab}, &node{tab: t}
+	n.tab, n.ratio, n.across = "", 50, z == zoneLeft || z == zoneRight
+	if z == zoneLeft || z == zoneTop {
+		n.first, n.second = added, old
+	} else {
+		n.first, n.second = old, added
+	}
+	g.focus, g.zoom = t, ""
+	return true
+}
+
+// swap trades the places of two panes of the group.
+func (g *group) swap(a, b string) {
+	na, _ := g.leaf(a)
+	nb, _ := g.leaf(b)
+	if na == nil || nb == nil {
+		return
+	}
+	na.tab, nb.tab = b, a
+	g.focus = a
+}
+
+// dropTab puts the dragged tab t where it was dropped on target's pane: a
+// pane of the same group trades places with target; from elsewhere an edge
+// splits target's pane there, and the middle takes target's place, target
+// becoming a group of its own.
+func (a *App) dropTab(t, target string, z dropZone) {
+	g := a.groupOf(target)
+	if g == nil || t == target {
+		return
+	}
+	if og := a.groupOf(t); og == g {
+		g.swap(t, target)
+		a.cur = g
+		return
+	}
+	a.removeTab(t)
+	if g = a.groupOf(target); g == nil {
+		return
+	}
+	a.cur = g
+	if z != zoneMiddle && g.splitAt(t, target, z) {
+		return
+	}
+	n, _ := g.leaf(target)
+	n.tab, g.focus = t, t
+	if g.zoom == target {
+		g.zoom = t
+	}
+	alone := &group{}
+	alone.single(target)
+	a.groups = append(a.groups, alone)
+}
+
+// detach takes t out of its group into a group of its own, as dropping it
+// on the sidebar's list does.
+func (a *App) detach(t string) {
+	if g := a.groupOf(t); g == nil || len(g.tabs()) < 2 {
+		return
+	}
+	a.removeTab(t)
+	g := &group{}
+	g.single(t)
+	a.groups = append(a.groups, g)
+	a.cur = g
+}

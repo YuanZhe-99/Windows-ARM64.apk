@@ -196,6 +196,7 @@ func (a *App) addEntry(open bool) {
 		a.library = append(a.library, e)
 	}
 	a.saveLibrary()
+	delete(a.missing, e.APK.Path)
 	a.add = addState{}
 	if open {
 		a.launch(e, e.InWindow, false)

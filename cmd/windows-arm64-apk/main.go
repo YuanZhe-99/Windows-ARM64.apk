@@ -42,10 +42,18 @@ func main() {
 	if lang := a.Prefs().Language; lang != "" {
 		mygo.App.SetLocale(lang)
 	}
-	mygo.App.OnSecondInstance(func([]string, string) { a.Focus() })
+	// An APK named on the command line, or given to a second launch, opens
+	// Add an app.
+	mygo.App.OnSecondInstance(func(args []string, dir string) {
+		a.Focus()
+		if len(args) > 1 {
+			a.OpenFiles(args[1:], dir)
+		}
+	})
 	mygo.App.WhenReady(func() {
 		a.Focus()
 		a.Start()
+		a.OpenFiles(os.Args[1:], "")
 	})
 	if err := mygo.App.Run(); err != nil {
 		log.Fatal(err)

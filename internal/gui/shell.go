@@ -1,6 +1,7 @@
 package gui
 
 import (
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -101,7 +102,13 @@ func (a *App) closeMain() {
 func (a *App) view(c *ui.Context) {
 	applyTheme(c)
 	p := pal(c)
-	ui.Row(c.Key("shell")).Fill().AlignItems(ui.Stretch).Background(p.base).TextColor(p.text).FontSize(fontBody).Children(func() {
+	shell := ui.Row(c.Key("shell")).Fill().AlignItems(ui.Stretch).Background(p.base).TextColor(p.text).FontSize(fontBody)
+	// An APK dropped anywhere on the window opens Add an app.
+	if apk := firstAPK(shell.DroppedFiles()); apk != "" {
+		a.inspect(apk)
+	}
+	a.retitle()
+	shell.Children(func() {
 		left := float32(0)
 		if a.prefs.SidebarHidden {
 			left = margin / 2
@@ -119,8 +126,21 @@ func (a *App) view(c *ui.Context) {
 	a.detailsSheet(c)
 	a.installDialog(c)
 	a.confirmDialog(c)
-	if c.Shortcut(ui.Cmd, ui.KeyComma) {
+	switch {
+	case c.Shortcut(ui.Cmd, ui.KeyComma):
 		a.openSettings(spGeneral)
+	case c.Shortcut(ui.Cmd, ui.KeyO):
+		a.chooseAPK()
+	case c.Shortcut(ui.Cmd, ui.KeyW) && a.cur != nil:
+		// Closes the pane in focus; Home stays.
+		if t := a.cur.focus; appOf(t) != "" {
+			a.closeApp(appOf(t))
+		} else if t == tabDiag {
+			a.removeTab(t)
+		}
+	}
+	if a.runPending() {
+		c.Invalidate()
 	}
 }
 
@@ -159,7 +179,15 @@ func (a *App) sidebar(c *ui.Context) {
 		if len(open) == 0 && len(a.windowApps()) == 0 {
 			muted(c, L.NothingOpen(), fontSmall).Padding(4, 8).Wrap()
 		}
-		ui.Scroll(c.Key("sb-open")).Grow(1).FillWidth().Gap(2).Children(func() {
+		list := ui.Scroll(c.Key("sb-open")).Grow(1).FillWidth().Gap(2).Radius(radiusCard)
+		// A pane dropped here leaves its group for one of its own.
+		if _, over := ui.DragOver[tabDrag](list); over {
+			list.Background(p.accent.Alpha(0.12))
+		}
+		if d, ok := ui.Drop[tabDrag](list); ok {
+			a.afterFrame(func() { a.detach(d.tab) })
+		}
+		list.Children(func() {
 			for gi, g := range open {
 				a.groupEntry(c, gi, g)
 			}
@@ -248,7 +276,7 @@ func (a *App) groupEntry(c *ui.Context, gi int, g *group) {
 
 // tabRow is a tab's row in the sidebar: its icon, name and state in words.
 func (a *App) tabRow(c *ui.Context, key, t string, selected bool, onClick func()) {
-	if sbRow(c, key, selected, func() {
+	row := sbRow(c, key, selected, func() {
 		a.tabIcon(c, t, 22)
 		ui.Column(c).Grow(1).MinWidth(0).Children(func() {
 			ui.Text(c, a.tabName(t)).Ellipsis("…").MaxLines(1)
@@ -256,7 +284,12 @@ func (a *App) tabRow(c *ui.Context, key, t string, selected bool, onClick func()
 				muted(c, stateWords(s, false, a.entry(s.id), a), fontSmall).Ellipsis("…").MaxLines(1)
 			}
 		})
-	}).Clicked() {
+	})
+	row.Drag(tabDrag{t})
+	if e := a.entry(appOf(t)); e != nil {
+		row.ContextMenu(func(m *ui.Menu) { a.rowMenu(m, e) })
+	}
+	if row.Clicked() {
 		onClick()
 	}
 }
@@ -321,7 +354,7 @@ func stateWords(s *session, full bool, e *entry, a *App) string {
 	case winapk.Failed:
 		return L.StateFailed()
 	}
-	if !s.stopAt.IsZero() && time.Since(s.stopAt) > 5*time.Second {
+	if !s.stopAt.IsZero() && time.Since(s.stopAt) > stopWait {
 		return L.StateNotResponding()
 	}
 	w := L.StateRunning()
@@ -390,6 +423,47 @@ func windowButtons(c *ui.Context, key string, w *mygo.Window) {
 	}
 	if caption("-close", winClose, L.WindowClose(), true).Clicked() && w != nil {
 		w.Close()
+	}
+}
+
+// retitle names the main window after the pane in focus, as the taskbar
+// shows it.
+func (a *App) retitle() {
+	if a.window == nil || a.cur == nil {
+		return
+	}
+	title := "Windows-ARM64.apk"
+	if t := a.cur.focus; t != tabHome {
+		title = a.tabName(t) + " — " + title
+	}
+	if a.window.Title() != title {
+		a.window.SetTitle(title)
+	}
+}
+
+// firstAPK is the first .apk among paths, "" for none.
+func firstAPK(paths []string) string {
+	for _, f := range paths {
+		if strings.EqualFold(fileExt(f), ".apk") {
+			return f
+		}
+	}
+	return ""
+}
+
+// OpenFiles opens Add an app with the first APK among args, as given on
+// the command line or to a second launch; relative paths are taken from
+// dir. It never makes the app the one that opens .apk files.
+func (a *App) OpenFiles(args []string, dir string) {
+	var abs []string
+	for _, f := range args {
+		if !filepath.IsAbs(f) && dir != "" {
+			f = filepath.Join(dir, f)
+		}
+		abs = append(abs, f)
+	}
+	if apk := firstAPK(abs); apk != "" {
+		a.later(func() { a.inspect(apk) })
 	}
 }
 

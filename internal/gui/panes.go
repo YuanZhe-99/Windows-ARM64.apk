@@ -3,6 +3,8 @@ package gui
 import (
 	"time"
 
+	"github.com/egoist/mygo/transfer"
+
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
 
@@ -21,7 +23,19 @@ func (a *App) panesView(c *ui.Context) {
 	if s := a.open[appOf(g.focus)]; s != nil && s.live() && c.Shortcut(0, ui.KeyEscape) {
 		a.back(s)
 	}
-	ui.Column(c.Key("panes")).Grow(1).FillWidth().MinHeight(0).Children(func() {
+	area := ui.Column(c.Key("panes")).Grow(1).FillWidth().MinHeight(0)
+	// The zones stay one frame after the drag leaves: the frame a drop
+	// lands in has to build the zone it lands on.
+	last := a.dragging
+	a.dragging, a.zonesFor = "", ""
+	if d, over := ui.DragOver[tabDrag](area); over {
+		a.dragging = d.tab
+	}
+	a.zonesFor = a.dragging
+	if a.zonesFor == "" {
+		a.zonesFor = last
+	}
+	area.Children(func() {
 		if g.zoom != "" {
 			a.tabPane(c, g, g.zoom, true, true)
 			return
@@ -89,7 +103,111 @@ func (a *App) tabPane(c *ui.Context, g *group, t string, top, right bool) {
 					a.appBody(c, appOf(t), false)
 				}
 			})
+			if a.zonesFor != "" && a.zonesFor != t {
+				a.dropZonesView(c, g, t)
+			}
 		})
+	})
+}
+
+// tabDrag is what a dragged pane or sidebar row carries: its tab.
+type tabDrag struct{ tab string }
+
+// dropZonesView shows, while a pane is dragged over t's pane, where it may
+// go: a pane of the same group only trades places; from elsewhere beside t
+// on each side with room, or in its place.
+func (a *App) dropZonesView(c *ui.Context, g *group, t string) {
+	p := pal(c)
+	from := a.zonesFor
+	var zones []zoneRect
+	middle := L.DropHere()
+	switch r := a.sizes[t]; {
+	case a.groupOf(from) == g:
+		zones, middle = dropZones(false, false), L.DropSwap()
+	case len(g.tabs()) >= maxPanes:
+		zones = dropZones(false, false)
+	default:
+		zones = dropZones(canSplit(r, true), canSplit(r, false))
+	}
+	for _, z := range zones {
+		zone := ui.Box(c.Key("drop-" + t + "-" + string(rune('0'+z.zone)))).Absolute().
+			LeftPercent(z.x).TopPercent(z.y).WidthPercent(z.w).HeightPercent(z.h).Radius(radiusCard).Center()
+		fg := p.muted
+		if _, on := ui.DragOver[tabDrag](zone); on {
+			zone.Background(p.accent.Alpha(0.25)).Border(2, p.accent)
+			fg = p.accentText
+		}
+		name := middle
+		switch z.zone {
+		case zoneLeft:
+			name = L.DropLeft()
+		case zoneRight:
+			name = L.DropRight()
+		case zoneTop:
+			name = L.DropAbove()
+		case zoneBottom:
+			name = L.DropBelow()
+		}
+		zone.Children(func() {
+			ui.Text(c, name).FontSize(fontSmall).FontWeight(600).TextColor(fg).NoWrap().Padding(4, 10).Radius(12).Background(p.pane).Border(1, p.border)
+		})
+		if d, ok := ui.Drop[tabDrag](zone); ok {
+			zz := z.zone
+			a.afterFrame(func() { a.dropFrom(d.tab, t, zz) })
+		}
+	}
+}
+
+// dropFrom drops a dragged tab on target's pane; an app in a window of its
+// own comes back into the main window first.
+func (a *App) dropFrom(t, target string, z dropZone) {
+	if s := a.open[appOf(t)]; s != nil && s.win != nil {
+		a.toPane(s.id)
+	}
+	a.dropTab(t, target, z)
+}
+
+// outsideMain tells whether a screen point is outside the main window:
+// letting go of a pane there gives it a window of its own; let go inside,
+// on no zone, it stays where it was.
+func (a *App) outsideMain(x, y int) bool {
+	if a.window == nil {
+		return false
+	}
+	b := a.window.Bounds()
+	return x < b.X || y < b.Y || x >= b.X+b.Width || y >= b.Y+b.Height
+}
+
+// afterFrame runs fn once the frame being built is done: drops change the
+// groups being drawn.
+func (a *App) afterFrame(fn func()) { a.pending = append(a.pending, fn) }
+
+// runPending runs what afterFrame kept. Returns: whether anything ran.
+func (a *App) runPending() bool {
+	fns := a.pending
+	a.pending = nil
+	for _, fn := range fns {
+		fn()
+	}
+	return len(fns) > 0
+}
+
+// dragHandle makes el drag t: onto a pane or the sidebar's list in the
+// main window, or, for an app, out of it into a window of its own.
+func (a *App) dragHandle(el ui.Element, t string) {
+	el.Drag(tabDrag{t})
+	id := appOf(t)
+	if id == "" {
+		return
+	}
+	el.DragData(transfer.TextData(a.tabName(t)), transfer.DragOptions{
+		Done: func(r transfer.Result) {
+			if r.Operation == transfer.None && !r.Escaped && a.outsideMain(r.Point.X, r.Point.Y) {
+				if s := a.open[id]; s != nil && s.win == nil {
+					a.toWindow(id)
+				}
+			}
+		},
 	})
 }
 
@@ -111,11 +229,15 @@ func (a *App) paneHeader(c *ui.Context, g *group, t string, top, right bool, wid
 				a.setPrefs(pr)
 			}
 		}
-		a.tabIcon(c, t, 22)
-		ui.Text(c, a.tabName(t)).FontWeight(600).NoWrap().Margin(0, 0, 0, 4)
-		if s != nil {
-			muted(c, stateWords(s, true, e, a), 13).Ellipsis("…").MaxLines(1).Shrink(1).MinWidth(0).Margin(0, 0, 0, 6)
-		}
+		title := ui.Row(c.Key("title-" + t)).FillHeight().Gap(8).AlignItems(ui.Center).MinWidth(0).Shrink(1).Clip().Label(a.tabName(t)).Tooltip(L.DragHint())
+		a.dragHandle(title, t)
+		title.Children(func() {
+			a.tabIcon(c, t, 22)
+			ui.Text(c, a.tabName(t)).FontWeight(600).NoWrap()
+			if s != nil {
+				muted(c, stateWords(s, true, e, a), 13).Ellipsis("…").MaxLines(1).Shrink(1).MinWidth(0)
+			}
+		})
 		ui.Box(c).Grow(1).FillHeight().DragWindow()
 		r := a.sizes[t]
 		splitR, splitD := canSplit(r, true), canSplit(r, false)
@@ -302,6 +424,14 @@ func (a *App) appBody(c *ui.Context, id string, own bool) {
 	ui.Column(c.Key("stage-" + id)).Fill().Background(p.stage).Children(func() {
 		area := ui.Column(c.Key("area-" + id)).Grow(1).FillWidth().MinHeight(0).Center()
 		r := area.LayoutBounds()
+		// The app is told its screen whenever it changes: rotating, a new
+		// screen size, or the room of Fit the pane and of its window.
+		if own || e.Screen == 2 {
+			a.tell(s, size{r.W, r.H})
+		} else {
+			w, h := screenSize(e, s.rotated, size{})
+			a.tell(s, size{w, h})
+		}
 		area.Children(func() {
 			if own || e.Screen == 2 {
 				ui.Column(c.Key("surface-" + id)).Fill().Background(ui.Hex("#FFFFFF")).Children(func() { a.surface(c, s, e) })
@@ -336,7 +466,6 @@ func (a *App) appBody(c *ui.Context, id string, own bool) {
 					}
 				}
 				a.saveLibrary()
-				a.resize(s, e)
 			}
 			ui.Spacer(c)
 		})
@@ -350,18 +479,31 @@ func (a *App) back(s *session) {
 	}
 }
 
-// rotate turns the app's screen.
+// rotate turns the app's screen; a window of its own turns with it.
 func (a *App) rotate(s *session, e *entry) {
 	s.rotated = !s.rotated
-	a.resize(s, e)
+	if s.win != nil && e.Screen != 2 {
+		w, h := ownSize(e, s.rotated)
+		s.win.SetContentSize(w, h)
+	}
 }
 
-// resize tells the app its screen's new size.
-func (a *App) resize(s *session, e *entry) {
-	if proc := s.proc; proc != nil && s.live() {
-		w, h := screenSize(e, s.rotated, a.sizes[appTab(s.id)])
-		a.async(func() { _ = proc.Resize(int(w), int(h)) })
+// tell tells a running app its screen's size when it differs from what it
+// was told last.
+func (a *App) tell(s *session, sz size) {
+	if s.proc == nil || !s.live() || sz.w <= 0 || sz.h <= 0 || sz == s.told {
+		return
 	}
+	s.told = sz
+	proc := s.proc
+	a.async(func() { _ = proc.Resize(int(sz.w), int(sz.h)) })
+}
+
+// ownSize is the content size of an app's window of its own: its screen
+// and the header above it.
+func ownSize(e *entry, rotated bool) (w, h int) {
+	sw, sh := screenSize(e, rotated, size{360, 720})
+	return int(sw), int(sh) + headerH
 }
 
 // surface is where the app draws. The runtime hands its surface over
@@ -392,7 +534,7 @@ func (a *App) surface(c *ui.Context, s *session, e *entry) {
 				}
 			}
 		default:
-			if !s.stopAt.IsZero() && time.Since(s.stopAt) > 5*time.Second {
+			if !s.stopAt.IsZero() && time.Since(s.stopAt) > stopWait {
 				ui.Text(c, L.NotRespondingBody(e.APK.Label)).TextColor(dark).Wrap().MaxWidth(280)
 				if button(c, "kill-"+e.ID, L.ForceStop(), nil).Clicked() {
 					a.stopApp(e.ID, true)
@@ -461,8 +603,9 @@ func (a *App) newAppWindow(s *session) {
 		return
 	}
 	id := s.id
+	cw, ch := ownSize(e, s.rotated)
 	w := mygo.NewWindow(mygo.WindowOptions{
-		Title: e.APK.Label, Width: 420, Height: 820, MinWidth: paneMinW, MinHeight: paneMinH,
+		Title: e.APK.Label, Width: cw, Height: ch, UseContentSize: true, MinWidth: paneMinW, MinHeight: paneMinH,
 		TitleBarStyle: mygo.TitleBarHidden, HideWindowButtons: true,
 		Content: ui.View(func(c *ui.Context) { a.appWindowView(c, id) }),
 	})

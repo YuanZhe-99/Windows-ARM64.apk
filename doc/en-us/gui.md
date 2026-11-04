@@ -30,11 +30,27 @@ sample apps and says so.
   not responding (after Stop gets no answer for 5 seconds, with Force stop), stopped (Open again)
   or couldn't start (plain words, Try again, Show details, and Try it with native code off for an
   app run Restricted).
+- **Dragging panes.** A pane's header (its icon and name) and a sidebar row drag. Over another
+  pane, zones show where it would go: beside it on each side with room (On the left, On the right,
+  Above, Below) or in its place (Put it here; the pane it replaces becomes a group of its own);
+  within its own group it only trades places (Swap places). Dropped on the sidebar's list it
+  leaves its group for one of its own. An app's pane let go outside the main window opens in a
+  window of its own; let go inside on no zone, or with Escape, it stays. A window's app dragged
+  from the sidebar onto a pane comes back as that pane.
 - **Opening.** Each app opens as a pane or in a window of its own by default (its details; new
   apps follow Settings › General). Open uses the default; ▾ offers Open as a pane, Open beside the
   current pane and Open in a window of its own just this once. An app already open comes forward
   where it is. Moving between a pane and a window asks the runtime to re-attach the surface
   (`Process.Reattach`) and restarts the app where it can't.
+- **Its screen.** The app is told its screen's size when it opens and whenever it changes:
+  rotating, a new screen size, or the room of Fit the pane and of its window. A window of its own
+  opens at the app's screen size and turns with it when rotated.
+- **Adding APKs.** Add APK… (Ctrl+O), dropping an `.apk` anywhere on the main window, or naming
+  one on the command line or to a second launch opens Add an app; nothing registers
+  Windows-ARM64.apk for `.apk` files. An app whose APK is no longer where it was shows File not
+  found and Locate…, which reads the file chosen and keeps the app's settings.
+- **Keys.** Ctrl+O adds an APK, Ctrl+W closes the pane in focus (Home stays), Ctrl+, opens
+  Settings, Esc is Back for the app in focus. The main window's title names the pane in focus.
 - **Closing the main window** stops the apps in panes. With Ask first on, a dialog lists which
   stop and which keep running, with Don't ask again. Apps in windows of their own keep running
   unless General says Stop every app.
@@ -50,7 +66,9 @@ sample apps and says so.
 | Confirmations | Closing the main window with apps in panes; removing an app |
 
 Diagnostics is a pane: This PC (the `doctor` report, with the demo banner on sample data) and App
-logs (an open app's log and its error category). Only Diagnostics shows error categories, paths
+logs: each app's last ten runs since Windows-ARM64.apk started (when, and how each ended), the
+chosen run's log with its error category, Errors and warnings only, Copy log and Save for a bug
+report…. A run's log stays after its pane closes. Only Diagnostics shows error categories, paths
 and versions; panes and Home say what happened in words.
 
 ## Files

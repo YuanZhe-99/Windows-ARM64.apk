@@ -14,7 +14,7 @@ Verified on Windows 11 ARM64 (2026-11-03; Go 1.27.3):
 |---|---|
 | Go module | `go vet ./...` and `go test ./...` pass |
 | Documentation mirror | `go run ./tools/checkdocs` passes |
-| Interface | `go tool mygo vet .` and `go tool mygo i18n check` pass; every screen of `design/` renders in `ui.Tester` in both languages and appearances; the native window opens and stays up (smoke run, sample data) |
+| Interface | `go tool mygo vet .` and `go tool mygo i18n check` pass; every screen of `design/` renders in `ui.Tester` in both languages and appearances; a pane dragged with the pointer in `ui.Tester` splits its target; the native window opens and stays up (smoke run, sample data) |
 
 ## Gates
 
@@ -30,5 +30,5 @@ Verified on Windows 11 ARM64 (2026-11-03; Go 1.27.3):
 ## Known limitations
 
 - Mac.apk is imported under `macapk/` unchanged; no Windows runtime code exists yet.
-- The interface shows sample data only. Not done until the runtime contract has them: the app's surface in a pane or window, dragging panes between groups, moving the App data folder's contents, data and converted-code sizes, and updating the private Java runtime ([gui.md](gui.md)).
+- The interface shows sample data only. Not done until the runtime contract has them: the app's surface in a pane or window, moving the App data folder's contents, data and converted-code sizes, and updating the private Java runtime ([gui.md](gui.md)).
 - No native ARM64 claim can be made before the runtime runs on ARM64 hardware.

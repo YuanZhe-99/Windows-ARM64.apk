@@ -93,6 +93,11 @@ func TestScreensRender(t *testing.T) {
 			a.details.advanced = true
 		}, L.Messages.ProfileTitle},
 		{"diagnostics", true, true, func(a *App) { a.showTab(tabDiag, false) }, L.Messages.CantRunYetTitle},
+		{"diagnostics-logs", true, true, func(a *App) {
+			a.launch(a.entry("com.example.tilepuzzle"), false, false)
+			a.diag.page = 1
+			a.showTab(tabDiag, false)
+		}, L.Messages.ErrorsOnly},
 		{"settings-general", true, true, func(a *App) { a.openSettings(spGeneral) }, L.Messages.WhenClosing},
 		{"settings-runtime", true, true, func(a *App) { a.openSettings(spRuntime) }, L.Messages.KeepUpdated},
 		{"settings-about", true, true, func(a *App) { a.openSettings(spAbout) }, L.Messages.BasedOn},
@@ -270,5 +275,155 @@ func TestCloseStopsPanesKeepsWindows(t *testing.T) {
 	}
 	if a.open["com.example.hellojava"] == nil {
 		t.Fatal("the window's app was stopped")
+	}
+}
+
+// TestDropPlacesPanes: a pane dropped on another's edge joins its group on
+// that side; in its middle it takes its place, the other going to a group
+// of its own; within a group two panes trade places; on the sidebar's list
+// a pane leaves its group.
+func TestDropPlacesPanes(t *testing.T) {
+	h := newHarness(t, true, true)
+	a := h.a
+	notes, gl := appTab("com.example.noteslite"), appTab("com.example.gltriangle")
+	a.launch(a.entry("com.example.noteslite"), false, false)
+	a.launch(a.entry("com.example.gltriangle"), false, false)
+	h.settle()
+	a.dropTab(notes, tabHome, zoneRight)
+	g := a.homeGroup()
+	if got := g.tabs(); len(got) != 2 || got[0] != tabHome || got[1] != notes || !g.root.across {
+		t.Fatalf("edge drop: %v", got)
+	}
+	a.dropTab(gl, notes, zoneMiddle)
+	if got := g.tabs(); len(got) != 2 || got[1] != gl {
+		t.Fatalf("middle drop: %v", got)
+	}
+	if og := a.groupOf(notes); og == nil || og == g || len(og.tabs()) != 1 {
+		t.Fatal("the pane replaced has no group of its own")
+	}
+	a.dropTab(tabHome, gl, zoneMiddle)
+	if got := g.tabs(); got[0] != gl || got[1] != tabHome {
+		t.Fatalf("swap: %v", got)
+	}
+	a.detach(gl)
+	if og := a.groupOf(gl); og == g || len(og.tabs()) != 1 || len(g.tabs()) != 1 {
+		t.Fatal("detach left the pane in its group")
+	}
+}
+
+// TestDragRowOntoPane drags an open app's sidebar row onto Home's right
+// edge in the window: it splits Home there.
+func TestDragRowOntoPane(t *testing.T) {
+	h := newHarness(t, true, true)
+	a := h.a
+	a.launch(a.entry("com.example.noteslite"), false, false)
+	h.settle()
+	a.cur = a.homeGroup()
+	tt := ui.NewTester(a.view, 1280, 820)
+	tt.Frame()
+	tt.Frame()
+	src, ok := tt.Find("Notes Lite")
+	if !ok {
+		t.Fatal("no sidebar row")
+	}
+	tt.Press(src.X+10, src.Y+5)
+	for i := 1; i <= 10; i++ {
+		f := float32(i) / 10
+		tt.Move(src.X+10+(1230-src.X-10)*f, src.Y+5+(400-src.Y-5)*f)
+		tt.Frame()
+	}
+	if !tt.HasText(L.DropRight()) {
+		t.Fatal("no drop zones while dragging")
+	}
+	tt.Release(1230, 400)
+	tt.Frame()
+	tt.Frame()
+	if got := a.homeGroup().tabs(); len(got) != 2 || got[1] != appTab("com.example.noteslite") {
+		t.Fatalf("after drop: %v", got)
+	}
+}
+
+// TestRunsKeepTheirLogs: a run's log stays in Diagnostics after its pane
+// closes, and Errors and warnings only keeps just those lines.
+func TestRunsKeepTheirLogs(t *testing.T) {
+	h := newHarness(t, true, true)
+	a := h.a
+	e := a.entry("com.example.tilepuzzle")
+	a.launch(e, false, false)
+	h.settle()
+	a.closeApp(e.ID)
+	h.settle()
+	a.diag.app = e.ID
+	r := a.diagRun()
+	if r == nil || r.state.Phase != winapk.Failed || len(r.state.Log) == 0 {
+		t.Fatalf("run %+v", r)
+	}
+	for _, l := range logLines(r.state.Log, true) {
+		if lv := logLevel(l); lv != "error" && lv != "warn" {
+			t.Fatalf("kept %q", l)
+		}
+	}
+	if len(logLines(r.state.Log, true)) == 0 {
+		t.Fatal("the error line was dropped")
+	}
+}
+
+// TestMissingFileAsksWhere: an app whose APK is gone says so on Home and
+// isn't launched.
+func TestMissingFileAsksWhere(t *testing.T) {
+	h := newHarness(t, true, false)
+	a := h.a
+	gone := filepath.Join(t.TempDir(), "Gone.apk")
+	a.library = append(a.library, a.newEntry(winapk.APK{Path: gone, Package: "com.example.gone", Label: "Gone", Verdict: winapk.CanRun}))
+	a.async = func(fn func()) {} // no file dialog
+	a.checking = false
+	h.a.async = func(fn func()) { fn() }
+	a.check()
+	h.settle()
+	if !a.missing[gone] {
+		t.Fatal("the missing file isn't noticed")
+	}
+	a.async = func(fn func()) {}
+	a.launch(a.entry("com.example.gone"), false, false)
+	if len(a.open) != 0 {
+		t.Fatal("an app without its file started")
+	}
+}
+
+// TestOpenFilesTakesAnAPK: the command line's first APK opens Add an app,
+// relative to the second launch's folder; other files are ignored.
+func TestOpenFilesTakesAnAPK(t *testing.T) {
+	h := newHarness(t, true, false)
+	h.a.OpenFiles([]string{"notes.txt", "Hello.apk"}, `C:\Downloads`)
+	h.settle()
+	if !h.a.add.open || h.a.add.path != filepath.Join(`C:\Downloads`, "Hello.apk") {
+		t.Fatalf("add %+v", h.a.add)
+	}
+}
+
+// TestScreenSizeToldOnce: the app is told its screen when it opens and
+// again when it changes.
+func TestScreenSizeToldOnce(t *testing.T) {
+	h := newHarness(t, true, true)
+	a := h.a
+	e := a.entry("com.example.noteslite")
+	a.launch(e, false, false)
+	h.settle()
+	tt := ui.NewTester(a.view, 1280, 820)
+	tt.Frame()
+	tt.Frame()
+	s := a.open[e.ID]
+	if s.told != (size{360, 720}) {
+		t.Fatalf("told %v", s.told)
+	}
+	a.rotate(s, e)
+	tt.Frame()
+	if s.told != (size{720, 360}) {
+		t.Fatalf("after rotating, told %v", s.told)
+	}
+	tt.Frame()
+	tt.Frame()
+	if s.told != (size{720, 360}) {
+		t.Fatalf("told %v without a change", s.told)
 	}
 }

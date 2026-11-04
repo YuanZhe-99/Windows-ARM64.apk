@@ -14,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/egoist/mygo"
@@ -39,17 +40,26 @@ type App struct {
 	prefs   Prefs
 	library []*entry
 	open    map[string]*session // by entry ID
+	// runs are each app's runs since the interface started, newest first,
+	// for Diagnostics' logs.
+	runs map[string][]*session
 
+	// missing are the library's APK files not found at the last check.
+	missing  map[string]bool
 	report   winapk.Report
 	checked  time.Time
 	checking bool
 	install  installState
 
-	window   *mygo.Window
-	groups   []*group
-	cur      *group
-	sizes    map[string]size // each pane's room in the last frame
-	quitting bool
+	window *mygo.Window
+	groups []*group
+	cur    *group
+	sizes  map[string]size // each pane's room in the last frame
+	// dragging is the tab dragged over the panes, "" for none; pending is
+	// what runs once the frame is built (afterFrame).
+	dragging, zonesFor string
+	pending            []func()
+	quitting           bool
 
 	homeQuery  string
 	homeFilter int // 0 all, 1 open
@@ -127,10 +137,20 @@ type session struct {
 	rotated bool
 	// stopAt is when Stop was asked, to offer Force stop when it gets no
 	// answer.
-	stopAt time.Time
+	stopAt  time.Time
+	started time.Time
+	// told is the screen size the app was last told, in DIPs.
+	told size
 }
 
 // live tells whether the app's process runs.
+// stopWait is how long Stop waits for an answer before the app shows as
+// not responding, with Force stop.
+const stopWait = 5 * time.Second
+
+// maxRuns is how many runs of an app Diagnostics keeps.
+const maxRuns = 10
+
 func (s *session) live() bool {
 	return s.proc != nil && s.state.Phase != winapk.Stopped && s.state.Phase != winapk.Failed
 }
@@ -138,7 +158,7 @@ func (s *session) live() bool {
 // New makes the interface for a runtime client; dir holds its files.
 func New(rt winapk.Client, dir string, demo bool) *App {
 	ctx, cancel := context.WithCancel(context.Background())
-	a := &App{rt: rt, dir: dir, demo: demo, ctx: ctx, cancel: cancel, open: map[string]*session{}, sizes: map[string]size{}}
+	a := &App{rt: rt, dir: dir, demo: demo, ctx: ctx, cancel: cancel, open: map[string]*session{}, runs: map[string][]*session{}, sizes: map[string]size{}}
 	a.later = a.onMain
 	a.async = func(fn func()) { go fn() }
 	a.prefs = loadJSON(dir, "gui.json", defaultPrefs())
@@ -265,10 +285,16 @@ func (a *App) check() {
 	}
 	a.checking = true
 	home := a.prefs.JavaHome
+	var paths []string
+	for _, e := range a.library {
+		paths = append(paths, e.APK.Path)
+	}
 	a.async(func() {
 		r, err := a.rt.Doctor(a.ctx, home)
+		gone := missingFiles(paths)
 		a.later(func() {
 			a.checking = false
+			a.missing = gone
 			if err != nil {
 				a.report = winapk.Report{}
 				a.setToast(L.ToastNoRuntime())
@@ -276,6 +302,34 @@ func (a *App) check() {
 			}
 			a.report, a.checked = r, time.Now()
 		})
+	})
+}
+
+// missingFiles are the APK files of paths no longer where they were; the
+// demo's sample apps have none.
+func missingFiles(paths []string) map[string]bool {
+	out := map[string]bool{}
+	for _, p := range paths {
+		if strings.HasPrefix(p, "sample:") {
+			continue
+		}
+		if _, err := os.Stat(p); err != nil {
+			out[p] = true
+		}
+	}
+	return out
+}
+
+// locate asks where an app's APK went, and reads it there: the entry keeps
+// its settings when it is the same package.
+func (a *App) locate(e *entry) {
+	parent := a.window
+	a.async(func() {
+		paths, err := mygo.Dialog.Open(mygo.OpenDialogOptions{Parent: parent, Title: L.LocateTitle(e.APK.Label), Filters: []mygo.FileFilter{{Name: L.AndroidApps(), Extensions: []string{"apk"}}}})
+		if err != nil || len(paths) == 0 {
+			return
+		}
+		a.later(func() { a.inspect(paths[0]) })
 	})
 }
 
@@ -302,12 +356,20 @@ func (a *App) launch(e *entry, inWindow, beside bool) {
 		a.reveal(e.ID)
 		return
 	}
+	if a.missing[e.APK.Path] {
+		a.locate(e)
+		return
+	}
 	if !e.runnable() || !a.report.Ready() {
 		a.openDetails(e.ID)
 		return
 	}
-	s := &session{id: e.ID, state: winapk.State{Phase: winapk.Starting}}
+	s := &session{id: e.ID, state: winapk.State{Phase: winapk.Starting}, started: time.Now()}
 	a.open[e.ID] = s
+	a.runs[e.ID] = append([]*session{s}, a.runs[e.ID]...)
+	if len(a.runs[e.ID]) > maxRuns {
+		a.runs[e.ID] = a.runs[e.ID][:maxRuns]
+	}
 	spec := winapk.LaunchSpec{Path: e.APK.Path, JavaHome: a.prefs.JavaHome, Native: e.Native, Window: inWindow}
 	if e.Native == winapk.NativeRestricted {
 		spec.Profile = a.profile(e)
@@ -330,10 +392,10 @@ func (a *App) launch(e *entry, inWindow, beside bool) {
 // setState keeps a process's new state; a start that failed stays on its
 // entry.
 func (a *App) setState(id string, s *session, st winapk.State) {
+	s.state = st // an older run's log still shows in Diagnostics
 	if a.open[id] != s {
 		return // an older process of an app opened again
 	}
-	s.state = st
 	if e := a.entry(id); e != nil {
 		switch st.Phase {
 		case winapk.Failed:
@@ -357,6 +419,8 @@ func (a *App) stopApp(id string, force bool) {
 	proc := s.proc
 	if !force {
 		s.stopAt = time.Now()
+		// Not responding shows once Stop has waited this long.
+		time.AfterFunc(stopWait+100*time.Millisecond, func() { a.later(func() {}) })
 	}
 	a.async(func() {
 		if force {

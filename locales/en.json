@@ -311,5 +311,19 @@
   "CantSandbox": "Each app has its own process for crash handling; that isn't a security sandbox",
   "NoLogs": "No app has run since Windows-ARM64.apk started. Apps' logs show here once they open.",
   "StoppedWhileStarting": "Stopped while starting",
-  "LogsPrivate": "Logs stay on this PC. They leave out your apps' data, passwords and tokens, and the full environment."
+  "LogsPrivate": "Logs stay on this PC. They leave out your apps' data, passwords and tokens, and the full environment.",
+  "DropHere": "Put it here",
+  "DropSwap": "Swap places",
+  "DropLeft": "On the left",
+  "DropRight": "On the right",
+  "DropAbove": "Above",
+  "DropBelow": "Below",
+  "DragHint": "Drag onto another pane to split, onto the sidebar to give it a place of its own, or out of the window to open it in a window of its own",
+  "ErrorsOnly": "Errors and warnings only",
+  "NoLines": "No errors or warnings.",
+  "SaveLog": "Save for a bug report…",
+  "StoppedByYou": "stopped by you",
+  "FileMissing": "File not found",
+  "Locate": "Locate…",
+  "LocateTitle": "Where is {app}'s APK?"
 }

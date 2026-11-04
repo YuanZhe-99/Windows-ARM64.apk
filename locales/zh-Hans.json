@@ -311,5 +311,19 @@
   "CantSandbox": "每个应用有自己的进程用于崩溃处理；这不是安全沙箱",
   "NoLogs": "Windows-ARM64.apk 启动以来还没有运行过应用。应用打开后，它的日志会显示在这里。",
   "StoppedWhileStarting": "在启动时停止",
-  "LogsPrivate": "日志只保存在这台电脑上。其中不包含应用数据、密码和令牌，也不包含完整的环境变量。"
+  "LogsPrivate": "日志只保存在这台电脑上。其中不包含应用数据、密码和令牌，也不包含完整的环境变量。",
+  "DropHere": "放在这里",
+  "DropSwap": "交换位置",
+  "DropLeft": "左侧",
+  "DropRight": "右侧",
+  "DropAbove": "上方",
+  "DropBelow": "下方",
+  "DragHint": "拖到另一个窗格上可拆分，拖到侧边栏可让它单独成组，拖出窗口可在独立窗口中打开",
+  "ErrorsOnly": "只显示错误和警告",
+  "NoLines": "没有错误或警告。",
+  "SaveLog": "保存以提交错误报告…",
+  "StoppedByYou": "由你停止",
+  "FileMissing": "找不到文件",
+  "Locate": "查找…",
+  "LocateTitle": "{app} 的 APK 在哪里？"
 }

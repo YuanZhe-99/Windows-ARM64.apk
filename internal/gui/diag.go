@@ -3,6 +3,7 @@ package gui
 import (
 	"encoding/json"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/egoist/mygo"
@@ -14,8 +15,10 @@ import (
 
 // diagState is the Diagnostics pane's page and the app whose log shows.
 type diagState struct {
-	page int // 0 this PC, 1 app logs
-	app  string
+	page       int // 0 this PC, 1 app logs
+	app        string
+	run        int // the app's run shown, 0 the newest
+	errorsOnly bool
 }
 
 // diagView is Diagnostics as a pane (design/Diagnostics.html): this PC as
@@ -38,10 +41,13 @@ func (a *App) diagView(c *ui.Context) {
 				if button(c, "diag-save", L.SaveJSON(), nil).Clicked() {
 					a.saveReport()
 				}
-			} else if s := a.open[a.diag.app]; s != nil {
+			} else if r := a.diagRun(); r != nil {
 				if button(c, "diag-copylog", L.CopyLog(), nil).Clicked() {
-					c.Services().WriteClipboard(strings.Join(s.state.Log, "\n"))
+					c.Services().WriteClipboard(strings.Join(logLines(r.state.Log, a.diag.errorsOnly), "\n"))
 					a.setToast(L.Copied())
+				}
+				if button(c, "diag-savelog", L.SaveLog(), nil).Clicked() {
+					a.saveLog(r)
 				}
 			}
 		})
@@ -165,13 +171,14 @@ func featureName(id string) string {
 	return id
 }
 
-// appLogs is an open app's log, with the category of a failure.
+// appLogs is an app's runs since Windows-ARM64.apk started, newest
+// first, and the chosen run's log with the category of a failure
+// (design/DiagnosticsLogs.html).
 func (a *App) appLogs(c *ui.Context) {
 	p := pal(c)
-	var ids []string
-	var names []string
+	var ids, names []string
 	for _, e := range a.library {
-		if a.open[e.ID] != nil {
+		if len(a.runs[e.ID]) > 0 {
 			ids = append(ids, e.ID)
 			names = append(names, e.APK.Label)
 		}
@@ -180,40 +187,139 @@ func (a *App) appLogs(c *ui.Context) {
 		muted(c, L.NoLogs(), fontBody).Wrap()
 		return
 	}
-	cur := ""
-	for i, id := range ids {
-		if id == a.diag.app {
-			cur = names[i]
-		}
+	if len(a.runs[a.diag.app]) == 0 {
+		a.diag.app, a.diag.run = ids[0], 0
 	}
-	if cur == "" {
-		a.diag.app, cur = ids[0], names[0]
-	}
-	if ui.Select(c.Key("diag-app"), &cur, names).Label(L.AppLogs()).MinWidth(220).Changed() {
-		for i, n := range names {
-			if n == cur {
-				a.diag.app = ids[i]
+	ui.Row(c).FillWidth().Gap(16).AlignItems(ui.Start).Children(func() {
+		ui.Column(c.Key("diag-apps")).Width(240).Shrink(0).Gap(2).Children(func() {
+			for i, id := range ids {
+				on := id == a.diag.app
+				b := ui.ButtonBase(c.Key("diag-app-"+id)).FillWidth().Padding(6, 10).Radius(radiusCtl).Selected(on).Label(names[i])
+				switch {
+				case on:
+					b.Background(p.tint)
+				case b.Hovered():
+					b.Background(p.hover)
+				}
+				b.Children(func() {
+					ui.Row(c).FillWidth().Gap(10).TextColor(p.text).Children(func() {
+						if e := a.entry(id); e != nil {
+							appIcon(c, e, 22)
+						}
+						ui.Text(c, names[i]).FontWeight(600)
+					})
+				})
+				if b.Clicked() {
+					a.diag.app, a.diag.run = id, 0
+				}
+				if !on {
+					continue
+				}
+				for ri, r := range a.runs[id] {
+					rb := ui.ButtonBase(c.Key("diag-run-"+id+"-"+strconv.Itoa(ri))).FillWidth().Padding(4, 10, 4, 42).Radius(radiusCtl).Selected(ri == a.diag.run).Label(runWords(r))
+					if ri == a.diag.run {
+						rb.Background(p.hover)
+					}
+					rb.Children(func() { ui.Row(c).FillWidth().Children(func() { muted(c, runWords(r), fontSmall) }) })
+					if rb.Clicked() {
+						a.diag.run = ri
+					}
+				}
 			}
-		}
-	}
-	s := a.open[a.diag.app]
-	if s == nil {
-		return
-	}
-	if s.state.Phase == winapk.Failed {
-		diagCard(c, L.StoppedWhileStarting(), s.state.Category, toneBad, func() {
-			muted(c, failedWords(s.state.Category), 13).Wrap()
 		})
-	}
-	ui.Column(c).FillWidth().Padding(10, 12).Radius(radiusCard).Background(p.subtle).Gap(2).Children(func() {
-		for _, line := range s.state.Log {
-			t := ui.Text(c, line).Font(fontMono).FontSize(fontSmall).Wrap().Selectable()
-			if strings.Contains(line, "error") {
-				t.TextColor(p.danger)
+		ui.Column(c).Grow(1).MinWidth(0).Gap(12).Children(func() {
+			r := a.diagRun()
+			if r == nil {
+				return
 			}
+			if r.state.Phase == winapk.Failed {
+				diagCard(c, L.StoppedWhileStarting(), r.state.Category, toneBad, func() {
+					muted(c, failedWords(r.state.Category), 13).Wrap()
+				})
+			}
+			ui.Checkbox(c.Key("diag-errors"), &a.diag.errorsOnly, L.ErrorsOnly())
+			ui.Column(c).FillWidth().Padding(10, 12).Radius(radiusCard).Background(p.subtle).Gap(2).Children(func() {
+				lines := logLines(r.state.Log, a.diag.errorsOnly)
+				if len(lines) == 0 {
+					muted(c, L.NoLines(), fontSmall)
+				}
+				for _, line := range lines {
+					t := ui.Text(c, line).Font(fontMono).FontSize(fontSmall).Wrap().Selectable()
+					switch logLevel(line) {
+					case "error":
+						t.TextColor(p.danger)
+					case "warn":
+						t.TextColor(p.warn)
+					}
+				}
+			})
+			muted(c, L.LogsPrivate(), 13).Wrap()
+		})
+	})
+}
+
+// diagRun is the run Diagnostics shows, nil for none.
+func (a *App) diagRun() *session {
+	rs := a.runs[a.diag.app]
+	if a.diag.run < 0 || a.diag.run >= len(rs) {
+		return nil
+	}
+	return rs[a.diag.run]
+}
+
+// runWords says when a run started and how it ended.
+func runWords(s *session) string {
+	end := L.StateRunning()
+	switch {
+	case s.state.Phase == winapk.Failed:
+		end = L.StateFailed()
+	case s.state.Phase == winapk.Stopped && !s.stopAt.IsZero():
+		end = L.StoppedByYou()
+	case s.state.Phase == winapk.Stopped:
+		end = L.StateStopped()
+	case s.state.Phase == winapk.Starting:
+		end = L.StateStarting()
+	}
+	return s.started.Format("15:04") + " · " + end
+}
+
+// logLevel is a log line's level, as the runtime writes it after the time.
+func logLevel(line string) string {
+	f := strings.Fields(line)
+	if len(f) < 2 {
+		return ""
+	}
+	return f[1]
+}
+
+// logLines are a run's lines, only its errors and warnings when errorsOnly.
+func logLines(log []string, errorsOnly bool) []string {
+	if !errorsOnly {
+		return log
+	}
+	var out []string
+	for _, l := range log {
+		if lv := logLevel(l); lv == "error" || lv == "warn" {
+			out = append(out, l)
+		}
+	}
+	return out
+}
+
+// saveLog writes a run's log where the person chooses, for a bug report.
+func (a *App) saveLog(r *session) {
+	parent := a.window
+	text := []byte(strings.Join(r.state.Log, "\r\n") + "\r\n")
+	name := r.id + "-" + r.started.Format("20060102-150405") + ".log"
+	a.async(func() {
+		path, err := mygo.Dialog.Save(mygo.SaveDialogOptions{Parent: parent, Title: L.SaveLog(), DefaultPath: name})
+		if err != nil || path == "" {
+			return
+		}
+		if err := os.WriteFile(path, text, 0o644); err != nil {
+			a.later(func() { a.setToast(L.ToastFailed()) })
 		}
 	})
-	muted(c, L.LogsPrivate(), 13).Wrap()
 }
 
 // saveReport writes the doctor report as JSON where the person chooses.

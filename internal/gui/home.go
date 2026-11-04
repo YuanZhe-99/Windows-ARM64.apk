@@ -16,13 +16,8 @@ import (
 func (a *App) homeView(c *ui.Context) {
 	p := pal(c)
 	body := ui.Column(c.Key("home")).Fill()
-	if files := body.DroppedFiles(); len(files) > 0 {
-		for _, f := range files {
-			if strings.EqualFold(fileExt(f), ".apk") {
-				a.inspect(f)
-				break
-			}
-		}
+	if apk := firstAPK(body.DroppedFiles()); apk != "" {
+		a.inspect(apk)
 	}
 	over := body.FileDragOver()
 	body.Children(func() {
@@ -192,6 +187,10 @@ func (a *App) appRow(c *ui.Context, e *entry, border bool) {
 		}
 		muted(c, state, 13).NoWrap().MinWidth(90)
 		switch {
+		case a.missing[e.APK.Path] && !live:
+			if button(c, "locate-"+e.ID, L.Locate(), nil).Clicked() {
+				a.locate(e)
+			}
 		case !e.runnable():
 			if button(c, "details-"+e.ID, L.Details(), nil).Clicked() {
 				a.openDetails(e.ID)
@@ -327,6 +326,8 @@ func (a *App) appLine(e *entry) string {
 // appChip is the chip of an app whose running is limited here.
 func (a *App) appChip(e *entry) (string, tone, bool) {
 	switch {
+	case a.missing[e.APK.Path]:
+		return L.FileMissing(), toneBad, true
 	case e.APK.Verdict == winapk.NotYet:
 		return L.CantRunYet(), toneWarn, true
 	case e.APK.Verdict == winapk.Unsupported:
