@@ -21,6 +21,7 @@
 #include <windows.h>
 #include <bcrypt.h>
 #include <jni.h>
+#include <shellscalingapi.h>
 #include <shlobj.h>
 
 #include <cmath>
@@ -201,12 +202,21 @@ int StageCode(const RunArgs& a, const JvmInfo& jvm, const BuildId& id, const std
     return 0;
 }
 
+/// Returns the scale of the primary display, where the app's window opens: 1.0 at 96 DPI.
+/// Notes: the display's current DPI (the window's), not GetDpiForSystem, which keeps the
+/// scale of sign-in until the person signs out.
+float DisplayScale() {
+    UINT x = 96, y = 96;
+    if (FAILED(GetDpiForMonitor(MonitorFromPoint(POINT{0, 0}, MONITOR_DEFAULTTOPRIMARY), MDT_EFFECTIVE_DPI, &x, &y))) return 1.0f;
+    return x / 96.0f;
+}
+
 /// Picks the app's size in points: the request, else a phone shape that fits the screen.
 void PhoneSize(const RunArgs& a, int& w, int& h) {
     if (a.width > 0 && a.height > 0) { w = a.width; h = a.height; return; }
     RECT work{};
     SystemParametersInfoW(SPI_GETWORKAREA, 0, &work, 0);
-    const float s = GetDpiForSystem() / 96.0f;
+    const float s = DisplayScale();
     const int room = static_cast<int>((work.bottom - work.top) / s * 0.85f);
     h = room < 800 ? room : 800;
     w = h / 2;
@@ -338,7 +348,7 @@ int Run(const RunArgs& a) {
     int w = 0, h = 0;
     PhoneSize(a, w, h);
     setSize(w, h);
-    const float scale = GetDpiForSystem() / 96.0f;
+    const float scale = DisplayScale();
     const int densityDpi = static_cast<int>(std::lround(160 * scale));  // a point (DIP) is a dp
     Log("window " + std::to_string(w) + "x" + std::to_string(h) + " points, scale " + std::to_string(scale) + ", density " + std::to_string(densityDpi) + " dpi");
 

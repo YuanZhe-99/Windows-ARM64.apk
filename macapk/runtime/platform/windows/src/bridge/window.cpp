@@ -21,12 +21,14 @@
 #include "bridge.h"
 
 #include <windows.h>
+#include <shellscalingapi.h>
 #include <windowsx.h>
 
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
 #include <cstdint>
+#include <deque>
 #include <functional>
 #include <map>
 #include <memory>
@@ -60,7 +62,7 @@ struct Window {
     COLORREF background = RGB(255, 255, 255);
     bool pointerDown = false;
     LPARAM lastPointer = 0;         ///< where the held pointer last was (client pixels)
-    bool charFromKey = false;       ///< the last WM_KEYDOWN already delivered its character
+    std::deque<wchar_t> keyChars;   ///< characters sent with their WM_KEYDOWN, their WM_CHAR still to come
     bool minimized = false;
     ULONGLONG lastHiddenFrame = 0;  ///< when a minimised window last drew
 };
@@ -140,9 +142,18 @@ bool RunOnUi(const char* what, const std::function<void()>& fn) {
     return true;
 }
 
-/// Returns the DPI scale of `hwnd` (or the system's): 1.0 at 96 DPI.
+/// Returns the effective DPI of the primary display, where a new window opens.
+/// Notes: not GetDpiForSystem, which keeps the scale of sign-in until the person signs out
+/// again, while windows already get the display's current DPI.
+UINT DefaultDpi() {
+    UINT x = 96, y = 96;
+    if (FAILED(GetDpiForMonitor(MonitorFromPoint(POINT{0, 0}, MONITOR_DEFAULTTOPRIMARY), MDT_EFFECTIVE_DPI, &x, &y))) return 96;
+    return x;
+}
+
+/// Returns the DPI scale of `hwnd` (or of the primary display): 1.0 at 96 DPI.
 float Scale(HWND hwnd) {
-    const UINT dpi = hwnd ? GetDpiForWindow(hwnd) : GetDpiForSystem();
+    const UINT dpi = hwnd ? GetDpiForWindow(hwnd) : DefaultDpi();
     return dpi ? dpi / 96.0f : 1.0f;
 }
 
@@ -249,10 +260,10 @@ void DispatchKey(int action, int code, int unicode, int meta) {
 }
 
 /// Sends a mapped key to the app with the character it types.
-/// Returns: true when the key carried a character, so the WM_CHAR that follows is not sent again.
-bool Key(bool down, WPARAM vk, LPARAM lp) {
+/// Returns: that character (0 for none), so the WM_CHAR TranslateMessage makes of it is not sent again.
+wchar_t Key(bool down, WPARAM vk, LPARAM lp) {
     const int code = AndroidKey(vk);
-    if (!g_touch || code == 0) return false;
+    if (!g_touch || code == 0) return 0;
     BYTE state[256];
     GetKeyboardState(state);
     wchar_t ch[4] = {};
@@ -262,7 +273,7 @@ bool Key(bool down, WPARAM vk, LPARAM lp) {
     if (GetKeyState(VK_SHIFT) & 0x8000) meta |= 0x1;      // META_SHIFT_ON
     if (GetKeyState(VK_CONTROL) & 0x8000) meta |= 0x1000; // META_CTRL_ON
     DispatchKey(down ? 0 : 1, code, unicode, meta);
-    return unicode != 0;
+    return static_cast<wchar_t>(unicode);
 }
 
 /// Sends a typed UTF-16 code unit that no mapped key delivered: an input method's commit, a
@@ -398,20 +409,23 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         case WM_MOUSEWHEEL: Wheel(w, wp, lp, false); return 0;
         case WM_MOUSEHWHEEL: Wheel(w, wp, lp, true); return 0;
         case WM_KEYDOWN:
-            w->charFromKey = Key(true, wp, lp);
+            if (const wchar_t c = Key(true, wp, lp)) {
+                if (w->keyChars.size() == 8) w->keyChars.pop_front();  // a WM_CHAR that never came
+                w->keyChars.push_back(c);
+            }
             return 0;
         case WM_SYSKEYDOWN:
             if (wp != VK_F4) Key(true, wp, lp);  // Alt+F4 still closes the window
             break;
         case WM_KEYUP:
-            w->charFromKey = false;
             Key(false, wp, lp);
             return 0;
         case WM_SYSKEYUP: Key(false, wp, lp); break;
         case WM_CHAR:
-            // TranslateMessage's character for the key just pressed: already sent with it
-            // when the key is mapped, else sent here (IME commits arrive this way too).
-            if (w->charFromKey) w->charFromKey = false;
+            // TranslateMessage's character for a key: already sent with it when the key is
+            // mapped, else sent here (IME commits arrive this way too). Matched by value, not
+            // by order: the key's WM_KEYUP may be dispatched before its WM_CHAR.
+            if (!w->keyChars.empty() && w->keyChars.front() == static_cast<wchar_t>(wp)) w->keyChars.pop_front();
             else Text(static_cast<wchar_t>(wp));
             return 0;
         case WM_ACTIVATE:
@@ -547,7 +561,7 @@ jlong JNICALL CreateWindowNative(JNIEnv* env, jclass, jstring title) {
     RunOnUi("createWindow", [&] {
         const float s = Scale(nullptr);
         RECT r{0, 0, static_cast<LONG>(g_phoneW * s), static_cast<LONG>(g_phoneH * s)};
-        AdjustWindowRectExForDpi(&r, WS_OVERLAPPEDWINDOW, FALSE, 0, GetDpiForSystem());
+        AdjustWindowRectExForDpi(&r, WS_OVERLAPPEDWINDOW, FALSE, 0, DefaultDpi());
         HWND hwnd = CreateWindowExW(0, L"WinApkAppWindow", t.c_str(), WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT,
                                     r.right - r.left, r.bottom - r.top, nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
         if (!hwnd) return;

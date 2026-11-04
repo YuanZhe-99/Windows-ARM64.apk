@@ -2,12 +2,16 @@
 <!-- winapk.exe's application manifest (windows.cmake embeds it).
      activeCodePage UTF-8: the ANSI code page of this process is UTF-8, so the JVM option
      strings HotSpot reads in it (paths of the app, its data and the runtime) can hold any
-     Unicode character, not only those of the PC's legacy code page (PLAN.md §8.1). -->
+     Unicode character, not only those of the PC's legacy code page (PLAN.md §8.1).
+     dpiAwareness PerMonitorV2: every thread sees real pixels and the real DPI, so the density
+     run.cpp gives the app (160 × the scale, before any window exists) matches the window the
+     bridge makes; an unaware thread would be told 96 DPI at any scale (PLAN.md §8.4). -->
 <assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
   <assemblyIdentity type="win32" name="Windows-ARM64.apk.winapk" version="1.0.0.0" processorArchitecture="arm64"/>
   <application xmlns="urn:schemas-microsoft-com:asm.v3">
     <windowsSettings>
       <activeCodePage xmlns="http://schemas.microsoft.com/SMI/2019/WindowsSettings">UTF-8</activeCodePage>
+      <dpiAwareness xmlns="http://schemas.microsoft.com/SMI/2016/WindowsSettings">PerMonitorV2</dpiAwareness>
     </windowsSettings>
   </application>
   <compatibility xmlns="urn:schemas-microsoft-com:compatibility.v1">

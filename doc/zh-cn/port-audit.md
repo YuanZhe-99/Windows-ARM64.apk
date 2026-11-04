@@ -136,6 +136,6 @@ Mac.apk 后重新执行下面的搜索并更新各表。
 
 ## 下一步
 
-P1 尚未完成的是在另一种 DPI 缩放下运行（需要第二台显示器或另一种缩放），以及应用接下来可能需要的宿主 native（`NativeOs`、宿主字体）；界面从
+P1 尚未完成的是应用运行中的 density 变化（另一台显示器的缩放，或用户改变缩放），以及应用接下来可能需要的宿主 native（`NativeOs`、宿主字体）；界面从
 `winapk.Mock` 切换到 `winapk run` 属于 P7（`PLAN.md` §14）。P2 从
 `elf64_reader.cpp`、`elf_reader.cpp` 和 `arm64_native.cpp` 的内存部分开始。

@@ -40,7 +40,7 @@ target_compile_definitions(winapk PRIVATE WINAPK_VERSION="${WINAPK_VERSION}" UNI
 # Win32 and Vulkan structs are zero-filled from their first field ({sizeof v}, {sType}).
 target_compile_options(winapk PRIVATE /W4 /EHsc -Wno-missing-field-initializers)
 # vulkan-1.dll and jvm.dll load at run time: no import library for either.
-target_link_libraries(winapk PRIVATE Vulkan::Headers ZLIB::ZLIB dxgi advapi32 bcrypt shell32 ole32)
+target_link_libraries(winapk PRIVATE Vulkan::Headers ZLIB::ZLIB dxgi advapi32 bcrypt shell32 ole32 shcore)
 
 # The Windows host natives (ADR-0001): loaded by winapk.exe and by a test java.exe alike.
 add_library(winapk-bridge SHARED
@@ -52,7 +52,7 @@ add_library(winapk-bridge SHARED
 target_include_directories(winapk-bridge PRIVATE "${JAVA_HOME}/include" "${JAVA_HOME}/include/win32")
 target_compile_definitions(winapk-bridge PRIVATE UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX _CRT_SECURE_NO_WARNINGS)
 target_compile_options(winapk-bridge PRIVATE /W4 /EHsc -Wno-missing-field-initializers)
-target_link_libraries(winapk-bridge PRIVATE unofficial::sqlite3::sqlite3 user32 gdi32)
+target_link_libraries(winapk-bridge PRIVATE unofficial::sqlite3::sqlite3 user32 gdi32 shcore)
 
 if(WINAPK_BIN_DIR)
   set_target_properties(winapk winapk-bridge PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${WINAPK_BIN_DIR}")

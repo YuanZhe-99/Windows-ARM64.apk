@@ -141,7 +141,7 @@ What a pure-Java APK needs from the host, as `winapk run` provides it (G1, [plat
 
 ## Next
 
-P1's open items are a run at another DPI scale (it needs a second display or another scale) and
-the host natives an app may need next (`NativeOs`, host fonts); the interface's switch from
+P1's open items are a density change while an app runs (another display's scale, or the person
+changing it) and the host natives an app may need next (`NativeOs`, host fonts); the interface's switch from
 `winapk.Mock` to `winapk run` belongs to P7 (`PLAN.md` §14). P2 starts from `elf64_reader.cpp`, `elf_reader.cpp` and the memory parts of
 `arm64_native.cpp`.

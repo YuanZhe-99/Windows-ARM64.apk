@@ -17,7 +17,7 @@
 | 环境要求 | `scripts/windows/check-requirements.ps1`：每个锁定的工具均为 OK，包括 Android SDK（build-tools 36.0.0、android-36）、NDK r30 和 kotlinc 2.4.0（Android Studio 自带） |
 | 平台资源 | `build.ps1 -Component FrameworkRes`：由 AOSP `android-16.0.0_r2`（API 36）构建的 `framework-res.apk`，66.4 MB，sha256 `62eb212e…6d90`；它的 14,530 个公开资源 ID 与 android.jar（android-36）一致，一个资源（`string/user_switched`）因没有默认值被 aapt2 去掉 |
 | 夹具 | `build.ps1 -Component Fixtures`：`hello-java.apk`、`hello-jni.apk` 和 `hello-kotlin.apk`（内含转为 DEX 的 kotlin-stdlib 2.4.0）已签名，apksigner 校验通过；`libhello.so` 为 ELF64 AArch64（NDK r30）；哈希在 `tests/fixtures/*.json` |
-| G1 Java 路径 | `test.ps1 -Suite Java`：41 项检查 PASS（见下）；`winapk.exe`、`winapk-bridge.dll`、`sqlite3.dll` 和 `zd.dll` 为 ARM64；窗口在 100% 缩放下（density 160） |
+| G1 Java 路径 | `test.ps1 -Suite Java`：在 1080p 显示器 100% 缩放（density 160）下 41 项检查 PASS（在加入 DPI 检查和显示器 DPI 修复之前），在 3840×2160 显示器 200% 缩放（density 320）下 43 项 PASS（新增 DPI 检查）；`winapk.exe`、`winapk-bridge.dll`、`sqlite3.dll` 和 `zd.dll` 为 ARM64 |
 | Java 侧（Mac.apk `ff2afbf`） | `build.ps1 -Component Java`：不经修改即可编译，78 秒，没有错误（[port-audit.md](port-audit.md)） |
 | T01 宿主和 JVM | `test.ps1 -Suite Host`：21 项检查 PASS——`winapk.exe`、`winapk-bridge.dll`、zlib 和 SQLite 为 ARM64；`jvm.dll` 为 ARM64，在进程内以上游的模块选项创建 JVM；JNI 宿主 → Java → 宿主；Java2D；260 个字体族；补丁模块；以及负例（找不到 JVM、无效的 `--java-home`） |
 | Vulkan | ARM64 loader 可用；两个 Mesa Dozen 设备（基于 Direct3D 12 的 Vulkan 1.2）；`doctor --present`：Win32 surface 测试通过。没有厂商 Vulkan 驱动 |
@@ -28,7 +28,7 @@
 | 关卡 | 状态 |
 |---|---|
 | G0 宿主就绪 | PASS（2026-11-03，本机：T01，工具链已锁定） |
-| G1 Java MVP | 本机 PASS（2026-11-04），含 G1.6；其他 DPI 缩放为 NOT_RUN（见下） |
+| G1 Java MVP | 本机 PASS（2026-11-04），含 G1.6，100% 与 200% 缩放下均通过；应用运行中改变缩放为 NOT_RUN（见下） |
 | G2 Native 最小执行 | NOT_RUN |
 | G3 Native 集成 | NOT_RUN |
 | G4 图形 | NOT_RUN |
@@ -42,7 +42,7 @@
 |---|---|---|
 | G1.1 真实 APK 的 DEX 启动 Activity | PASS | 冷启动：com.macapk.dex 输出 `stage dex-converted (… ms)`，`stage jvm-created`，`T03: lifecycle=onCreate`、`onResume`；APK 与数据文件夹的路径含空格及匈牙利文、韩文和中文字符时同样通过 |
 | G1.2 文字、按钮和输入框；点击、输入、滚动、返回 | PASS | 两次点击得到 `taps=2`；按 H、I 得到 `text=hi`，之后以 WM_CHAR 发送的 é、中文和一个代理对（emoji）接在后面；拖动把列表首行移到 12；Escape 得到 `back=pressed`、`onPause`、`onDestroy` |
-| G1.3 尺寸与坐标；不残留进程 | 100% 缩放下 PASS | 加宽到 600×800 px 后布局随之变化，点击新位置得到 `taps=3`；按下途中窗口失去激活会取消触摸（不产生点击）；在任务根部返回会最小化窗口，恢复窗口会重新启动 Activity；最小化的窗口记录 2 Hz 节流，恢复后回到全速；UI 线程被挂起时，应用循环发出的窗口调用记录 `UI_THREAD_BLOCKED: moveTaskToBack`，随后以 `UI_CALL_TIMEOUT` 放弃，应用继续运行；关闭窗口后进程以 0 退出且不再存在。其他 DPI 缩放：NOT_RUN（只有一台 100% 的显示器） |
+| G1.3 尺寸与坐标；不残留进程 | 100% 与 200% 缩放下 PASS | 加宽到 600×800 px 后布局随之变化，点击新位置得到 `taps=3`；按下途中窗口失去激活会取消触摸（不产生点击）；在任务根部返回会最小化窗口，恢复窗口会重新启动 Activity；最小化的窗口记录 2 Hz 节流，恢复后回到全速；UI 线程被挂起时，应用循环发出的窗口调用记录 `UI_THREAD_BLOCKED: moveTaskToBack`，随后以 `UI_CALL_TIMEOUT` 放弃，应用继续运行；关闭窗口后进程以 0 退出且不再存在。200%（4K）下：`scale 2.000000, density 320 dpi`，400×800 点即 800×1600 px 的客户区，Android 视图将其填满，48 dp 的按钮高 96 px；截图显示了该缩放下的布局。缩放取自显示器，而不是 `GetDpiForSystem`——后者在用户注销之前一直保持登录时的缩放 |
 | G1.4 重启后保留状态，冷缓存与热缓存 | PASS | 第二次运行：`stage dex-converted (cached)`、`restored.prefs=3`、`restored.file=3`，`databases/t03.db` 保留了三次启动的行 |
 | G1.5 guest native 关闭时的 APK `.so` | PASS | `hello-jni`：`native.error=GUEST_NATIVE_DISABLED: libhello.so …`，应用继续运行 |
 | G1.6 Kotlin 夹具 | PASS | T04（`hello-kotlin`，kotlin-stdlib 2.4.0）：`result=top=the:3,brown:1,dog:1 squares=140 copy=Count(word=fox, n=2)`、`onResume`、退出码 0。仅限此夹具：不推定其他 Kotlin 或 Compose 应用兼容 |
@@ -58,6 +58,7 @@
 - 界面还没有启动 `winapk run`；它仍使用 `winapk.Mock`。
 - 这台电脑没有厂商 Vulkan 驱动：Vulkan 是基于 Direct3D 12 的 Mesa Dozen（[decisions.md](decisions.md)）。
 - `CMakeLists.txt`、`AppClassLoader` 与 `native_sqlite.cpp` 改动后的 macOS 构建和 smoke：NOT_RUN（这里没有 Mac）；该分支只在 `WIN32` 下返回，Java 检查在未设置 `winapk.guestNative` 时不起作用，`_WIN32` 之外的 CoreFoundation 辅助函数没有改变。
+- DPI：应用的 density 在启动时固定。把窗口移到另一缩放的显示器，或在运行中改变缩放，窗口会调整尺寸以保持其点数（`WM_DPICHANGED`），但应用保持最初的 density：NOT_RUN，也尚未作为 Android 的配置变更处理。
 - 输入范围（`PLAN.md` §8.4）：一个指针（鼠标；没有多点触控或捏合），映射的按键，以及经 WM_CHAR 到达的任何字符。输入法的组字在输入过程中不显示在输入框里，只在提交时落入，与 macOS 相同；候选窗口在 Windows 默认的位置。未运行真实的输入法会话（测试以输入法提交时的方式发送 WM_CHAR）。
 - 界面只显示示例数据。在运行时契约提供之前尚未完成：窗格或窗口中的应用画面、移动应用数据文件夹的内容、数据和转换后代码的大小，以及更新私有 Java 运行时（[gui.md](gui.md)）。
 - 在运行时于 ARM64 真机上运行之前，不能声明原生 ARM64 支持。

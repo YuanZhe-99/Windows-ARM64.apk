@@ -123,6 +123,11 @@ public static class WinApkTestWin {
   [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
   [DllImport("user32.dll")] public static extern bool SetProcessDpiAwarenessContext(IntPtr c);
   [DllImport("user32.dll")] public static extern bool IsIconic(IntPtr h);
+  [DllImport("user32.dll")] public static extern uint GetDpiForWindow(IntPtr h);
+  [DllImport("user32.dll")] static extern IntPtr MonitorFromPoint(long pointXY, uint flags);  // POINT by value: (0, 0) is 0
+  [DllImport("shcore.dll")] static extern int GetDpiForMonitor(IntPtr m, int type, out uint x, out uint y);
+  // The primary display's current (effective) DPI, as winapk run reads it.
+  public static uint PrimaryDpi() { uint x, y; return GetDpiForMonitor(MonitorFromPoint(0, 1), 0, out x, out y) == 0 ? x : 96; }
   [DllImport("kernel32.dll")] static extern IntPtr OpenThread(uint access, bool inherit, uint id);
   [DllImport("kernel32.dll")] static extern uint SuspendThread(IntPtr h);
   [DllImport("kernel32.dll")] public static extern uint ResumeThread(IntPtr h);
@@ -159,9 +164,9 @@ public static class WinApkTestWin {
 }
 "@
 
-<# Starts winapk run on an APK with its log in $Log; returns the process. #>
+<# Starts winapk run on an APK at $script:appSize (points) with its log in $Log; returns the process. #>
 function Start-App([string]$Apk, [string]$Data, [string]$Log) {
-    Start-Process -FilePath $winapk -ArgumentList @('run', "`"$Apk`"", '--data-dir', "`"$Data`"", '--size', '400x800') `
+    Start-Process -FilePath $winapk -ArgumentList @('run', "`"$Apk`"", '--data-dir', "`"$Data`"", '--size', $script:appSize) `
         -RedirectStandardError $Log -RedirectStandardOutput "$Log.out" -PassThru -NoNewWindow
 }
 
@@ -258,6 +263,12 @@ function Test-Java {
     if (-not (Test-Path $apk)) { throw "$apk is missing: run scripts/windows/build.ps1 -Component Fixtures" }
     $env:WINAPK_JAVA_HOME = Find-Jdk
     [WinApkTestWin]::SetProcessDpiAwarenessContext([IntPtr]-4) | Out-Null  # per-monitor v2, as the app
+    # A phone shape of 400x800 points, smaller when that would not fit the screen at this scale.
+    $scale = [WinApkTestWin]::PrimaryDpi() / 96.0
+    Add-Type -AssemblyName System.Windows.Forms
+    $fitH = [int][math]::Floor([System.Windows.Forms.Screen]::PrimaryScreen.WorkingArea.Height / $scale * 0.85)
+    $ptH = [math]::Min(800, $fitH - ($fitH % 2))
+    $script:appSize = "$($ptH / 2)x$ptH"
     $data = Join-Path $out 'test-data\java'
     Reset-Dir $data
     $logs = Join-Path $out 'test-data\logs'
@@ -283,6 +294,14 @@ function Test-Java {
     $r = New-Object WinApkTestWin+RECT
     [WinApkTestWin]::GetClientRect($h, [ref]$r) | Out-Null
     Check 'T02.size' ([int]$layout.Groups[1].Value -eq $r.R -and [int]$layout.Groups[2].Value -eq $r.B) "Android view $($layout.Groups[1].Value)x$($layout.Groups[2].Value) px = client $($r.R)x$($r.B) px"
+    # G1.3 at this PC's scale: a point is a DIP and a dp, so the client is points x scale, the
+    # density is 160 x scale, and a 48 dp button is 48 x scale pixels tall.
+    $win = [regex]::Match($text, 'window (\d+)x(\d+) points, scale ([\d.]+), density (\d+) dpi')
+    $wdpi = [WinApkTestWin]::GetDpiForWindow($h); $ws = $wdpi / 96.0
+    $tb = $layout.Groups[3].Value.Split(',') | ForEach-Object { [int]$_ }
+    $btnDp = ($tb[3] - $tb[1]) / $ws
+    Check 'T03.G1.3.dpi' ($win.Success -and [math]::Abs([double]$win.Groups[3].Value - $ws) -lt 0.01 -and [int]$win.Groups[4].Value -eq [math]::Round(160 * $ws) -and [math]::Abs($r.R - [int]$win.Groups[1].Value * $ws) -le 1 -and [math]::Abs($r.B - [int]$win.Groups[2].Value * $ws) -le 1) "window DPI $wdpi (scale $ws): $($win.Value); client $($r.R)x$($r.B) px"
+    Check 'T03.G1.3.dpi-layout' ([math]::Abs($btnDp - 48) -le 2) "the button is $($tb[3] - $tb[1]) px = $([math]::Round($btnDp, 1)) dp tall (48 dp expected)"
     $bg = ([regex]::Match($text, 'starting-window background #([0-9A-F]{6})')).Groups[1].Value
     Start-Sleep -Milliseconds 500
     $px = Get-ClientPixel $h 2 ($r.B - 2)
@@ -432,7 +451,6 @@ function Test-Java {
     Check 'T04.G1.6.lifecycle' ($null -ne (Wait-Log $log5 'T04: lifecycle=onResume' 10)) 'onCreate, onResume'
     if ($h5 -ne [IntPtr]::Zero) { $code5 = Close-App $h5 $p5 } else { if (-not $p5.HasExited) { $p5.Kill() }; $code5 = $null }
     Check 'T04.G1.6.exit' ($code5 -eq 0) "exit $code5"
-    Write-Host "NOT_RUN  G1.3 DPI other than this PC's ($([math]::Round((Get-Content $log -Raw | Select-String 'scale ([\d.]+)').Matches[0].Groups[1].Value, 2))): needs a second monitor or another scale"
 }
 
 switch ($Suite) { 'Host' { Test-Host } 'Java' { Test-Java } }

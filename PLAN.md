@@ -332,7 +332,7 @@ GPU 记录至少包含 vendor/device ID、驱动版本、API 版本、queue fami
 
 ## 8. P1 — 纯 Java APK 与 Win32 基础界面
 
-状态（2026-11-04）：G1 在本机通过，含 G1.6（只有其他 DPI 缩放为 NOT_RUN），结果见 `doc/en-us/platform-notes.md`、`port-audit.md`、ADR-0002 与 ADR-0003；界面接入 `winapk run` 属于 P7。
+状态（2026-11-04）：G1 在本机通过，含 G1.6，100% 与 200% 缩放下均通过（运行中改变缩放为 NOT_RUN），结果见 `doc/en-us/platform-notes.md`、`port-audit.md`、ADR-0002 与 ADR-0003；界面接入 `winapk run` 属于 P7。
 
 ### 8.1 拆分构建
 
@@ -364,7 +364,7 @@ GPU 记录至少包含 vendor/device ID、驱动版本、API 版本、queue fami
 - [x] Java2D 渲染到离屏像素缓冲；Windows 使用 DIB/等价最小位图路径呈现。
 - [x] 显式定义 ARGB/BGRA、premultiplied alpha、stride、尺寸和缓冲所有权；先解决正确性，再优化拷贝。
 - [x] 映射鼠标点击/拖动为触摸，键盘/滚轮为相应 Android 事件；首轮先支持常见按键和返回。
-- [ ] DPI 缩放后使用一致的逻辑坐标；resize 更新 Surface/Activity 的尺寸与生命周期。（P1：100% 缩放与改变尺寸已验证；其他缩放 NOT_RUN。）
+- [x] DPI 缩放后使用一致的逻辑坐标；resize 更新 Surface/Activity 的尺寸与生命周期。（P1：100% 与 200%（4K）缩放及改变尺寸已验证；运行中改变缩放时应用保持启动时的 density，NOT_RUN。）
 - [x] 简单测试页面使用 TextView、Button、EditText 和可滚动列表；字体回退和输入结果要可检查。
 - [x] 为不支持的高级输入/多触点/IME 场景记录范围；不让基础编辑框静默丢字。（P1：未映射按键与输入法提交经 WM_CHAR 送达；范围见 `doc/en-us/platform-notes.md`；真实输入法会话 NOT_RUN。）
 
