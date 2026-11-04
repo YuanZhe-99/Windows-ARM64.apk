@@ -21,6 +21,18 @@ go run ./tools/checkdocs           # doc/en-us and doc/zh-cn mirror each other
 
 运行时构建、`winapk doctor` 与夹具测试套件随第一批运行时代码加入此处（预期命令见 `PLAN.md` §18）。
 
+## 运行界面
+
+```bash
+go run ./cmd/windows-arm64-apk
+WINAPK_FRESH=1 go run ./cmd/windows-arm64-apk
+SCREENSHOT_DIR=/path/to/dir go test ./internal/gui -run TestScreensRender
+```
+
+第一条对接 `design/` 的示例应用运行；`WINAPK_FRESH=1` 以空的应用库、没有 Java 运行时启动，如同首次
+运行。测试把每个界面以两种语言和两种外观写成 PNG，用于与 `design/` 对比。字符串在 `locales/en.json`
+和 `locales/zh-Hans.json` 中；修改后运行 `go tool mygo generate`。
+
 ## 更新 Mac.apk
 
 Mac.apk 是 `macapk/` 下的 git subtree，跟随上游最新 `main`：

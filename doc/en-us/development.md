@@ -25,6 +25,19 @@ go run ./tools/checkdocs           # doc/en-us and doc/zh-cn mirror each other
 The runtime build, `winapk doctor` and the fixture suites are added here with the first runtime
 code (`PLAN.md` §18 lists the intended commands).
 
+## Running the interface
+
+```bash
+go run ./cmd/windows-arm64-apk
+WINAPK_FRESH=1 go run ./cmd/windows-arm64-apk
+SCREENSHOT_DIR=/path/to/dir go test ./internal/gui -run TestScreensRender
+```
+
+The first runs against the sample apps of `design/`; `WINAPK_FRESH=1` starts with an empty
+library and no Java runtime, as on a first run. The test writes every screen in both languages and
+appearances as PNG, to compare with `design/`. Strings live in `locales/en.json` and
+`locales/zh-Hans.json`; after changing them run `go tool mygo generate`.
+
 ## Updating Mac.apk
 
 Mac.apk is a git subtree under `macapk/` that follows the latest upstream `main`:

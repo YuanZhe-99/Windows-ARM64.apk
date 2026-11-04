@@ -33,6 +33,7 @@ about to change, verify against the code, then fix the docs in the same commit.
 |---|---|
 | Architecture, ABI rules, phases, gates, fixtures, acceptance (while the plan is active) | `PLAN.md` |
 | Interface screens, wording and design tokens (reference for the MyGo front end) | `design/` |
+| The interface as built: windows, panes, sheets, its files, the runtime contract draft | `doc/en-us/gui.md` |
 | Verified upstream contracts (Mac.apk, Windows ARM64 ABI, Android NDK, MyGo) and quirks | `doc/en-us/upstream.md` |
 | Reused third-party code, licenses and obligations | `doc/en-us/third-party.md` |
 | What is implemented and verified per platform, with gate status | `doc/en-us/platform-notes.md` |
@@ -58,6 +59,11 @@ Three kinds of agents work here, following `PLAN.md` §2.4 and §6:
   delivers standalone screens and wording in `design/`; it does not write product code.
 - The **frontend agent** owns the MyGo front end: the Go module at the repository root (`cmd/`,
   `internal/`, `locales/`, `resources/`), built from `design/`.
+- The interface exists and runs against `winapk.Mock` (`doc/en-us/gui.md`). What it expects of
+  the runtime is `internal/winapk`: the `Client` and `Process` methods and the report, APK and
+  state types, a draft of the contract written from the interface's side. The runtime agent turns
+  it into the `winapk` CLI's JSON and the per-APK process and replaces the Mock; where the runtime
+  has to differ, change `internal/winapk` and the views in the same change set.
 - The front end reaches the runtime only through the runtime ↔ front-end contract (process launch,
   the `winapk` JSON outputs, and the window/Surface hand-off for the pane). The runtime agent
   defines it with the design and records it in `doc/en-us/` before the frontend depends on it; a

@@ -12,6 +12,7 @@ per APK.
 
 | Document | Covers |
 |---|---|
+| [gui.md](gui.md) | The interface: windows, panes and groups, sheets, its files, the runtime contract draft, sample data |
 | [upstream.md](upstream.md) | Upstream contracts and quirks: Mac.apk, Windows ARM64 ABI, Android NDK, MyGo |
 | [third-party.md](third-party.md) | Reused code and dependencies, licenses and obligations |
 | [platform-notes.md](platform-notes.md) | What is implemented and verified on each platform, gate status |
@@ -30,6 +31,6 @@ used once P0 creates it.
 |---|---|---|
 | Go | latest release | 1.27.3 |
 | MyGo | latest tag | v0.7.4 |
-| Mac.apk | latest `main`, as the `macapk/` subtree | `367fd1a` (code unchanged since `f87be03`; `VERSION` 1.0.2303) |
+| Mac.apk | latest `main`, as the `macapk/` subtree | `ff2afbf` (only upstream's `README.md` changed since the subtree's `367fd1a`; not merged yet, the runtime agent's next merge) |
 | OpenJDK (ARM64), Android SDK/NDK, ANGLE, Vulkan Loader, Skia | chosen and locked in P0 | not chosen yet |
 | clang-cl, Windows SDK, CMake, Ninja | chosen and locked in P0 | not chosen yet |

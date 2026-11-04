@@ -9,6 +9,7 @@ MyGo 前端在手机式窗格或独立窗口中打开每个应用，每个 APK �
 
 | 文档 | 内容 |
 |---|---|
+| [gui.md](gui.md) | 界面：窗口、窗格和组、面板、它的文件、运行时契约草案、示例数据 |
 | [upstream.md](upstream.md) | 上游契约与特殊行为：Mac.apk、Windows ARM64 ABI、Android NDK、MyGo |
 | [third-party.md](third-party.md) | 复用的代码与依赖、许可证与义务 |
 | [platform-notes.md](platform-notes.md) | 各平台已实现与已验证的内容、关卡状态 |
@@ -26,6 +27,6 @@ P0 创建 `build-lock.json` 后，由它记录每次构建实际使用的版本�
 |---|---|---|
 | Go | 最新发行版 | 1.27.3 |
 | MyGo | 最新标签 | v0.7.4 |
-| Mac.apk | 最新 `main`，作为 `macapk/` subtree | `367fd1a`（代码自 `f87be03` 起未变；`VERSION` 1.0.2303） |
+| Mac.apk | 最新 `main`，作为 `macapk/` subtree | `ff2afbf`（自 subtree 的 `367fd1a` 起只改了上游的 `README.md`；尚未合并，由运行时 Agent 下次合并） |
 | OpenJDK（ARM64）、Android SDK/NDK、ANGLE、Vulkan Loader、Skia | 在 P0 选定并锁定 | 尚未选定 |
 | clang-cl、Windows SDK、CMake、Ninja | 在 P0 选定并锁定 | 尚未选定 |

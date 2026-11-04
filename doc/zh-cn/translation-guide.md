@@ -46,6 +46,10 @@ Microsoft），以及 API 与格式名称（JNI、ELF、PE、DEX、Bionic、EGL�
 | subtree | subtree |
 | upstream | 上游 |
 | port audit | 移植审计 |
+| library (of apps) | 应用库 |
+| group (of panes) | 组 |
+| sample data | 示例数据 |
+| sheet | 面板 |
 
 ## 6. 审阅清单
 

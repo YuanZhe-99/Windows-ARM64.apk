@@ -50,6 +50,10 @@ and Latin words only where it helps readability.
 | subtree | subtree |
 | upstream | 上游 |
 | port audit | 移植审计 |
+| library (of apps) | 应用库 |
+| group (of panes) | 组 |
+| sample data | 示例数据 |
+| sheet | 面板 |
 
 ## 6. Review checklist
 
