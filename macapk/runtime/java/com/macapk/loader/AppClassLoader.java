@@ -1263,6 +1263,15 @@ public final class AppClassLoader extends dalvik.system.PathClassLoader {
     // dalvik.system.BaseDexClassLoader.findLibrary).
     @Override
     public String findLibrary(String libname) {
+        // Windows-ARM64.apk: with guest native off (winapk run --native=off, the default
+        // until the guest ELF loader exists) an APK library is never translated, stubbed or
+        // handed to the host loader; the load fails with a stable category instead.
+        // Unset on macOS, where nothing here changes.
+        if ("off".equals(System.getProperty("winapk.guestNative"))) {
+            NativeLog.w(TAG, "GUEST_NATIVE_DISABLED: System.loadLibrary(\"" + libname + "\")");
+            throw new UnsatisfiedLinkError("GUEST_NATIVE_DISABLED: lib" + libname
+                + ".so is Android native code, and running it is off (Windows-ARM64.apk --native=off)");
+        }
         // v1.0.152: on the first findLibrary call, pre-translate every
         // other .so in the APK's lib/<abi>/ dir so downstream dlopen()
         // calls from within native code can find them. Unity's libmain.so

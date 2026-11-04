@@ -9,8 +9,10 @@ Windows 11 ARM64 上构建或运行过（[port-audit.md](port-audit.md)）。
 | 要点 | 影响 | 核实程度 |
 |---|---|---|
 | Framework 与 DEX 转换器是 Java（`runtime/java/`、`runtime/java/com/macapk/dex/`） | 保持原样；只隔离平台调用和路径假设 | 已构建：在 Windows ARM64 JDK 上不经修改即可编译 |
-| `Boot.java` 的启动流程耦合 `NativeCocoa`、本地库和 macOS 路径 | 拆出宿主启动服务；保留应用生命周期 | 已阅读 |
-| `NativeCocoa.java` 承载窗口、Surface、呈现和宿主服务的 JNI 方法 | 新增平台中立入口，调用逐步迁移过去 | 已阅读 |
+| `Boot.run(apk, classesJar, appDir, manifest)` 是启动入口；调用线程运行 `NativeCocoa.runLoop()`，Activity 在自己的线程上运行；应用的数据目录以 `appDir` 的文件夹名命名；`appDir` 中不属于它的文件（`Boot.isCodeDirArtifact`，或以 `.macapk` 开头）会被移到数据目录 | `winapk run` 以包名命名 `appDir`，缓存戳命名为 `.macapk-winapk-stamp` | 已验证（G1） |
+| `NativeCocoa.java` 承载窗口、Surface、呈现和宿主服务的 JNI 方法；帧由 UI 线程调用渲染器的 `macapkDrawFrame()` 拉取，它用 `presentBitmap` 呈现 ARGB 像素；触摸以点为单位、y 从底部起算交给 `TouchDispatcher.dispatch` | Windows 把同样的声明绑定到 Win32 代码（ADR-0002） | 已验证（G1） |
+| `AppClassLoader.findLibrary` 转换 APK 的库，失败时退回空操作的 stub | guest native 关闭时，Windows 先抛出 `GUEST_NATIVE_DISABLED`（按平台条件生效的检查） | 已验证（G1.5） |
+| `MACAPK_FW_RES_APK` 指定平台资源包；`-Dmacapk.android.root` 指定 Android 根目录；`-Dmacapk.display.density` 指定 density | 由 `winapk run` 设置 | 已验证（G1） |
 | `runtime/src/jvm_loader.cpp` 以 macOS 加载假设嵌入 JVM | 需要 Windows `jvm.dll` 加载器及其自己的选项 | 已验证：Windows 加载器在 `platform/windows` 中，JDK 接受上游的模块选项（T01） |
 | `runtime/CMakeLists.txt` 在顶层启用 OBJCXX，并查找 Apple 与 Homebrew 依赖 | 语言、源文件、链接和依赖发现改为按平台条件化 | 已构建：`if(WIN32)` 分支在 macOS 项目之前引入 `platform/windows/windows.cmake` |
 | `runtime/translator/src/arm64_native.cpp` 将 ELF 映射/重定位与 macOS 内存、寄存器和补丁机制交织 | 复用解析逻辑；分离宿主内存与执行策略 | 已阅读 |
@@ -18,7 +20,7 @@ Windows 11 ARM64 上构建或运行过（[port-audit.md](port-audit.md)）。
 | `bionic_shim.cpp` 将 Bionic、系统调用和线程绑定到 Darwin 机制 | 按能力拆分，绝不整文件移植 | 已阅读 |
 | `bionic_shim_vulkan.cpp` 将客体 Vulkan 适配到 MoltenVK 与 Metal Surface | 复用其扩展处理；新增 Win32 后端 | 已阅读 |
 | `angle_glue.cpp` 与 `gles_bridge.cpp` 是 GLES/ANGLE 桥入口 | 分离宿主表面、后端选择和客体 ABI | 已阅读 |
-| `NativeLoaderShim.java` 依赖与 ClassLoader 关联的宿主动态库 | 把 `.dylib` 改名为 `.dll` 不够；客体库经客体加载器处理 | 已阅读 |
+| `NativeLoaderShim.java` 依赖与 ClassLoader 关联的宿主动态库；应用自己调用的 `System.load(path)` 直接到达 JVM | 把 `.dylib` 改名为 `.dll` 不够；客体库经客体加载器处理，APK 库的 `System.load` 也必须转到那里（未完成，[port-audit.md](port-audit.md)） | 已阅读 |
 | 基础 Canvas 是 Java2D；AGSL 与 RenderEffect 在 Skia 的 Metal 后端上执行并回读（`BUILDING.md`） | Canvas、GLES、Vulkan、AGSL 是独立工作项，不是一次 Metal 替换 | 已阅读 |
 | 构建需要 macOS 26.4 的 `x18` ABI entitlement，并提交了 macOS 的 ANGLE、MoltenVK、Skia `.dylib` 预编译产物 | 这些在 Windows 上都不适用、不分发；依赖为 ARM64 Windows 构建或获取 | 已阅读 |
 | 启动器是 Swift（`launcher/`），构建与发行脚本是 bash（`scripts/`、`runtime/scripts/`） | Windows 上由 MyGo 前端取代启动器；脚本步骤重新表达，而非改名 | 已阅读 |

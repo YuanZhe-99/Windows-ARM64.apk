@@ -13,8 +13,8 @@ Audited at Mac.apk `ff2afbf` (merged as the `macapk/` subtree), 2026-11-03, on W
 - Searched `macapk/` for the couplings `PLAN.md` §7 names (counts below).
 - Built: the whole Java side with the Windows ARM64 JDK (`scripts/windows/build.ps1 -Component
   Java`); a Windows host with an embedded JVM (`-Component Host`, fixture T01).
-- Not yet: building or reading `runtime/translator` in depth (P2), the AOSP framework resources
-  (needs the Android SDK's `aapt2`), any APK.
+- P1: the AOSP framework resources (built with the SDK's `aapt2`) and the Java path of a pure-Java
+  APK (below). Not yet: building or reading `runtime/translator` in depth (P2).
 
 ## Areas
 
@@ -30,7 +30,7 @@ Audited at Mac.apk `ff2afbf` (merged as the `macapk/` subtree), 2026-11-03, on W
 | Skia | `thirdparty/skia-prebuilt`, `skia_metal_bridge.mm` | prebuilt `.dylib` | Metal | later: a Windows ARM64 Skia GPU bridge | P8 |
 | Build | `runtime/CMakeLists.txt`, `runtime/scripts/build.sh`, `scripts/*.sh` | 835-line build script | OBJCXX, Homebrew, `codesign`, entitlements, `.dylib` staging, `python3` | `scripts/windows/*.ps1`; `CMakeLists.txt` branches to `platform/windows/windows.cmake` | P0 (done for Java and Host) |
 | Translator build | `runtime/translator/CMakeLists.txt` | 2 targets | `macapk-translator` turns an ELF `.so` into a Mach-O `.dylib`; `libmacapk-bionic-shim.dylib` links capstone, zlib, libpng, ANGLE and the Security and CoreFoundation frameworks | not built on Windows: the guest loader of P2 maps ELF itself (no Mach-O or PE wrapping); capstone, zlib and libpng come from vcpkg if reused | P2 |
-| Framework resources | `scripts/build_framework_res.sh` | one-time | needs `aapt2` (SDK build-tools or apktool's macOS binary) and a ~20 MB AOSP source tarball; makes a ~48 MB `framework-res-api36.apk`, never committed | the same recipe from PowerShell with the SDK's `aapt2` (build-tools 36.0.0, `build-lock.json`) | P1 |
+| Framework resources | `scripts/build_framework_res.sh` | one-time | needs `aapt2` (SDK build-tools or apktool's macOS binary) and a ~20 MB AOSP source tarball; makes a ~48 MB `framework-res-api36.apk`, never committed | done: the same recipe in `build.ps1 -Component FrameworkRes` with the SDK's `aapt2` (build-tools 36.0.0); `resources.arsc` stays stored rather than re-deflated, so the package is 66 MB | P1 |
 | Launcher | `launcher/*.swift` | 8 files | SwiftUI app bundle | replaced by the MyGo front end | done (front end) |
 | Prebuilts | `thirdparty/angle-prebuilt`, `skia-prebuilt`, MoltenVK | macOS binaries | macOS only | never shipped on Windows | — |
 
@@ -110,6 +110,20 @@ Upstream's `jvm_loader.cpp` options, and their state on the Windows JVM.
 | `angle_glue.cpp`, `gles_bridge.cpp` and the `.inc` bridges | 5,963 | `pthread` | P5 |
 | `apk_native_exec.cpp`, `app_process_group.cpp`, `app_native_stub.cpp`, `host_fonts.cpp` | 650 | `signal` | P1/P2 |
 
+## Java path on Windows (P1)
+
+What a pure-Java APK needs from the host, as `winapk run` provides it (G1, [platform-notes.md](platform-notes.md)).
+
+| Upstream piece | Windows |
+|---|---|
+| `main.cpp`'s start-up (install, unpack, DEX conversion, JVM options, natives, `Boot.run`) | re-expressed in `run.cpp`: the APK is read natively (`apk.cpp`: ZIP, ZIP64, inflate, binary manifest, entry-name screening), DEX is converted by com.macapk.dex in a child ARM64 `java.exe` as upstream does, cached by the APK, converter and framework hashes, then the JVM is created in-process with upstream's options minus the macOS-only ones (hosts-file path, AOT cache) |
+| `NativeLog` (4 of 5 natives) | `print`, `nativeBoostCurrentThreadQos` (thread priority above normal), `nativeBootTimeNanos` (the performance counter, HotSpot's `nanoTime` source) bound; `nativeInstallJniTrace` and `nativeRegisterPairipGate` unbound |
+| `NativeCocoa` window, presentation, input (29 of 57 natives) | bound in `window.cpp` (ADR-0002): `init`, `runLoop`, sizes and scale, windows and views, the renderer, `presentBitmap`, touch registration, orientation and aspect cap, `setSecureContent` (`WDA_EXCLUDEFROMCAPTURE`), task to back/front, data and library dirs, `exitProcess`. Unbound, each failing with `UnsatisfiedLinkError` where called: the AOSP window-policy session (`activityWindowTransition`, `windowOverrideOrientation`, `applyWindowOrientationFor`, `setTopActivityConfigChanges`), URL and scheme handling, the IOSurface ring (`presentFrame`), GL surfaces and overlays, `hostFontFile`, `setSystemFontsDir`, `setSystemProperty`, the translation overlay, trackpad and quit-gesture debugging |
+| Other host natives Boot reaches (`NativeOs.setenv`, `NativeSqlite`, `GamepadBridge`, Monet wallpaper) | unbound; Boot logs each and goes on. `NativeSqlite` (SQLite databases) is the next one an ordinary app needs |
+| `AppClassLoader.findLibrary`'s stub fallback | with guest native off, `GUEST_NATIVE_DISABLED` instead (G1.5) |
+| `ClassFileRewriter`'s `/proc/meminfo` alias `/tmp/mcmeminf` | no such folder on Windows: an app reading `/proc/meminfo` gets nothing (`Boot` logs it); needs a same-length Windows path or another redirect |
+| An app's own `System.load(absolutePath)` | reaches the JVM, which would hand an ELF to `LoadLibrary`; must be routed to the guest loader (P2) — open |
+
 ## Findings that change the plan's assumptions
 
 - **Vulkan on this PC is translated.** The Adreno 8cx Gen 3 driver installs no Vulkan ICD; the
@@ -125,6 +139,6 @@ Upstream's `jvm_loader.cpp` options, and their state on the Windows JVM.
 
 ## Next
 
-P1 starts from the Java side built here, `NativeCocoa`'s 57 natives and `main.cpp`'s start-up
-steps; P2 starts from `elf64_reader.cpp`, `elf_reader.cpp` and the memory parts of
+P1 continues with the host natives an ordinary app needs next (`NativeSqlite`, `NativeOs`, host
+fonts), the interface's switch from `winapk.Mock` to `winapk run`, and the Kotlin fixture; P2 starts from `elf64_reader.cpp`, `elf_reader.cpp` and the memory parts of
 `arm64_native.cpp`.

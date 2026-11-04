@@ -13,8 +13,7 @@ Mac.apk 后重新执行下面的搜索并更新各表。
 - 在 `macapk/` 中搜索 `PLAN.md` §7 列出的平台耦合（计数见下）。
 - 构建：用 Windows ARM64 JDK 构建整个 Java 侧（`scripts/windows/build.ps1 -Component Java`）；嵌入 JVM
   的 Windows 宿主（`-Component Host`，夹具 T01）。
-- 尚未进行：深入构建或阅读 `runtime/translator`（P2）、AOSP 框架资源（需要 Android SDK 的 `aapt2`）、
-  任何 APK。
+- P1：AOSP 框架资源（用 SDK 的 `aapt2` 构建），以及纯 Java APK 的 Java 路径（见下）。尚未：深入构建或阅读 `runtime/translator`（P2）。
 
 ## 各部分
 
@@ -30,7 +29,7 @@ Mac.apk 后重新执行下面的搜索并更新各表。
 | Skia | `thirdparty/skia-prebuilt`、`skia_metal_bridge.mm` | 预编译 `.dylib` | Metal | 以后：Windows ARM64 的 Skia GPU 桥 | P8 |
 | 构建 | `runtime/CMakeLists.txt`、`runtime/scripts/build.sh`、`scripts/*.sh` | 835 行的构建脚本 | OBJCXX、Homebrew、`codesign`、entitlement、`.dylib` 暂存、`python3` | `scripts/windows/*.ps1`；`CMakeLists.txt` 分支到 `platform/windows/windows.cmake` | P0（Java 和 Host 已完成） |
 | Translator 构建 | `runtime/translator/CMakeLists.txt` | 2 个目标 | `macapk-translator` 把 ELF `.so` 转成 Mach-O `.dylib`；`libmacapk-bionic-shim.dylib` 链接 capstone、zlib、libpng、ANGLE 以及 Security 和 CoreFoundation 框架 | 不在 Windows 上构建：P2 的客体加载器自己映射 ELF（不做 Mach-O 或 PE 包装）；如复用 capstone、zlib 和 libpng，则从 vcpkg 获取 | P2 |
-| 框架资源 | `scripts/build_framework_res.sh` | 一次性 | 需要 `aapt2`（SDK build-tools 或 apktool 的 macOS 二进制）和约 20 MB 的 AOSP 源码包；生成约 48 MB 的 `framework-res-api36.apk`，从不提交 | 在 PowerShell 中用 SDK 的 `aapt2`（build-tools 36.0.0，`build-lock.json`）执行同样的步骤 | P1 |
+| 框架资源 | `scripts/build_framework_res.sh` | 一次性 | 需要 `aapt2`（SDK build-tools 或 apktool 的 macOS 二进制）和约 20 MB 的 AOSP 源码包；生成约 48 MB 的 `framework-res-api36.apk`，从不提交 | 已完成：在 `build.ps1 -Component FrameworkRes` 中用 SDK 的 `aapt2`（build-tools 36.0.0）执行同样的步骤；`resources.arsc` 保持 stored、不再压缩，所以包为 66 MB | P1 |
 | 启动器 | `launcher/*.swift` | 8 个文件 | SwiftUI 应用包 | 由 MyGo 前端取代 | 已完成（前端） |
 | 预编译产物 | `thirdparty/angle-prebuilt`、`skia-prebuilt`、MoltenVK | macOS 二进制 | 仅 macOS | 绝不随 Windows 包发布 | — |
 
@@ -109,6 +108,20 @@ Mac.apk 后重新执行下面的搜索并更新各表。
 | `angle_glue.cpp`、`gles_bridge.cpp` 和 `.inc` 桥 | 5,963 | `pthread` | P5 |
 | `apk_native_exec.cpp`、`app_process_group.cpp`、`app_native_stub.cpp`、`host_fonts.cpp` | 650 | `signal` | P1/P2 |
 
+## Windows 上的 Java 路径（P1）
+
+纯 Java APK 需要宿主提供的东西，以及 `winapk run` 如何提供（G1，[platform-notes.md](platform-notes.md)）。
+
+| 上游部分 | Windows |
+|---|---|
+| `main.cpp` 的启动流程（安装、解包、DEX 转换、JVM 选项、native、`Boot.run`） | 在 `run.cpp` 中重新表达：原生读取 APK（`apk.cpp`：ZIP、ZIP64、解压、二进制 manifest、条目名筛查），与上游一样在子 ARM64 `java.exe` 中用 com.macapk.dex 转换 DEX，按 APK、转换器和框架的哈希缓存，然后在进程内以上游的选项（去掉 macOS 专用的 hosts 文件路径和 AOT 缓存）创建 JVM |
+| `NativeLog`（5 个 native 中的 4 个） | 绑定 `print`、`nativeBoostCurrentThreadQos`（线程优先级高于正常）、`nativeBootTimeNanos`（性能计数器，即 HotSpot `nanoTime` 的来源）；`nativeInstallJniTrace` 和 `nativeRegisterPairipGate` 未绑定 |
+| `NativeCocoa` 的窗口、呈现、输入（57 个 native 中的 29 个） | 在 `window.cpp` 中绑定（ADR-0002）：`init`、`runLoop`、尺寸和缩放、窗口和视图、渲染器、`presentBitmap`、触摸注册、方向和宽高比上限、`setSecureContent`（`WDA_EXCLUDEFROMCAPTURE`）、任务移到后台/前台、数据和库目录、`exitProcess`。未绑定，在被调用处以 `UnsatisfiedLinkError` 失败的：AOSP 窗口策略会话（`activityWindowTransition`、`windowOverrideOrientation`、`applyWindowOrientationFor`、`setTopActivityConfigChanges`）、URL 和 scheme 处理、IOSurface 环（`presentFrame`）、GL surface 和覆盖层、`hostFontFile`、`setSystemFontsDir`、`setSystemProperty`、翻译覆盖层、触控板和退出手势调试 |
+| Boot 会用到的其他宿主 native（`NativeOs.setenv`、`NativeSqlite`、`GamepadBridge`、Monet 壁纸） | 未绑定；Boot 逐一记录日志并继续。`NativeSqlite`（SQLite 数据库）是普通应用接下来需要的 |
+| `AppClassLoader.findLibrary` 退回 stub | guest native 关闭时改为 `GUEST_NATIVE_DISABLED`（G1.5） |
+| `ClassFileRewriter` 把 `/proc/meminfo` 别名为 `/tmp/mcmeminf` | Windows 上没有这个文件夹：读取 `/proc/meminfo` 的应用什么也得不到（`Boot` 会记录）；需要同样长度的 Windows 路径或另一种重定向 |
+| 应用自己调用的 `System.load(absolutePath)` | 会到达 JVM，JVM 会把 ELF 交给 `LoadLibrary`；必须转到客体加载器（P2）——未完成 |
+
 ## 改变计划假设的发现
 
 - **这台电脑上的 Vulkan 是转换层。** Adreno 8cx Gen 3 驱动没有安装 Vulkan ICD；loader 列出两个 Mesa
@@ -121,5 +134,5 @@ Mac.apk 后重新执行下面的搜索并更新各表。
 
 ## 下一步
 
-P1 从这里构建的 Java 侧、`NativeCocoa` 的 57 个 native 和 `main.cpp` 的启动步骤开始；P2 从
+P1 接下来是普通应用需要的宿主 native（`NativeSqlite`、`NativeOs`、宿主字体）、界面从 `winapk.Mock` 切换到 `winapk run`，以及 Kotlin 夹具；P2 从
 `elf64_reader.cpp`、`elf_reader.cpp` 和 `arm64_native.cpp` 的内存部分开始。

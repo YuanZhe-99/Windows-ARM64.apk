@@ -11,12 +11,20 @@ of reporting success. Each check prints PASS or FAIL with its evidence; the
 script exits non-zero when any fails. Build first:
 scripts/windows/build.ps1 -Component All.
 
+Suite Java is G1 (PLAN.md §8): fixtures T02 (the Win32 bitmap presenter: pixel
+format, size, message pump) and T03 (hello-java.apk: DEX conversion, the
+Activity's lifecycle, taps, typing, scrolling, a resize, Back, closing, then a
+second run that restores the saved state from the cache), driven by posting
+window messages to the app's window and reading the runtime's log; and its
+negative cases, a file that is not an APK and an unsupported --native mode. It
+needs a desktop session. Build first: build.ps1 -Component All.
+
 .PARAMETER Suite
-Host.
+Host or Java.
 #>
 [CmdletBinding()]
 param(
-    [ValidateSet('Host')]
+    [ValidateSet('Host', 'Java')]
     [string]$Suite = 'Host'
 )
 Set-StrictMode -Version Latest
@@ -99,6 +107,205 @@ function Test-Host {
     Check 'T01.neg.java-home-invalid' ($bad.jvm.source -ne 'argument') "an invalid --java-home is not used (source=$($bad.jvm.source))"
 }
 
-switch ($Suite) { 'Host' { Test-Host } }
+Add-Type @"
+using System; using System.Runtime.InteropServices;
+public static class WinApkTestWin {
+  [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern IntPtr FindWindowW(string c, string t);
+  [DllImport("user32.dll")] public static extern bool PostMessageW(IntPtr h, uint m, IntPtr w, IntPtr l);
+  [DllImport("user32.dll")] public static extern bool GetClientRect(IntPtr h, out RECT r);
+  [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h, out RECT r);
+  [DllImport("user32.dll")] public static extern bool SetWindowPos(IntPtr h, IntPtr a, int x, int y, int cx, int cy, uint f);
+  [DllImport("user32.dll")] public static extern bool PrintWindow(IntPtr h, IntPtr dc, uint f);
+  [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
+  [DllImport("user32.dll")] public static extern bool SetProcessDpiAwarenessContext(IntPtr c);
+  public struct RECT { public int L, T, R, B; }
+}
+"@
+
+<# Starts winapk run on an APK with its log in $Log; returns the process. #>
+function Start-App([string]$Apk, [string]$Data, [string]$Log) {
+    Start-Process -FilePath $winapk -ArgumentList @('run', "`"$Apk`"", '--data-dir', "`"$Data`"", '--size', '400x800') `
+        -RedirectStandardError $Log -RedirectStandardOutput "$Log.out" -PassThru -NoNewWindow
+}
+
+<# Returns the log's text so far (the runtime keeps writing it). #>
+function Read-Log([string]$Log) {
+    $fs = [IO.File]::Open($Log, 'Open', 'Read', 'ReadWrite')
+    try { (New-Object IO.StreamReader $fs).ReadToEnd() } finally { $fs.Dispose() }
+}
+
+<# Waits until the log matches $Pattern; returns the match, or $null after $Seconds. #>
+function Wait-Log([string]$Log, [string]$Pattern, [int]$Seconds = 30) {
+    $until = (Get-Date).AddSeconds($Seconds)
+    while ((Get-Date) -lt $until) {
+        $m = [regex]::Matches((Read-Log $Log), $Pattern)
+        if ($m.Count -gt 0) { return $m[$m.Count - 1] }
+        Start-Sleep -Milliseconds 200
+    }
+    $null
+}
+
+<# Finds the app window of process $Id titled $Title. #>
+function Find-AppWindow([int]$Id, [string]$Title, [int]$Seconds = 60) {
+    $until = (Get-Date).AddSeconds($Seconds)
+    while ((Get-Date) -lt $until) {
+        $h = [WinApkTestWin]::FindWindowW('WinApkAppWindow', $Title)
+        if ($h -ne [IntPtr]::Zero) { $p = 0; [WinApkTestWin]::GetWindowThreadProcessId($h, [ref]$p) | Out-Null; if ($p -eq $Id) { return $h } }
+        Start-Sleep -Milliseconds 250
+    }
+    [IntPtr]::Zero
+}
+
+function Lp([int]$X, [int]$Y) { [IntPtr](($Y -shl 16) -bor ($X -band 0xffff)) }
+
+<# Taps the centre of "l,t,r,b" (window pixels) with a left click. #>
+function Send-Tap($H, [string]$Bounds) {
+    $b = $Bounds.Split(',') | ForEach-Object { [int]$_ }
+    $x = [int](($b[0] + $b[2]) / 2); $y = [int](($b[1] + $b[3]) / 2)
+    [WinApkTestWin]::PostMessageW($H, 0x201, [IntPtr]1, (Lp $x $y)) | Out-Null
+    Start-Sleep -Milliseconds 60
+    [WinApkTestWin]::PostMessageW($H, 0x202, [IntPtr]0, (Lp $x $y)) | Out-Null
+}
+
+<# Drags from (x1,y1) to (x2,y2) in ten moves. #>
+function Send-Drag($H, [int]$X1, [int]$Y1, [int]$X2, [int]$Y2) {
+    [WinApkTestWin]::PostMessageW($H, 0x201, [IntPtr]1, (Lp $X1 $Y1)) | Out-Null
+    for ($i = 1; $i -le 10; $i++) {
+        Start-Sleep -Milliseconds 20
+        [WinApkTestWin]::PostMessageW($H, 0x200, [IntPtr]1, (Lp ($X1 + ($X2 - $X1) * $i / 10) ($Y1 + ($Y2 - $Y1) * $i / 10))) | Out-Null
+    }
+    [WinApkTestWin]::PostMessageW($H, 0x202, [IntPtr]0, (Lp $X2 $Y2)) | Out-Null
+}
+
+<# Presses and releases a virtual key. #>
+function Send-Key($H, [int]$Vk) {
+    [WinApkTestWin]::PostMessageW($H, 0x100, [IntPtr]$Vk, [IntPtr]1) | Out-Null
+    [WinApkTestWin]::PostMessageW($H, 0x101, [IntPtr]$Vk, [IntPtr]0xC0000001) | Out-Null
+    Start-Sleep -Milliseconds 40
+}
+
+<# Returns the colour of the window's client pixel (x, y) as "RRGGBB", read with PrintWindow. #>
+function Get-ClientPixel($H, [int]$X, [int]$Y) {
+    Add-Type -AssemblyName System.Drawing
+    $r = New-Object WinApkTestWin+RECT
+    [WinApkTestWin]::GetClientRect($H, [ref]$r) | Out-Null
+    $bmp = New-Object System.Drawing.Bitmap ([Math]::Max(1, $r.R)), ([Math]::Max(1, $r.B))
+    $g = [System.Drawing.Graphics]::FromImage($bmp); $dc = $g.GetHdc()
+    [WinApkTestWin]::PrintWindow($H, $dc, 3) | Out-Null  # PW_CLIENTONLY | PW_RENDERFULLCONTENT
+    $g.ReleaseHdc($dc); $g.Dispose()
+    $p = $bmp.GetPixel($X, $Y); $bmp.Dispose()
+    '{0:X2}{1:X2}{2:X2}' -f $p.R, $p.G, $p.B
+}
+
+<# Closes the window and waits for the process to end; returns its exit code or $null. #>
+function Close-App($H, $P, [int]$Seconds = 20) {
+    [WinApkTestWin]::PostMessageW($H, 0x10, [IntPtr]0, [IntPtr]0) | Out-Null
+    if ($P.WaitForExit($Seconds * 1000)) { return $P.ExitCode }
+    $P.Kill(); $null
+}
+
+function Test-Java {
+    foreach ($need in @($winapk, (Join-Path $out 'bin\winapk-bridge.dll'), (Join-Path $out 'bin\tools\framework-res.apk'), (Join-Path $out 'lib\macapk-loader.jar'))) {
+        if (-not (Test-Path $need)) { throw "$need is missing: run scripts/windows/build.ps1 -Component All" }
+    }
+    $apk = Join-Path $repo 'tests\fixtures\hello-java.apk'
+    if (-not (Test-Path $apk)) { throw "$apk is missing: run scripts/windows/build.ps1 -Component Fixtures" }
+    $env:WINAPK_JAVA_HOME = Find-Jdk
+    [WinApkTestWin]::SetProcessDpiAwarenessContext([IntPtr]-4) | Out-Null  # per-monitor v2, as the app
+    $data = Join-Path $out 'test-data\java'
+    Reset-Dir $data
+    $logs = Join-Path $out 'test-data\logs'
+    New-Item -ItemType Directory -Force $logs | Out-Null
+
+    # ---- run 1: cold cache ----
+    $log = Join-Path $logs 'T03-run1.log'
+    $p = Start-App $apk $data $log
+    $h = Find-AppWindow $p.Id 'Hello Java'
+    Check 'T03.window' ($h -ne [IntPtr]::Zero) "window of process $($p.Id)"
+    if ($h -eq [IntPtr]::Zero) { if (-not $p.HasExited) { $p.Kill() }; return }
+    $layout = Wait-Log $log 'layout\.size=(\d+),(\d+) tap=([\d,]+) input=([\d,]+) list=([\d,]+)'
+    $text = Read-Log $log
+    Check 'T03.G1.1.convert' ($text -match '\[winapk\] stage dex-converted \(\d+ ms\)') 'cold: DEX converted by com.macapk.dex'
+    Check 'T03.G1.1.jvm' ($text -match '\[winapk\] stage jvm-created') 'JVM created in winapk.exe'
+    Check 'T03.G1.1.lifecycle' ((Wait-Log $log 'T03: lifecycle=onResume') -and $text -match 'T03: lifecycle=onCreate') 'onCreate, onResume'
+    Check 'T03.G1.4.fresh' ($text -match 'T03: restored\.prefs=0' -and $text -match 'T03: restored\.file=none') 'nothing saved before the first run'
+    if (-not $layout) { Check 'T03.layout' $false 'no layout line'; Close-App $h $p | Out-Null; return }
+    $r = New-Object WinApkTestWin+RECT
+    [WinApkTestWin]::GetClientRect($h, [ref]$r) | Out-Null
+    Check 'T02.size' ([int]$layout.Groups[1].Value -eq $r.R -and [int]$layout.Groups[2].Value -eq $r.B) "Android view $($layout.Groups[1].Value)x$($layout.Groups[2].Value) px = client $($r.R)x$($r.B) px"
+    $bg = ([regex]::Match($text, 'starting-window background #([0-9A-F]{6})')).Groups[1].Value
+    Start-Sleep -Milliseconds 500
+    $px = Get-ClientPixel $h 2 ($r.B - 2)
+    Check 'T02.pixels' ($bg -and $px -eq $bg) "client pixel #$px, theme windowBackground #$bg (ARGB ints shown as BGRA DIB rows)"
+
+    Send-Tap $h $layout.Groups[3].Value
+    Send-Tap $h $layout.Groups[3].Value
+    Check 'T03.G1.2.tap' ($null -ne (Wait-Log $log 'T03: taps=2' 10)) 'two clicks on the button counted 2'
+    Send-Tap $h $layout.Groups[4].Value
+    Start-Sleep -Milliseconds 300
+    Send-Key $h 0x48; Send-Key $h 0x49  # H, I
+    Check 'T03.G1.2.text' ($null -ne (Wait-Log $log 'T03: text=hi' 10)) 'typed "hi" into the EditText'
+    $lb = $layout.Groups[5].Value.Split(',') | ForEach-Object { [int]$_ }
+    $cx = [int](($lb[0] + $lb[2]) / 2)
+    Send-Drag $h $cx ($lb[3] - 20) $cx ($lb[1] + 20)
+    $first = Wait-Log $log 'T03: list\.first=([1-9]\d*)' 10
+    Check 'T03.G1.2.scroll' ($null -ne $first) "a drag scrolled the list (first visible row $(if ($first) { $first.Groups[1].Value }))"
+
+    # G1.3: a wider window relays out and taps still land on the button.
+    $wr = New-Object WinApkTestWin+RECT
+    [WinApkTestWin]::GetWindowRect($h, [ref]$wr) | Out-Null
+    $newW = ($wr.R - $wr.L) + [int]($r.R / 2)
+    [WinApkTestWin]::SetWindowPos($h, [IntPtr]::Zero, 0, 0, $newW, ($wr.B - $wr.T), 0x16) | Out-Null  # NOMOVE|NOZORDER|NOACTIVATE
+    [WinApkTestWin]::GetClientRect($h, [ref]$r) | Out-Null
+    $relaid = Wait-Log $log "layout\.size=$($r.R),$($r.B) tap=([\d,]+)" 10
+    Check 'T03.G1.3.resize' ($null -ne $relaid) "relaid out at client $($r.R)x$($r.B) px"
+    if ($relaid) {
+        Send-Tap $h $relaid.Groups[1].Value
+        Check 'T03.G1.3.tap-after-resize' ($null -ne (Wait-Log $log 'T03: taps=3' 10)) "the button at $($relaid.Groups[1].Value) took the click"
+    }
+
+    Send-Key $h 0x1B  # Escape is Back
+    Check 'T03.G1.2.back' ($null -ne (Wait-Log $log 'T03: lifecycle=onDestroy' 10) -and (Read-Log $log) -match 'T03: back=pressed') 'Back finished the activity'
+    $code = Close-App $h $p
+    Check 'T03.G1.3.exit' ($code -eq 0) "closing the window ended the process (exit $code)"
+    Check 'T03.G1.3.no-leftover' ($null -eq (Get-Process -Id $p.Id -ErrorAction SilentlyContinue)) "process $($p.Id) is gone"
+
+    # ---- run 2: hot cache, restored state ----
+    $log2 = Join-Path $logs 'T03-run2.log'
+    $p2 = Start-App $apk $data $log2
+    $h2 = Find-AppWindow $p2.Id 'Hello Java'
+    $ok = $null -ne (Wait-Log $log2 'T03: lifecycle=onResume')
+    $text2 = Read-Log $log2
+    Check 'T03.G1.4.cache' ($text2 -match '\[winapk\] stage dex-converted \(cached\)') 'hot: classes.jar reused from the cache'
+    Check 'T03.G1.4.prefs' ($ok -and $text2 -match 'T03: restored\.prefs=3') 'SharedPreferences restored 3 taps'
+    Check 'T03.G1.4.file' ($text2 -match 'T03: restored\.file=3') 'files/taps.txt restored 3'
+    if ($h2 -ne [IntPtr]::Zero) { $code2 = Close-App $h2 $p2 } else { $p2.Kill(); $code2 = $null }
+    Check 'T03.G1.4.exit' ($code2 -eq 0) "second run ended (exit $code2)"
+
+    # ---- negative cases ----
+    & $winapk run (Join-Path $repo 'README.md') --data-dir $data 2> (Join-Path $logs 'neg-not-apk.log')
+    $neg = Get-Content (Join-Path $logs 'neg-not-apk.log') -Raw
+    Check 'T03.neg.not-apk' ($LASTEXITCODE -eq 65 -and $neg -match 'INSTALL_FAILED_INVALID_APK') "exit $LASTEXITCODE"
+    & $winapk run $apk --native=restricted --data-dir $data 2> (Join-Path $logs 'neg-native.log')
+    $neg = Get-Content (Join-Path $logs 'neg-native.log') -Raw
+    Check 'T03.neg.native-mode' ($LASTEXITCODE -eq 64 -and $neg -match 'GUEST_NATIVE_NOT_IMPLEMENTED') "exit $LASTEXITCODE"
+
+    # G1.5: guest native off, an APK library load fails clearly (never a stub, never LoadLibrary).
+    $jniApk = Join-Path $repo 'tests\fixtures\hello-jni.apk'
+    $log3 = Join-Path $logs 'G1.5-hello-jni.log'
+    $p3 = Start-App $jniApk $data $log3
+    $h3 = Find-AppWindow $p3.Id 'Hello JNI'
+    $res = Wait-Log $log3 'JNI: native\.(value|error)=(.*)' 30
+    $text3 = Read-Log $log3
+    Check 'G1.5.inspect' ($text3 -match 'guest native is off: the APK''s 1 native libraries \(arm64-v8a\)') 'winapk run reports the APK''s native library'
+    Check 'G1.5.load-refused' ($res -and $res.Groups[1].Value -eq 'error' -and $res.Groups[2].Value -match '^GUEST_NATIVE_DISABLED: libhello\.so') "System.loadLibrary: $(if ($res) { $res.Value })"
+    if ($h3 -ne [IntPtr]::Zero) { $code3 = Close-App $h3 $p3 } else { if (-not $p3.HasExited) { $p3.Kill() }; $code3 = $null }
+    Check 'G1.5.exit' ($code3 -eq 0) "the app kept running and closed normally (exit $code3)"
+    Write-Host 'NOT_RUN  G1.6 (Kotlin fixture T04): not built yet'
+    Write-Host "NOT_RUN  G1.3 DPI other than this PC's ($([math]::Round((Get-Content $log -Raw | Select-String 'scale ([\d.]+)').Matches[0].Groups[1].Value, 2))): needs a second monitor or another scale"
+}
+
+switch ($Suite) { 'Host' { Test-Host } 'Java' { Test-Java } }
 if ($script:failed -gt 0) { Write-Host "$script:failed check(s) failed"; exit 1 }
 Write-Host 'all checks passed'
+exit 0

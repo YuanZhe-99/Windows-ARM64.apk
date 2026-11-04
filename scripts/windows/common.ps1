@@ -72,6 +72,42 @@ function Find-Jdk {
 }
 
 <#
+Finds the Android SDK: ANDROID_HOME, ANDROID_SDK_ROOT, else Android Studio's
+default %LOCALAPPDATA%\Android\Sdk.
+Returns: its folder and the paths of the build-tools and platform that
+build-lock.json chooses. Notes: build-time only; its tools are x64 and run
+emulated, which is never reported as a native run (AGENTS.md).
+#>
+function Find-AndroidSdk {
+    $lock = Get-Content (Join-Path (Get-RepoRoot) 'build-lock.json') -Raw | ConvertFrom-Json
+    $bt = ($lock.guest.androidSdk.packages | Where-Object { $_ -like 'build-tools;*' }) -replace '^build-tools;', ''
+    $platform = ($lock.guest.androidSdk.packages | Where-Object { $_ -like 'platforms;*' }) -replace '^platforms;', ''
+    foreach ($root in @($env:ANDROID_HOME, $env:ANDROID_SDK_ROOT, (Join-Path $env:LOCALAPPDATA 'Android\Sdk'))) {
+        if (-not $root -or -not (Test-Path $root)) { continue }
+        $tools = Join-Path $root "build-tools\$bt"
+        $jar = Join-Path $root "platforms\$platform\android.jar"
+        if (-not (Test-Path (Join-Path $tools 'aapt2.exe'))) { throw "$root has no build-tools $bt (build-lock.json)" }
+        if (-not (Test-Path $jar)) { throw "$root has no platforms;$platform (build-lock.json)" }
+        return [pscustomobject]@{ Root = $root; BuildTools = $tools; AndroidJar = $jar }
+    }
+    throw 'No Android SDK found: set ANDROID_HOME (see scripts/windows/check-requirements.ps1)'
+}
+
+<#
+Finds the Android NDK that build-lock.json chooses, inside the Android SDK.
+Returns: the clang.exe of its LLVM toolchain. Notes: build-time only; the NDK's
+tools are x64 and run emulated (AGENTS.md).
+#>
+function Find-AndroidNdk {
+    $lock = Get-Content (Join-Path (Get-RepoRoot) 'build-lock.json') -Raw | ConvertFrom-Json
+    $version = $lock.guest.androidNdk.version -replace '.*\((.*)\).*', '$1'
+    $ndk = Join-Path (Find-AndroidSdk).Root "ndk\$version"
+    $clang = Join-Path $ndk 'toolchains\llvm\prebuilt\windows-x86_64\bin\clang.exe'
+    if (-not (Test-Path $clang)) { throw "no NDK $version at $ndk (build-lock.json)" }
+    $clang
+}
+
+<#
 Finds Visual Studio with the ARM64 C++ tools.
 Returns: its root and the folders of its CMake and Ninja.
 #>

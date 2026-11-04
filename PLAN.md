@@ -297,11 +297,11 @@ P8：P7 后的可选扩展（Skia/AGSL、媒体、ARM32 等）
 - [x] 阅读 `runtime/CMakeLists.txt`、`runtime/translator/CMakeLists.txt`、`runtime/scripts/build.sh` 和 `scripts/build_framework_res.sh`。
 - [x] 从既有构建脚本提取 Java 编译、资源打包、module patches 和启动选项；不只把 `.sh` 改名为 `.ps1`。
 - [x] 为宿主、客体和 Java 工具链分别记录版本、target triple、来源、校验值、许可证与用途。
-- [ ] 检查生成 PE 的机器类型、JVM/DLL 架构、NDK ELF 的架构。构建期工具可以通过 x64 仿真运行，但不得与原生运行时验证混淆。（2026-11-03：PE 与 JVM/DLL 已检查，均为 ARM64；NDK ELF 待安装 NDK 后在 P2 检查。）
+- [x] 检查生成 PE 的机器类型、JVM/DLL 架构、NDK ELF 的架构。构建期工具可以通过 x64 仿真运行，但不得与原生运行时验证混淆。（2026-11-03：PE 与 JVM/DLL 已检查，均为 ARM64；NDK ELF 待安装 NDK 后在 P2 检查。）（P1：fixture 的 NDK ELF 由构建脚本检查为 ELF64 AArch64。）
 - [x] 核实 JDK 的 `java.desktop`、JNI headers、`jvm.dll`、Java2D/字体支持，以及上游需要的 `--patch-module`、`--add-opens`。
 - [x] 编写 `doctor`：检查运行时、JVM、图形后端及可选依赖，输出机器可读 JSON。
 - [x] 锁定 Mac.apk、Go、MyGo 以外的依赖版本（这三者跟随最新，只记录每次构建实际使用的版本）；不得依赖 macOS 预编译产物。ANGLE/Skia 若没有合适 ARM64 二进制，建立独立构建任务。
-- [ ] 建立公开、自建的 APK/ELF 测试集；上游私人回归集不可作为验收前提。（2026-11-03：T01 已建立；APK 与 ELF 夹具需要 Android SDK/NDK，见 `build-lock.json`。）
+- [ ] 建立公开、自建的 APK/ELF 测试集；上游私人回归集不可作为验收前提。（2026-11-03：T01 已建立；APK 与 ELF 夹具需要 Android SDK/NDK，见 `build-lock.json`。）（P1：T02、T03、`hello-jni` 已建立；ELF 夹具 T05/T06 随 P2。）
 
 ### `doctor` 最低字段
 
@@ -332,46 +332,48 @@ GPU 记录至少包含 vendor/device ID、驱动版本、API 版本、queue fami
 
 ## 8. P1 — 纯 Java APK 与 Win32 基础界面
 
+状态（2026-11-03）：G1 在本机通过（G1.6 与其他 DPI 缩放为 NOT_RUN），结果见 `doc/en-us/platform-notes.md`、`port-audit.md` 与 ADR-0002；界面尚未接入 `winapk run`。
+
 ### 8.1 拆分构建
 
-- [ ] Windows 配置只启用 C/C++；macOS 才启用 OBJCXX 与 Apple frameworks。
-- [ ] 分离公共 runtime、macOS backend、Windows backend；用目标级源文件和链接设置控制平台。
-- [ ] 给 Java Framework/DEX 转换增加独立构建入口，不要求先构建 Bionic shim、ANGLE 或 Skia。
-- [ ] 支持 Windows classpath 分隔符、Unicode/空格路径、参数文件和长命令行。
-- [ ] 保留上游资源、字体、module patches、build IDs 与缓存失效语义。
-- [ ] 按锁定 AOSP/SDK 配方提供 `framework-res.apk`；记录来源/API，缺失时明确失败，不以空资源包通过。
+- [x] Windows 配置只启用 C/C++；macOS 才启用 OBJCXX 与 Apple frameworks。
+- [x] 分离公共 runtime、macOS backend、Windows backend；用目标级源文件和链接设置控制平台。
+- [x] 给 Java Framework/DEX 转换增加独立构建入口，不要求先构建 Bionic shim、ANGLE 或 Skia。
+- [ ] 支持 Windows classpath 分隔符、Unicode/空格路径、参数文件和长命令行。（P1：classpath 与参数文件已支持；Unicode/空格路径尚未测试。）
+- [ ] 保留上游资源、字体、module patches、build IDs 与缓存失效语义。（P1：资源、字体、module patches 已保留；build IDs 尚未计算，缓存改用内容哈希。）
+- [x] 按锁定 AOSP/SDK 配方提供 `framework-res.apk`；记录来源/API，缺失时明确失败，不以空资源包通过。
 
 ### 8.2 平台中立 Java 接口
 
-- [ ] 对 `Boot`、`ActivityHost`、`ViewCanvasDriver` 与 `NativeCocoa` 的调用关系做最小梳理。
-- [ ] 新增 `HostPlatform` 或等价适配层；macOS 后端可继续调用 `NativeCocoa`，Windows 后端调用新的 JNI 桥。
-- [ ] 基础窗口/输入/呈现路径先切换，其他服务按能力返回明确的“不支持”。
-- [ ] 避免一次性全局替换类名；任何暂时保留的 `NativeCocoa` 名称都要说明是过渡兼容接口。
-- [ ] 不全局伪造宿主 `os.name` 等系统属性来影响整个 JDK；若上游依赖这类机制，在宿主与客体视图间隔离并回归验证。
+- [x] 对 `Boot`、`ActivityHost`、`ViewCanvasDriver` 与 `NativeCocoa` 的调用关系做最小梳理。
+- [x] 新增 `HostPlatform` 或等价适配层；macOS 后端可继续调用 `NativeCocoa`，Windows 后端调用新的 JNI 桥。（ADR-0002：NativeCocoa 的声明在 Windows 上绑定到 winapk-bridge.dll。）
+- [x] 基础窗口/输入/呈现路径先切换，其他服务按能力返回明确的“不支持”。
+- [x] 避免一次性全局替换类名；任何暂时保留的 `NativeCocoa` 名称都要说明是过渡兼容接口。
+- [x] 不全局伪造宿主 `os.name` 等系统属性来影响整个 JDK；若上游依赖这类机制，在宿主与客体视图间隔离并回归验证。
 
 ### 8.3 JVM 与线程
 
-- [ ] Windows runtime 从确定的 JDK/JRE 路径加载正确的 `jvm.dll`，使用 Invocation API 创建 JVM。
-- [ ] 验证 JDK 选项实际有效，不照搬 macOS 的信号/主线程/JIT 参数。
-- [ ] 明确 Win32 消息线程、Framework 主 Looper 和渲染任务归属；跨线程使用任务队列。
-- [ ] 避免 JNI 调用持锁等待 UI，而 UI 又同步等待 JVM 的循环依赖。
-- [ ] 正确处理关闭、焦点、最小化、恢复和进程退出；阻塞任务有超时与诊断。
+- [x] Windows runtime 从确定的 JDK/JRE 路径加载正确的 `jvm.dll`，使用 Invocation API 创建 JVM。
+- [x] 验证 JDK 选项实际有效，不照搬 macOS 的信号/主线程/JIT 参数。
+- [x] 明确 Win32 消息线程、Framework 主 Looper 和渲染任务归属；跨线程使用任务队列。
+- [ ] 避免 JNI 调用持锁等待 UI，而 UI 又同步等待 JVM 的循环依赖。（P1：跨线程的窗口调用发送到 UI 线程并等待；尚无超时与诊断。）
+- [ ] 正确处理关闭、焦点、最小化、恢复和进程退出；阻塞任务有超时与诊断。（P1：关闭与退出已验证；焦点、最小化、恢复尚未测试。）
 
 ### 8.4 基础图形和输入
 
-- [ ] Java2D 渲染到离屏像素缓冲；Windows 使用 DIB/等价最小位图路径呈现。
-- [ ] 显式定义 ARGB/BGRA、premultiplied alpha、stride、尺寸和缓冲所有权；先解决正确性，再优化拷贝。
-- [ ] 映射鼠标点击/拖动为触摸，键盘/滚轮为相应 Android 事件；首轮先支持常见按键和返回。
-- [ ] DPI 缩放后使用一致的逻辑坐标；resize 更新 Surface/Activity 的尺寸与生命周期。
-- [ ] 简单测试页面使用 TextView、Button、EditText 和可滚动列表；字体回退和输入结果要可检查。
+- [x] Java2D 渲染到离屏像素缓冲；Windows 使用 DIB/等价最小位图路径呈现。
+- [x] 显式定义 ARGB/BGRA、premultiplied alpha、stride、尺寸和缓冲所有权；先解决正确性，再优化拷贝。
+- [x] 映射鼠标点击/拖动为触摸，键盘/滚轮为相应 Android 事件；首轮先支持常见按键和返回。
+- [ ] DPI 缩放后使用一致的逻辑坐标；resize 更新 Surface/Activity 的尺寸与生命周期。（P1：100% 缩放与改变尺寸已验证；其他缩放 NOT_RUN。）
+- [x] 简单测试页面使用 TextView、Button、EditText 和可滚动列表；字体回退和输入结果要可检查。
 - [ ] 为不支持的高级输入/多触点/IME 场景记录范围；不让基础编辑框静默丢字。
 
 ### 8.5 数据与缓存
 
-- [ ] 将每应用数据、缓存和日志放入 `%LOCALAPPDATA%` 下明确的运行时目录，可由测试参数覆盖。
-- [ ] 处理 APK 文件项路径穿越、绝对路径、重名/大小写冲突、非法 Windows 名称和解压大小限制。
-- [ ] 在原始 ZIP 中保留大小写敏感的资源查询语义；不能简单将所有 APK 项直接映射成 Windows 文件名。
-- [ ] 缓存 key 包含 APK 内容哈希、转换器/Framework 版本、平台和必要配置；写入使用临时文件后原子替换。
+- [x] 将每应用数据、缓存和日志放入 `%LOCALAPPDATA%` 下明确的运行时目录，可由测试参数覆盖。
+- [x] 处理 APK 文件项路径穿越、绝对路径、重名/大小写冲突、非法 Windows 名称和解压大小限制。（P1：条目从不按名称映射为文件；不安全的名称在 `inspect` 中报告。）
+- [x] 在原始 ZIP 中保留大小写敏感的资源查询语义；不能简单将所有 APK 项直接映射成 Windows 文件名。
+- [x] 缓存 key 包含 APK 内容哈希、转换器/Framework 版本、平台和必要配置；写入使用临时文件后原子替换。
 
 ### G1 验收
 

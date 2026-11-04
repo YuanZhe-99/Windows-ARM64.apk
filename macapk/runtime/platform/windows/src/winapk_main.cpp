@@ -1,9 +1,11 @@
-// winapk_main.cpp -- the winapk CLI on Windows ARM64 (PLAN.md §18). Today: doctor and --version;
-// inspect and run come with P1.
+// winapk_main.cpp -- the winapk CLI on Windows ARM64 (PLAN.md §18).
 //
 //   winapk doctor [--json] [--present] [--no-jvm] [--java-home <dir>]
+//   winapk inspect <apk> [--json]
+//   winapk run <apk> [--native=off] [--data-dir <dir>] [--java-home <dir>] [--size <w>x<h>]
 //   winapk --version
 #include "doctor.h"
+#include "run.h"
 
 #include <windows.h>
 
@@ -53,7 +55,6 @@ void Limitations(Report& r) {
     auto add = [&](const char* id, const std::string& why) { r.limitations.emplace_back(id, why); };
     if (r.host.processArch != "arm64") add("HOST_ARCH_UNSUPPORTED", "winapk runs as " + r.host.processArch + ", not native arm64");
     if (r.jvm.started != "ok") add("DEPENDENCY_MISSING", "JVM: " + r.jvm.started);
-    add("APK_RUN_NOT_IMPLEMENTED", "running an APK arrives with P1 (Java MVP)");
     add("GUEST_NATIVE_NOT_IMPLEMENTED", "no guest ELF loader yet (P2): native code stays off");
     add("ANGLE_NOT_BUILT", "no ANGLE for Windows ARM64 yet (P5a): no OpenGL ES");
     if (r.vulkan.loader != "available") {
@@ -140,7 +141,10 @@ void PrintText(const Report& r) {
 }
 
 int Usage() {
-    fputs("usage: winapk doctor [--json] [--present] [--no-jvm] [--java-home <dir>]\n       winapk --version\n", stderr);
+    fputs("usage: winapk doctor [--json] [--present] [--no-jvm] [--java-home <dir>]\n"
+          "       winapk inspect <apk> [--json]\n"
+          "       winapk run <apk> [--native=off] [--data-dir <dir>] [--java-home <dir>] [--size <w>x<h>]\n"
+          "       winapk --version\n", stderr);
     return 2;
 }
 
@@ -154,6 +158,30 @@ int wmain(int argc, wchar_t** argv) {
     if (cmd == L"--version" || cmd == L"version") {
         printf("winapk %s\n", WINAPK_VERSION);
         return 0;
+    }
+    auto full = [](const std::wstring& p) {
+        wchar_t buf[32768];
+        DWORD n = GetFullPathNameW(p.c_str(), ARRAYSIZE(buf), buf, nullptr);
+        return n > 0 && n < ARRAYSIZE(buf) ? std::wstring(buf, n) : p;
+    };
+    if (cmd == L"inspect") {
+        if (argc < 3) return Usage();
+        bool json = argc > 3 && std::wstring(argv[3]) == L"--json";
+        return Inspect(full(argv[2]), json);
+    }
+    if (cmd == L"run") {
+        if (argc < 3) return Usage();
+        RunArgs ra;
+        ra.apk = full(argv[2]);
+        for (int i = 3; i < argc; ++i) {
+            std::wstring a = argv[i];
+            if (a.rfind(L"--native=", 0) == 0) ra.native = a.substr(9);
+            else if (a == L"--data-dir" && i + 1 < argc) ra.dataDir = full(argv[++i]);
+            else if (a == L"--java-home" && i + 1 < argc) ra.javaHome = argv[++i];
+            else if (a == L"--size" && i + 1 < argc && swscanf_s(argv[++i], L"%dx%d", &ra.width, &ra.height) == 2) {}
+            else return Usage();
+        }
+        return Run(ra);
     }
     if (cmd != L"doctor") return Usage();
     bool json = false, present = false, noJvm = false;

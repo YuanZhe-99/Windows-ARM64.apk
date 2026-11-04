@@ -3,7 +3,8 @@
   "version-string": "0",
   "description": "Third-party C/C++ dependencies of Windows-ARM64.apk's Windows ARM64 host (build-lock.json records the versions).",
   "dependencies": [
-    "vulkan-headers"
+    "vulkan-headers",
+    "zlib"
   ],
   "builtin-baseline": "afa249f12f52ed8a3b919f195495ba8b330288d1"
 }

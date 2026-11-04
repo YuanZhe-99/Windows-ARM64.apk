@@ -11,7 +11,9 @@
   vcpkg (none of them on PATH). The JDK is Microsoft OpenJDK 21 for ARM64, installed with
   `winget install --id Microsoft.OpenJDK.21 -e --architecture arm64` (its MSI sets the system
   `JAVA_HOME` and PATH; `WINAPK_JAVA_HOME` overrides it for the build). The Android SDK
-  (build-tools 36.0.0, android-36) and NDK r30 are needed from P1 and P2.
+  (build-tools 36.0.0, android-36, cmdline-tools) and NDK r30 build the platform resources and
+  the fixtures; Android Studio's default location `%LOCALAPPDATA%\Android\Sdk` is found without
+  `ANDROID_HOME`.
   `scripts/windows/check-requirements.ps1` checks all of it and installs nothing.
 
 ## Commands
@@ -32,19 +34,37 @@ The runtime's commands are in the next section.
 
 ```powershell
 .\scripts\windows\check-requirements.ps1
-.\scripts\windows\build.ps1 -Component Java
-.\scripts\windows\build.ps1 -Component Host -Configuration Debug
+.\scripts\windows\build.ps1 -Component All          # or Java, FrameworkRes, Fixtures, Host
 .\scripts\windows\test.ps1 -Suite Host
+.\scripts\windows\test.ps1 -Suite Java
 .\build\windows-arm64\bin\winapk.exe doctor --json
-.\build\windows-arm64\bin\winapk.exe doctor --present
+.\build\windows-arm64\bin\winapk.exe inspect .\tests\fixtures\hello-java.apk --json
+.\build\windows-arm64\bin\winapk.exe run .\tests\fixtures\hello-java.apk --native=off
 ```
 
 `-Component Java` builds Mac.apk's Java side into `build/windows-arm64/lib` (see
-[port-audit.md](port-audit.md)); `-Component Host` builds `winapk.exe` and `winapk-probe.jar` into
+[port-audit.md](port-audit.md)). `-Component FrameworkRes` builds the platform resource package
+`bin/tools/framework-res.apk` once from AOSP's `frameworks/base/core/res` at the tag
+`build-lock.json` names, with the SDK's `aapt2` (the recipe of upstream's
+`scripts/build_framework_res.sh`). `-Component Fixtures` builds the fixture APKs of
+`tests/windows-arm64/apk-fixtures` into `tests/fixtures` (never committed) with the SDK's `aapt2`,
+`d8`, `zipalign` and `apksigner` and, for `jni/*.c`, the NDK's clang; each gets a
+`<name>.json` with its build parameters and hashes, and every library is checked to be ELF64
+AArch64. `-Component Host` builds `winapk.exe`, `winapk-bridge.dll` and `winapk-probe.jar` into
 `build/windows-arm64/bin` with clang-cl in Visual Studio's ARM64 developer environment, fetching
-the Vulkan headers through vcpkg the first time, and fails if any PE it makes is not ARM64.
-`test.ps1 -Suite Host` is fixture T01. `doctor --present` also opens a small test window to check
+the Vulkan headers and zlib through vcpkg the first time, and fails if any PE it makes is not
+ARM64.
+
+`test.ps1 -Suite Host` is fixture T01. `test.ps1 -Suite Java` is G1 (T02, T03 and the `hello-jni`
+negative case): it runs the fixtures with `winapk run`, posts clicks, keys and a resize to the
+app's window, and reads the runtime's log; it needs a desktop session and writes its data and logs
+to `build/windows-arm64/test-data`. `doctor --present` also opens a small test window to check
 Vulkan presentation; without it that check is `not-run`.
+
+`winapk run` keeps each app's data under `%LOCALAPPDATA%\Windows-ARM64.apk\Apps` (`--data-dir`
+moves it): `android\` is the Android root the app sees (`data\data\<package>`, `sdcard`),
+`code\<package>\` its converted code with the cache stamp, `logs\` the JVM's crash logs. The
+runtime's log goes to standard error.
 
 ## Running the interface
 

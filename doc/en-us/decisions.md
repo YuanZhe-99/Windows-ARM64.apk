@@ -42,3 +42,34 @@ they go to the guest loader and a per-ClassLoader guest library registry (§4.1,
 driver. Nothing in P0–P4 depends on it. Before P5/P6 the project needs either a PC with a vendor
 Vulkan driver for the graphics gates, or a recorded decision to measure guest Vulkan on Dozen and
 report it as such (never as native Vulkan).
+
+## ADR-0002: NativeCocoa as the transitional host window interface
+
+2026-11-03, P1. Status: adopted.
+
+**Decision.** On Windows the Java side keeps calling `com.macapk.loader.NativeCocoa`; the same
+Java declarations are bound with `RegisterNatives` to Win32 code in `winapk-bridge.dll`
+(`window.cpp`). `PLAN.md` §8.2 allows an equivalent adapter and asks that a kept `NativeCocoa`
+name be called transitional: it is, and a platform-neutral `HostWindow` interface (§4.3) replaces
+it when a second caller or a second window back end needs one. Natives without a Windows
+implementation stay unbound and fail with `UnsatisfiedLinkError` where they are called.
+
+**Why.** The Framework calls `NativeCocoa` from 26 files; renaming or wrapping those calls would
+be a broad upstream change with no behaviour gained, against `AGENTS.md`'s rule to keep upstream
+changes small. Binding at the JNI layer leaves upstream's Java untouched.
+
+**Threads and frames.** The JVM's main thread calls `init` and `runLoop` and becomes the UI
+thread that owns every window; calls from other threads that create or change windows are sent to
+it and wait (before `runLoop` starts, until it starts). Each window has a 16 ms frame timer on the
+UI thread that calls the renderer's `macapkSurfaceChanged` when the size changed and then
+`macapkDrawFrame`, as the macOS display link does; `presentBitmap` copies the ARGB frame under a
+lock and invalidates, and `WM_PAINT` draws it as a 32-bit top-down DIB (ARGB ints are BGRA bytes,
+so there is no conversion; alpha is not composited). Input calls `TouchDispatcher` on the UI
+thread.
+
+**Units.** A point is a Windows DIP (1/96 inch) and a dp: `winapk run` starts the runtime with
+density = 160 × the system DPI scale, so the app's pixels are the window's pixels.
+
+**Revisit** when the pane hand-off (the interface showing the app inside its own window) or GLES
+surfaces need more than one presentation target, or when frame pacing should follow the display
+(DWM) rather than a timer.

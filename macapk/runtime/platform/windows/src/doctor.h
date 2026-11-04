@@ -3,6 +3,8 @@
 // Host-domain code only (Windows ARM64): nothing here touches guest Android ABI types.
 #pragma once
 
+#include <jni.h>
+
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -94,6 +96,16 @@ void ProbeHost(Report& r);
 /// Side effects: loads jvm.dll; a JVM cannot be created twice in one process, so this runs
 /// once per doctor run.
 void ProbeJvm(Report& r, const std::wstring& javaHome, const std::wstring& probeJar, bool skipStart);
+
+/// Finds the JVM the runtime embeds: javaHome, else Windows-ARM64.apk's own runtime
+/// (%LOCALAPPDATA%\Windows-ARM64.apk\Runtime), else WINAPK_JAVA_HOME, else JAVA_HOME.
+/// Returns: its description; home is "" when none was found. Nothing is started.
+JvmInfo FindJvm(const std::wstring& javaHome);
+
+/// Loads `home`'s jvm.dll and creates the JVM with `opts`, refusing unknown options.
+/// Returns: the main thread's JNIEnv and `vm`, or null with `err` set.
+/// Side effects: a process can create one JVM only.
+JNIEnv* CreateJvm(const std::wstring& home, std::vector<std::string> opts, JavaVM** vm, std::string& err);
 
 /// Fills vulkan: loader, instance, devices, and with present the Win32 surface test.
 /// Side effects: with present, shows a small window titled as a test for under a second.

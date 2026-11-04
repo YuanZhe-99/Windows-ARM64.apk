@@ -67,28 +67,10 @@ std::vector<std::string> JvmOptions(const std::wstring& probeJar) {
 std::string StartJvm(const std::wstring& home, const std::wstring& probeJar,
                      std::vector<std::pair<std::string, std::string>>& probe) {
     if (!Exists(probeJar)) return "failed: " + Utf8(probeJar) + " is missing (build the Host component)";
-    // jvm.dll's own imports (vcruntime) live in the JDK's bin folder.
-    AddDllDirectory((home + L"\\bin").c_str());
-    HMODULE jvm = LoadLibraryExW((home + L"\\bin\\server\\jvm.dll").c_str(), nullptr,
-                                 LOAD_LIBRARY_SEARCH_DEFAULT_DIRS | LOAD_LIBRARY_SEARCH_USER_DIRS);
-    if (!jvm) return "failed: LoadLibrary(jvm.dll) error " + std::to_string(GetLastError());
-    using CreateFn = jint(JNICALL*)(JavaVM**, void**, void*);
-    auto create = reinterpret_cast<CreateFn>(GetProcAddress(jvm, "JNI_CreateJavaVM"));
-    if (!create) return "failed: jvm.dll has no JNI_CreateJavaVM";
-
-    std::vector<std::string> opts = JvmOptions(probeJar);
-    std::vector<JavaVMOption> jopts(opts.size());
-    for (size_t i = 0; i < opts.size(); ++i) jopts[i].optionString = opts[i].data();
-    JavaVMInitArgs args{};
-    args.version = JNI_VERSION_21;
-    args.nOptions = (jint)jopts.size();
-    args.options = jopts.data();
-    args.ignoreUnrecognized = JNI_FALSE;  // an option this JDK rejects is a finding
+    std::string err;
     JavaVM* vm = nullptr;
-    JNIEnv* env = nullptr;
-    jint rc = create(&vm, reinterpret_cast<void**>(&env), &args);
-    if (rc != JNI_OK) return "failed: JNI_CreateJavaVM returned " + std::to_string(rc);
-
+    JNIEnv* env = CreateJvm(home, JvmOptions(probeJar), &vm, err);
+    if (!env) return "failed: " + err;
     std::string result = "ok";
     jclass cls = env->FindClass("com/winapk/probe/HostProbe");
     JNINativeMethod natives[] = {{const_cast<char*>("hostEcho"), const_cast<char*>("(I)I"), reinterpret_cast<void*>(&HostEcho)}};
@@ -116,7 +98,7 @@ std::string StartJvm(const std::wstring& home, const std::wstring& probeJar,
 
 }  // namespace
 
-void ProbeJvm(Report& r, const std::wstring& javaHome, const std::wstring& probeJar, bool skipStart) {
+JvmInfo FindJvm(const std::wstring& javaHome) {
     std::wstring own = Env(L"LOCALAPPDATA") + L"\\Windows-ARM64.apk\\Runtime";
     const std::pair<std::wstring, const char*> candidates[] = {
         {javaHome, "argument"},
@@ -124,7 +106,7 @@ void ProbeJvm(Report& r, const std::wstring& javaHome, const std::wstring& probe
         {Env(L"WINAPK_JAVA_HOME"), "WINAPK_JAVA_HOME"},
         {Env(L"JAVA_HOME"), "JAVA_HOME"},
     };
-    JvmInfo& j = r.jvm;
+    JvmInfo j;
     for (const auto& [dir, source] : candidates) {
         std::wstring home = Trim(dir);
         if (home.empty() || !Exists(home + L"\\bin\\server\\jvm.dll")) continue;
@@ -137,7 +119,34 @@ void ProbeJvm(Report& r, const std::wstring& javaHome, const std::wstring& probe
         j.jniHeaders = Exists(home + L"\\include\\jni.h") && Exists(home + L"\\include\\win32\\jni_md.h");
         break;
     }
-    if (j.home.empty()) {
+    return j;
+}
+
+JNIEnv* CreateJvm(const std::wstring& home, std::vector<std::string> opts, JavaVM** vm, std::string& err) {
+    // jvm.dll's own imports (vcruntime) live in the JDK's bin folder.
+    AddDllDirectory((home + L"\\bin").c_str());
+    HMODULE jvm = LoadLibraryExW((home + L"\\bin\\server\\jvm.dll").c_str(), nullptr,
+                                 LOAD_LIBRARY_SEARCH_DEFAULT_DIRS | LOAD_LIBRARY_SEARCH_USER_DIRS);
+    if (!jvm) { err = "LoadLibrary(jvm.dll) error " + std::to_string(GetLastError()); return nullptr; }
+    using CreateFn = jint(JNICALL*)(JavaVM**, void**, void*);
+    auto create = reinterpret_cast<CreateFn>(GetProcAddress(jvm, "JNI_CreateJavaVM"));
+    if (!create) { err = "jvm.dll has no JNI_CreateJavaVM"; return nullptr; }
+    std::vector<JavaVMOption> jopts(opts.size());
+    for (size_t i = 0; i < opts.size(); ++i) jopts[i].optionString = opts[i].data();
+    JavaVMInitArgs args{};
+    args.version = JNI_VERSION_21;
+    args.nOptions = (jint)jopts.size();
+    args.options = jopts.data();
+    args.ignoreUnrecognized = JNI_FALSE;  // an option this JDK rejects is a finding, never ignored
+    JNIEnv* env = nullptr;
+    jint rc = create(vm, reinterpret_cast<void**>(&env), &args);
+    if (rc != JNI_OK) { err = "JNI_CreateJavaVM returned " + std::to_string(rc); return nullptr; }
+    return env;
+}
+
+void ProbeJvm(Report& r, const std::wstring& javaHome, const std::wstring& probeJar, bool skipStart) {
+    r.jvm = FindJvm(javaHome);
+    JvmInfo& j = r.jvm;    if (j.home.empty()) {
         j.started = "not-run: no JVM found (Windows-ARM64.apk's own runtime, WINAPK_JAVA_HOME or JAVA_HOME)";
     } else if (j.arch != "arm64") {
         // An emulated JVM is never a native run (AGENTS.md, "Native means native").

@@ -34,3 +34,27 @@ P2–P4）。
 **P0 中发现的影响。** 这台电脑的 Vulkan 是基于 Direct3D 12 的 Mesa Dozen，不是厂商驱动。P0–P4 都不依赖
 它。在 P5/P6 之前，项目需要一台有厂商 Vulkan 驱动的电脑来做图形关卡，或者记录一项决定：在 Dozen 上测量
 客体 Vulkan 并如实报告（绝不当作原生 Vulkan）。
+
+## ADR-0002：NativeCocoa 作为过渡期的宿主窗口接口
+
+2026-11-03，P1。状态：已采纳。
+
+**决定。** 在 Windows 上，Java 侧继续调用 `com.macapk.loader.NativeCocoa`；同样的 Java 声明通过 `RegisterNatives`
+绑定到 `winapk-bridge.dll` 中的 Win32 代码（`window.cpp`）。`PLAN.md` §8.2 允许等价的适配层，并要求说明保留的
+`NativeCocoa` 名称是过渡期接口：它就是，当出现第二个调用方或第二种窗口后端需要时，由平台中立的 `HostWindow` 接口（§4.3）
+取代。没有 Windows 实现的 native 保持未绑定，在被调用处以 `UnsatisfiedLinkError` 失败。
+
+**理由。** Framework 在 26 个文件中调用 `NativeCocoa`；重命名或包装这些调用会是一次大范围的上游改动，却不带来任何行为上
+的收益，违背 `AGENTS.md` 保持上游改动小的规则。在 JNI 层绑定可以让上游的 Java 保持不变。
+
+**线程和帧。** JVM 主线程调用 `init` 和 `runLoop`，成为拥有所有窗口的 UI 线程；其他线程创建或改变窗口的调用会发送给它
+并等待（在 `runLoop` 开始之前，一直等到它开始）。每个窗口在 UI 线程上有一个 16 ms 的帧定时器：尺寸改变时调用渲染器的
+`macapkSurfaceChanged`，然后调用 `macapkDrawFrame`，与 macOS 的 display link 一样；`presentBitmap` 在锁内复制 ARGB
+帧并使窗口失效，`WM_PAINT` 以 32 位自上而下的 DIB 绘制它（ARGB 整数在内存中就是 BGRA 字节，所以无需转换；不做 alpha
+合成）。输入在 UI 线程上调用 `TouchDispatcher`。
+
+**单位。** 一个点是一个 Windows DIP（1/96 英寸），也是一个 dp：`winapk run` 以 density = 160 × 系统 DPI 缩放启动运行时，
+所以应用的像素就是窗口的像素。
+
+**重新讨论**：当窗格交接（界面在自己的窗口中显示应用）或 GLES surface 需要不止一个呈现目标时，或帧节奏应当跟随显示器
+（DWM）而不是定时器时。
