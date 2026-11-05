@@ -22,6 +22,17 @@ MyGo 前端在手机式窗格或独立窗口中打开每个应用，每个 APK �
 | [version-history.md](version-history.md) | 各版本及其使用的上游版本 |
 | [functions/INDEX.md](functions/INDEX.md) | 各包与各模块的职责和关键声明 |
 
+## 项目状态
+
+开发于 2026-11-05 停止，停在 0.1.0 版本，该版本从未发布或打标签。G0、G1 和 G2 在
+[platform-notes.md](platform-notes.md) 记录的 Windows 11 ARM64 机器上通过；G3、G4 和 G5 从未运行。已有内容：
+`winapk run` 在 Win32 窗口中运行纯 Java 和 Kotlin APK；`native-probe.exe` 加载 profile N0 的客体 ELF 库并在其上运行
+ABI 测试集；MyGo 界面对接示例数据（`winapk.Mock`），不启动运行时。最后一次构建使用 Mac.apk `8b45e48`、
+Go 1.27.3 和 MyGo v0.7.4。
+
+恢复工作时，先把 Go、MyGo 和 Mac.apk 升到最新版本并重新运行 G0–G2 的检查，再继续 `PLAN.md` §10（P3：Bionic、
+线程、errno、TLS）和 §11（P4：JNI，以及在 `winapk run` 中加载 APK 的库）。
+
 ## 上游版本
 
 Go、MyGo 与 Mac.apk 不固定版本：始终跟随各自的最新版本。下表为最近一次检查（2026-11-04）时的最新版本；

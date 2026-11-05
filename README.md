@@ -9,19 +9,21 @@ Android Framework, and the app's own `arm64-v8a` native libraries are loaded by 
 loader with a Bionic and JNI bridge. An app opens either in a phone-style pane inside the main
 window or in a window of its own.
 
-> **Status:** planning and scaffold. Nothing here is ready for use yet. See [PLAN.md](PLAN.md)
-> (in Chinese) and the [platform notes](doc/en-us/platform-notes.md).
+> **Status:** discontinued (2026-11-05). Development stopped at 0.1.0, before any release.
+> The pure-Java path (gate G1) and a probe of the restricted ELF loader (gate G2) work on the test
+> machine; nothing here is ready for use. See the [project status](doc/en-us/README.md#project-status),
+> [PLAN.md](PLAN.md) (in Chinese) and the [platform notes](doc/en-us/platform-notes.md).
 
 ## Features
 
 | Feature | Status |
 |---|---|
-| Pure Java/Kotlin APKs: Activities, resources, Views, input, local storage | planned |
-| Open an app in a phone-style pane or in a standalone window, one process per app | planned |
-| `arm64-v8a` native libraries within declared, tested profiles (ELF loader, Bionic, JNI) | planned |
-| OpenGL ES / EGL through ANGLE on Vulkan (D3D11 as a separate backend) | planned |
-| Android Vulkan on the Windows Vulkan driver | planned |
-| `doctor` and compatibility reports that state exactly what works on this machine | planned |
+| Pure Java/Kotlin APKs: Activities, resources, Views, input, local storage | works on the test machine (G1), standalone window only |
+| Open an app in a phone-style pane or in a standalone window, one process per app | interface built on sample data, not connected to the runtime |
+| `arm64-v8a` native libraries within declared, tested profiles (ELF loader, Bionic, JNI) | profile N0 loader in a test probe (G2); not in `winapk run` |
+| OpenGL ES / EGL through ANGLE on Vulkan (D3D11 as a separate backend) | not started |
+| Android Vulkan on the Windows Vulkan driver | not started |
+| `doctor` and compatibility reports that state exactly what works on this machine | `doctor` checks the host, JVM and Vulkan; no compatibility report |
 
 ARM32 and x86 app code, Google Play Services, DRM, WebView and full media support are out of scope
 for the first versions.
@@ -35,7 +37,7 @@ for the first versions.
 
 ## Building from Source
 
-Builds are not available yet. Requirements and commands: [doc/en-us/development.md](doc/en-us/development.md).
+No builds were released. Requirements and commands: [doc/en-us/development.md](doc/en-us/development.md).
 
 ## Documentation
 

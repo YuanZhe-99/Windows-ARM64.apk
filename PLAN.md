@@ -6,6 +6,9 @@
 >
 > 图形方向：Android Vulkan → ABI/WSI 适配 → Windows 原生 Vulkan；Android OpenGL ES/EGL → ANGLE → Vulkan。ANGLE/D3D11 是独立、可配置的备选后端。
 
+> **状态（2026-11-05）：项目已停止开发。** P0–P2 完成（G0、G1、G2 通过），P3 起未开始；版本停在未发布的 0.1.0。
+> 恢复时的起点见 `doc/zh-cn/README.md` 的“项目状态”。
+
 - 编写日期：2026-11-03。
 - 上游仓库：[kksimp/Mac.apk](https://github.com/kksimp/Mac.apk)。
 - 本计划核查时的上游提交：[`f87be03575a79c7eeed578f421ee852bf99a814b`](https://github.com/kksimp/Mac.apk/tree/f87be03575a79c7eeed578f421ee852bf99a814b)，提交时间 2026-10-29 UTC。

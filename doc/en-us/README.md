@@ -25,6 +25,19 @@ per APK.
 | [version-history.md](version-history.md) | Releases and the upstream versions they used |
 | [functions/INDEX.md](functions/INDEX.md) | Per-package and per-module roles and key declarations |
 
+## Project status
+
+Development stopped on 2026-11-05 at version 0.1.0, which was never released or tagged. G0, G1 and
+G2 pass on the Windows 11 ARM64 machine recorded in [platform-notes.md](platform-notes.md); G3, G4
+and G5 were never run. What exists: `winapk run` runs pure-Java and Kotlin APKs in a Win32
+window; `native-probe.exe` loads profile-N0 guest ELF libraries and runs the ABI suite on them;
+the MyGo interface runs against sample data (`winapk.Mock`) and does not start the runtime. The
+last build used Mac.apk `8b45e48`, Go 1.27.3 and MyGo v0.7.4.
+
+Work resuming starts by moving Go, MyGo and Mac.apk to their latest versions and re-running the
+G0–G2 checks, then continues with `PLAN.md` §10 (P3: Bionic, threads, errno, TLS) and §11 (P4:
+JNI and loading an APK's libraries in `winapk run`).
+
 ## Upstream versions
 
 Go, MyGo and Mac.apk are not pinned: they always follow their latest version. The table shows the

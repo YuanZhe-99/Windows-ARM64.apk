@@ -12,6 +12,10 @@ Vulkan). The product front end is a Go + MyGo application that opens an app eith
 phone-style pane inside its main window or in a standalone window; each APK runs in its own
 runtime process. Treat the user's message as the change request: plan, implement, verify, report.
 
+**Status: development stopped on 2026-11-05** (`doc/en-us/README.md`, Project status). Before
+changing anything, confirm with the user that work is resuming; then follow this guide from the
+top, starting with the upstream updates.
+
 ## Reading order
 
 When you need to understand code, read in this order and stop as soon as you have what you need:
@@ -182,6 +186,13 @@ internal state details. A fixture built with special flags never proves behavior
 builds.
 
 Other conventions:
+
+- Scripted multi-file edits on Windows: write the edit script (Node) to a file with a file-writing
+  tool and run it; never pipe it through a Bash heredoc, which in Git Bash turned `\n` inside JS
+  strings into real newlines and broke C string literals and PowerShell regexes. Always pass a
+  function to `String.replace` (`s.replace(a, () => b)`), since PowerShell text such as `'$1'`
+  is otherwise read as a replacement pattern, and abort before writing if any search text is
+  missing.
 
 - MyGo UI code follows `.agents/skills/mygo-maintenance`: views are functions of state, elements
   are never stored, background results reach the view through `Window.Update`, controls get stable
