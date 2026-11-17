@@ -20,6 +20,7 @@
 // DPI scale.
 #include "bridge.h"
 #include "graphics.h"
+#include "surface.h"
 
 #include <windows.h>
 #include <shellscalingapi.h>
@@ -55,6 +56,8 @@ struct View {
     int frameW = 0, frameH = 0;
     int sizedW = -1, sizedH = -1;   ///< the size last reported by macapkSurfaceChanged
     uint64_t rendererRevision = 0;   ///< invalidates an EGL owner when callbacks change
+    jobject holderSurface = nullptr; ///< actual holder Surface for plain SurfaceView, global reference
+    jfieldID surfaceReleased = nullptr;
 };
 
 /// An app window and the view it shows.
@@ -100,6 +103,18 @@ std::mutex g_dirsMu;
 std::string g_dataSubdir, g_nativeLibDir; // for the guest loader (P2–P4); not used by the Java path
 std::string g_graphicsRequest = "off";   // CLI option, captured before app code
 bool g_graphicsFailed = false;            // window thread; read after Boot.run returns
+
+/// Publishes client pixels for the currently attached plain SurfaceView, with no graphics allocation.
+void PublishWindowSurface(Window* w) {
+    View* v = w->content;
+    if (!v || !v->holderSurface) {
+        RetireSurface(w->hwnd);
+        return;
+    }
+    RECT rc{};
+    if (!w->minimized) GetClientRect(w->hwnd, &rc);
+    PublishSurface(w->hwnd, v->holderSurface, v->surfaceReleased, rc.right, rc.bottom);
+}
 
 /// Returns the JNIEnv of the calling thread, attaching it to the VM when it is not.
 JNIEnv* Env() {
@@ -543,6 +558,11 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             if (LOWORD(wp) == WA_INACTIVE) CancelPointer(w);
             break;
         case WM_SIZE:
+            if (wp == SIZE_MINIMIZED) ResizeSurface(hwnd, 0, 0);
+            else {
+                RECT client{};
+                if (GetClientRect(hwnd, &client)) ResizeSurface(hwnd, client.right, client.bottom);
+            }
             if (wp == SIZE_MINIMIZED && !w->minimized) {
                 w->minimized = true;
                 w->lastHiddenFrame = 0;
@@ -588,6 +608,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             return 0;
         case WM_DESTROY:
             KillTimer(hwnd, kFrameTimer);
+            RetireSurface(hwnd);
             g_windows.erase(hwnd);
             delete w;
             PostQuitMessage(0);
@@ -714,8 +735,10 @@ jlong JNICALL CreateSurfaceView(JNIEnv*, jclass, jint w, jint h) {
 void JNICALL SetContentView(JNIEnv*, jclass, jlong window, jlong view) {
     RunOnUi("setContentView", [&] {
         if (Window* w = FromHandle(window)) {
+            if (w->content != reinterpret_cast<View*>(view)) RetireSurface(w->hwnd);
             w->content = reinterpret_cast<View*>(view);
             g_current = w->content;
+            PublishWindowSurface(w);
             if (w->content) w->content->sizedW = w->content->sizedH = -1;
             InvalidateRect(w->hwnd, nullptr, FALSE);
         }
@@ -750,14 +773,58 @@ void JNICALL SetStartingWindowColor(JNIEnv*, jclass, jint argb) {
 void JNICALL SetRenderer(JNIEnv* env, jclass, jlong view, jobject callbacks) {
     auto* v = reinterpret_cast<View*>(view);
     if (!v) return;
+    jobject surface = nullptr;
+    jfieldID released = nullptr;
+    if (callbacks) {
+        jclass cls = env->FindClass("android/view/SurfaceView");
+        if (!cls) return;
+        const bool isSurface = env->IsInstanceOf(callbacks, cls);
+        if (isSurface) {
+            const auto holder = env->GetMethodID(cls, "macapkWindowsHolderSurface", "()Landroid/view/Surface;");
+            if (holder) {
+                jobject value = env->CallNonvirtualObjectMethod(callbacks, cls, holder);
+                if (!env->ExceptionCheck() && value) {
+                    jclass type = env->FindClass("android/view/Surface");
+                    if (type) {
+                        released = env->GetFieldID(type, "mReleased", "Z");
+                        if (released) surface = env->NewGlobalRef(value);
+                        env->DeleteLocalRef(type);
+                    }
+                    env->DeleteLocalRef(value);
+                }
+            }
+        }
+        env->DeleteLocalRef(cls);
+        if (env->ExceptionCheck()) return;
+    }
     jobject ref = callbacks ? env->NewGlobalRef(callbacks) : nullptr;
+    if (callbacks && !ref) {
+        if (surface) env->DeleteGlobalRef(surface);
+        return;
+    }
     const bool ran = RunOnUi("setRenderer", [&] {
-        if (v->renderer) Env()->DeleteGlobalRef(v->renderer);
+        JNIEnv* ui = Env();
+        const bool sameSurface = surface && v->holderSurface && ui->IsSameObject(surface, v->holderSurface);
+        if (v->holderSurface && !sameSurface) {
+            for (auto& [hwnd, w] : g_windows) if (w->content == v) RetireSurface(hwnd);
+            ui->DeleteGlobalRef(v->holderSurface);
+        }
+        if (sameSurface) ui->DeleteGlobalRef(surface);
+        else {
+            v->holderSurface = surface;
+            v->surfaceReleased = released;
+        }
+        if (v->renderer) ui->DeleteGlobalRef(v->renderer);
         v->renderer = ref;
         ++v->rendererRevision;
         v->sizedW = v->sizedH = -1;
+        if (!sameSurface && v->holderSurface)
+            for (auto& [hwnd, w] : g_windows) if (w->content == v) PublishWindowSurface(w);
     });
-    if (!ran && ref) env->DeleteGlobalRef(ref);
+    if (!ran) {
+        if (ref) env->DeleteGlobalRef(ref);
+        if (surface) env->DeleteGlobalRef(surface);
+    }
 }
 
 /// Detaches `view`'s renderer.
@@ -765,6 +832,12 @@ void JNICALL ReleaseRenderer(JNIEnv*, jclass, jlong view) {
     auto* v = reinterpret_cast<View*>(view);
     if (!v) return;
     RunOnUi("releaseRenderer", [&] {
+        if (v->holderSurface) {
+            for (auto& [hwnd, w] : g_windows) if (w->content == v) RetireSurface(hwnd);
+            Env()->DeleteGlobalRef(v->holderSurface);
+            v->holderSurface = nullptr;
+            v->surfaceReleased = nullptr;
+        }
         if (v->renderer) Env()->DeleteGlobalRef(v->renderer);
         v->renderer = nullptr;
         ++v->rendererRevision;

@@ -396,6 +396,7 @@ P5a 固定 ANGLE `801a1a5f6e00ed0028937067b7663fd7053bff31`，ARM64 源码构建
 ### 12.2 P5b：接通 Framework 和客体 ABI
 
 - [x] T10.java：真实 APK 的受限 Java GLES20 已验证两色回读、resize、最小化/恢复、不支持调用拒绝及销毁。
+- [x] T10.surface：真实 APK 已验证受限 `libandroid.so`、holder 身份、引用、resize 和换挂载；尚未接入 `EGLNativeWindowType`。
 - [ ] 先验证 Java GLES 调用进入宿主 ANGLE，再接入客体 ELF 的 `libEGL.so`/`libGLESv2.so` 虚拟模块。
 - [ ] 将 guest `EGLNativeWindowType`/`ANativeWindow` 映射到受管理的 Windows Surface 对象；不是裸指针强转。
 - [ ] 管理 display/context/surface 生命周期、线程绑定、context current 状态与销毁顺序。
@@ -550,7 +551,7 @@ Android Surface 是 `ANativeWindow` 对应的图形端点；AHardwareBuffer 扩�
 | T07 | N1 dependency/constructor suite | DT_NEEDED、符号、构造与重复加载 | P3 |
 | T08 | pthread/errno/TLS suite | 线程隔离、析构、支持 model | P3 |
 | T09 | JNI matrix APK | 动态注册、导出名、双向/多线程回调 | P4 |
-| T10 | host ANGLE + Java GLES APK | 后端构建与 Java 图形路径 | P5 |
+| T10 | host ANGLE + Java GLES APK + Surface APK | 后端构建、Java 图形、客体 native window 寿命（分别验收） | P5 |
 | T11 | guest GLES APK | N2 ABI、EGL 生命周期、函数指针 | P5 |
 | T12 | host Vulkan sample | Loader/ICD/Win32 WSI 环境 | P6 |
 | T13 | guest Vulkan APK | Android WSI 桥、dispatch、callbacks | P6 |

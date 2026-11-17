@@ -10,6 +10,7 @@ G3 之后 P5/P6 进行中，尚无图形关卡通过。Java 位图路径保持�
 | 宿主 ANGLE/D3D11 | PASS | Adreno 8cx Gen 3 硬件，驱动 `30.0.4122.4000`，EGL 1.5 / GLES 3.0；绘制/回读、resize 及销毁 |
 | 宿主 ANGLE/Vulkan 经 Dozen | PASS；用户批准的实验（ADR-0004） | 同一 Adreno GPU 经 D3D12，Mesa `26.3.0-devel (git-e3fc7749c6)`、Vulkan `1.2.359`、EGL 1.5 / GLES 2.0；`translated=yes software=no` |
 | Java GLES 进入 ANGLE | 下述受限 GLES20 profile PASS | 真实 APK `GLSurfaceView` 颜色、resize、恢复、销毁及显式拒绝 |
+| 受管理的 native window | 下述引用 profile PASS | 真实受限 APK、客户区尺寸、换挂载及引用拒绝；不绘制 |
 | 客体 GLES/N2 | NOT_RUN | 受管理 Surface/ANativeWindow、审计后的 EGL/GLES 调用与函数指针、正负 APK 契约 |
 | 客体 Vulkan/N2 | NOT_RUN | 独立 Android/Win32 WSI 及 dispatch/handle/callback 契约，不是 ANGLE 私有 device |
 | 厂商 ARM64 Vulkan ICD | BLOCKED | 具有该驱动的机器；Dozen 结果不能填入此行 |
@@ -83,3 +84,20 @@ APK 断言带 position 的直接缓冲区回读出两种 RGBA 颜色、只读和
 `424x752` 完成最小化/恢复，保留原有 context。显式后端不可用在任何绘制之前退出 1。
 `doctor` 只盘点 ARM64 DLL 文件，不做渲染，`angleBackends` 保持为空。
 尚未通过 Java GLES 验证 shader、纹理、混合及 FBO；宿主探测的 shader 测试不替代它们。
+
+## 受管理的 Android native window
+
+受限 `libandroid.so` 只提供 `ANativeWindow_fromSurface`、acquire、release 和宽高查询。
+桥匹配已挂载的普通 `SurfaceView` 的实际 `SurfaceHolder` 所持对象，不使用 Java 提供的地址。
+不透明客体令牌持有对该挂载的引用。resize 更新客户区像素尺寸。
+更换内容或销毁窗口会使挂载失效，即使客体仍持有引用。失效或未知令牌的尺寸查询返回负值；
+acquire/release 不解引用这些令牌。释放 Java `Surface` 后不允许新的转换，
+但不会取消已取得且挂载仍有效的原生引用。
+
+该端点尚未给客体提供可渲染的 EGL 或 Vulkan surface，不向客体传递 `HWND` 或宿主图形函数指针。
+不实现 Android buffer queue、`ANativeWindow_lock`，也不提供通用的 `SurfaceHolder.surfaceDestroyed` 分发。
+最小化时桥发布零尺寸，但该夹具不覆盖最小化时的尺寸查询。
+
+`test.ps1 -Suite Surface`：Windows ARM64 上 **4 项 PASS，3.48 秒**。普通 NDK API-30
+夹具声明 `DT_NEEDED libandroid.so`，同一引用追踪 `360x720` 到 `424x752`；
+在一个启用 CheckJNI 的 APK 进程中验证无关/空对象、Java release、旧挂载失效、新身份及过期/未知令牌。

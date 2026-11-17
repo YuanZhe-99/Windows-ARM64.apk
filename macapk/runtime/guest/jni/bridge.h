@@ -8,6 +8,10 @@ namespace winapk::guest {
 
 struct JniState;
 
+/// Resolves a live guest JNIEnv for a fixed host shim on the same thread; never returns to guest code.
+/// Returns null for an unknown, detached or cross-thread proxy.
+JNIEnv* HostEnvironment(void* guestEnv);
+
 /// Owns audited guest JNI tables and the Android-ABI varargs helper for one ClassLoader.
 /// Notes: host-only API; thread runtime/namespace/mappings outlive it; destroy after workers, before the JVM.
 class JniBridge {

@@ -1,5 +1,6 @@
 // guest.cpp -- process-private P4 APK namespace and host-owned guest JNI service.
 #include "bridge.h"
+#include "surface.h"
 #include "../../../../guest/bionic/libraries.h"
 #include "../../../../guest/jni/bridge.h"
 
@@ -61,8 +62,11 @@ void Open(JNIEnv* env, jclass, jobject loader, jstring name) {
                 guest::LoadError error;
                 value->support = guest::BionicLibraries::Load(config.helpers + L"\\libwinapk-bionic.so", &error);
                 if (!value->support) { Reject(env, error); return; }
+                const auto baseLibraries = value->support->Libraries();
+                std::vector<guest::BuiltinLibrary> libraries(baseLibraries.begin(), baseLibraries.end());
+                libraries.push_back(NativeWindowLibrary());
                 value->modules = std::make_unique<guest::ModuleSet>(config.libraries,
-                    value->support->Imports(), value->support->Libraries());
+                    value->support->Imports(), libraries);
                 value->threads = std::make_unique<guest::ThreadRuntime>(value->modules.get(), config.android);
                 value->jni = guest::JniBridge::Load(env, loader, *value->threads, *value->modules,
                     config.helpers + L"\\libwinapk-jni.so", &error);

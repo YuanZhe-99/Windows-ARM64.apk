@@ -2,6 +2,7 @@
 
 ## 0.1.0 (in progress)
 
+- 2026-11-17: verified the restricted Android native window reference profile in a real APK; guest EGL/Vulkan rendering remains NOT_RUN. Go 1.27.4, MyGo v0.10.0 and merged Mac.apk `3f35611` checked, unchanged.
 - 2026-11-17: verified a bounded Java GLES20 profile from a real `GLSurfaceView` APK on ARM64 ANGLE, including resize, restore and Vulkan/Dozen vs. D3D11 selection. Guest GLES/Vulkan and G4/G5 remain NOT_RUN; no frontend source changes. Go 1.27.4, MyGo v0.10.0 and merged Mac.apk `3f35611` checked.
 - 2026-11-17: followed MyGo to v0.10.0 (dependency only; migration preview reported no source changes). Go 1.27.4 and merged Mac.apk `3f35611` checked, unchanged. Go vet, normal and CGO-disabled tests, MyGo vet and i18n checks passed.
 - 2026-11-17: built pinned Windows ARM64 ANGLE and verified host D3D11 and user-approved Vulkan/Dozen (ADR-0004). GraphicsHost 6 PASS, including explicit Vulkan unavailable without fallback. Vendor Vulkan BLOCKED; G4/G5 NOT_RUN. Preparation baseline passes Host 24, Java 43, Native 58, Bionic 104, Jni 24 and ApkJni 8; APK readiness now uses a real first frame and Go wildcards exclude generated build downloads. This baseline used Go 1.27.4, MyGo v0.9.2 and merged Mac.apk `3f35611`; 0.1.0 remains unreleased.

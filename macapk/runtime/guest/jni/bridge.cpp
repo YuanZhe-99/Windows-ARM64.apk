@@ -835,6 +835,11 @@ JniBridge::~JniBridge() {
     vms.erase(&state_->proxy);
 }
 
+JNIEnv* HostEnvironment(void* guestEnv) {
+    for (const auto& entry : environments.entries) if (entry.get() == guestEnv) return entry->host;
+    return nullptr;
+}
+
 void* JniBridge::Environment(JNIEnv* env) {
     JNIEnv* actual = nullptr;
     if (state_->vm->GetEnv(reinterpret_cast<void**>(&actual), JNI_VERSION_1_6) != JNI_OK || actual != env)

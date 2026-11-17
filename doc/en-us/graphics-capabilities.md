@@ -10,6 +10,7 @@ independent; enabling guest native does not enable GLES or guest Vulkan.
 | Host ANGLE/D3D11 | PASS | Adreno 8cx Gen 3 hardware, driver `30.0.4122.4000`, EGL 1.5 / GLES 3.0; draw/readback, resize and teardown |
 | Host ANGLE/Vulkan on Dozen | PASS; user-approved experiment (ADR-0004) | same Adreno GPU via D3D12, Mesa `26.3.0-devel (git-e3fc7749c6)`, Vulkan `1.2.359`, EGL 1.5 / GLES 2.0; `translated=yes software=no` |
 | Java GLES into ANGLE | PASS for the bounded GLES20 profile below | real APK `GLSurfaceView` colors, resize, restore, teardown, and explicit refusal |
+| Managed native window | PASS for the reference profile below | real restricted APK, client extent, replacement and refused references; no drawing |
 | Guest GLES/N2 | NOT_RUN | managed Surface/ANativeWindow, audited EGL/GLES calls and function pointers, positive/negative APK contracts |
 | Guest Vulkan/N2 | NOT_RUN | separate Android/Win32 WSI and dispatch/handle/callback contracts, not ANGLE's private device |
 | Vendor ARM64 Vulkan ICD | BLOCKED | a machine with that driver; Dozen results cannot fill this row |
@@ -95,3 +96,25 @@ context. The explicit unavailable case exited 1 before any draw. `doctor` only i
 ARM64 DLL files; its `angleBackends` list stays empty because it does not render.
 Shaders, textures, blending and FBOs are not yet verified through Java GLES; the host probe's
 shader test does not fill that gap.
+
+## Managed Android native window
+
+The restricted `libandroid.so` provider admits only `ANativeWindow_fromSurface`, acquire,
+release and width/height. It matches the actual `Surface` owned by the attached plain
+`SurfaceView`'s holder, not a Java-supplied address. An opaque guest token owns references to that
+attachment. A resize updates its client-pixel extent. Replacing the
+content or destroying the window retires the attachment, even while guest references remain.
+Size queries on stale or unknown tokens return a negative error; acquire/release never
+dereference such tokens. Releasing the Java `Surface` refuses new conversions but does not
+cancel native references already acquired to a still-live attachment.
+
+This endpoint does not yet give a guest a renderable EGL or Vulkan surface. No `HWND` or host
+graphics function pointer is passed to guest code. It does not implement Android buffer
+queues, `ANativeWindow_lock`, or a general `SurfaceHolder.surfaceDestroyed` dispatcher.
+The bridge publishes a zero client extent on minimize, but minimized-size queries are not
+part of this fixture.
+
+`test.ps1 -Suite Surface`: **4 PASS, 3.48 s** on Windows ARM64. The normally linked NDK API-30
+fixture declares `DT_NEEDED libandroid.so`. The same reference tracks `360x720` to `424x752`;
+the test checks unrelated/null objects, Java release, old attachment invalidation, fresh
+identity and spent/unknown tokens in one APK process with CheckJNI.

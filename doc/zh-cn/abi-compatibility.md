@@ -43,6 +43,7 @@ Native`）；下文的用例名即其本身的名称。2026-11-04 在 [platform-
 | Android mutex/condition 对象 | 不透明客体存储，40/48 字节，按 4 字节对齐；绝不在其中存放宿主锁 | 固定指针签名；代际/地址表拥有宿主状态 | T08（`sync`）：类型、竞争、等待/重锁、生命周期与拒绝用例 |
 | 线程/key shim 与 C 仿真 TLS | 固定整数/指针签名；Android `pthread_t` 用 `int64_t`，key 用 `int32_t` | 显式包装；不把宿主 pthread/CRT 对象交给客体 | T08（`threads`）；见 [native-profiles.md](native-profiles.md) |
 | 客体 dl API | 固定指针/int 签名，客体不透明句柄标识 | 仅限模块命名空间；绝不传递 Windows 加载器句柄或任意宿主符号 | T07：往返、错误读取清除、标志及无效/已关闭句柄 |
+| Android native window 引用 | 固定指针参数、32 位尺寸；在代理 `JNIEnv` 所属线程解析 | 客体令牌既不是 `jobject` 也不是 `HWND`；桥匹配 holder 对象身份，不使用客体提供的地址 | T10.surface：带 `DT_NEEDED libandroid.so` 的普通 NDK ELF、引用寿命和真实客户区尺寸 |
 | 客体 CRT 退出/atfork 注册 | 固定回调/参数/DSO 指针、32 位状态；不使用宿主 CRT 注册表 | 运行时所有的记录；退出回调在受管理上下文中执行客体代码；fork 不可用 | T07 N1：逆序、DSO 选择、重入/仅一次、注册上限及关闭后的运行时清理 |
 | 内存、字节与字符串 | 显式 64 位客体大小/长度，固定指针/int | 运行时所有的堆及归属检查；仅字节包装，不共享分配器/CRT 对象 | T08 `memory`：零值/溢出/失败、重叠/无符号字节、UTF-8、跨线程归属及无效释放 |
 | `open`/`open64` 可选 mode | — | 专用固定 `(pointer, int32, uint32)` 入口仅在创建时读取 x2；不使用宿主变参或共享 va_list | T08 `io`：双参数 open、三参数 create、fortified `__open_2` 及不支持的标志/模式 |

@@ -224,6 +224,16 @@ ApkJni 8、GraphicsHost 6 通过。日志为 `P5b-*.log`。
 T10 Java APK SHA-256：`61e2cda0de295ea98f02d144abe3fbf81b1d9b64acbd84e3a8e10804f1d3c291`。
 共享 SurfaceView/GLSurfaceView 改动的 macOS 构建和 smoke 仍为 NOT_RUN。
 
+## P5b native window 引用
+
+同一 Windows ARM64 设备上，`Surface` 4 项通过（3.48 秒）。`hello-surface.apk` 在 CheckJNI
+下使用五个获准的 `libandroid.so` 函数，验证 resize、换挂载时的引用归属、Java release、
+无关/未知对象和令牌拒绝及正常关闭。这不是绘制测试；没有启用客体 EGL 或客体 Vulkan。
+夹具 APK SHA-256 为 `f727d1c50d3cf7b0845816dd80f08a2b9c27254e6e5921ca6cda53bda6f433d6`。
+环境检查及 Build All 通过；Host 27、Java 43、Native 58、Bionic 104、Jni 24、ApkJni 8、
+GraphicsHost 6、GraphicsJava 4 均通过。日志为 `P5-surface-*.log`。
+共享 `Surface` 和 `SurfaceView` 改动没有 macOS 构建或 smoke 证据（`NOT_RUN`）。
+
 ## 已知限制
 
 - 共享 Windows hook 包括平台条件化的 CMake/SQLite 改动及 Windows 客体 DEX、Boot、AppClassLoader

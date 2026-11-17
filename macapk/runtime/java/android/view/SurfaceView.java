@@ -3810,6 +3810,11 @@ public class SurfaceView extends View implements MetalSurfaceCallbacks {
 
     private final SurfaceHolderImpl holder = new SurfaceHolderImpl(this);
 
+    /** Supplies the actual holder Surface to the Windows bridge without subclass dispatch. */
+    private Surface macapkWindowsHolderSurface() {
+        return this instanceof android.opengl.GLSurfaceView ? null : holder.getSurface();
+    }
+
     /** Legacy entry point: was originally meant to be called by
      *  Activity.setContentView. In v1.0.69 the same dispatch now lives
      *  in macapkSurfaceChanged (which MTKView already calls), so this

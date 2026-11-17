@@ -38,11 +38,11 @@ and hardware TLS/syscall/register access remain refused. Each probe has a
 60-second deadline. Build first: build.ps1 -Component NativeProbe.
 
 .PARAMETER Suite
-Host, Java, Native, Bionic, Jni, ApkJni, GraphicsHost, GraphicsJava, or a targeted Bionic subset.
+Host, Java, Native, Bionic, Jni, ApkJni, GraphicsHost, GraphicsJava, Surface, or a targeted Bionic subset.
 #>
 [CmdletBinding()]
 param(
-    [ValidateSet('Host', 'Java', 'Native', 'Bionic', 'Modules', 'Memory', 'Io', 'Faults', 'Format', 'Libraries', 'Jni', 'ApkJni', 'GraphicsHost', 'GraphicsJava')]
+    [ValidateSet('Host', 'Java', 'Native', 'Bionic', 'Modules', 'Memory', 'Io', 'Faults', 'Format', 'Libraries', 'Jni', 'ApkJni', 'GraphicsHost', 'GraphicsJava', 'Surface')]
     [string]$Suite = 'Host'
 )
 Set-StrictMode -Version Latest
@@ -980,7 +980,49 @@ function Test-GraphicsJava {
     }
 }
 
-switch ($Suite) { 'Host' { Test-Host } 'Java' { Test-Java } 'Native' { Test-Native } 'Bionic' { Test-Bionic } 'Modules' { Test-Modules } 'Memory' { Test-Bionic -Command memory } 'Io' { Test-Bionic -Command io } 'Faults' { Test-Bionic -Command faults } 'Format' { Test-Bionic -Command format } 'Libraries' { Test-Libraries } 'Jni' { Test-Jni } 'ApkJni' { Test-ApkJni } 'GraphicsHost' { Test-GraphicsHost } 'GraphicsJava' { Test-GraphicsJava } }
+<# Checks actual NDK window references and replacement in one APK, without any EGL or Vulkan. #>
+function Test-Surface {
+    $apk = Join-Path $repo 'tests\fixtures\hello-surface.apk'
+    $record = Get-Content (Join-Path $repo 'tests\fixtures\hello-surface.json') -Raw | ConvertFrom-Json
+    Check 'T10.surface.hash' ((Get-FileHash $apk).Hash.ToLower() -eq $record.apkSha256) 'APK and NDK build record'
+    $script:appSize = '360x720'
+    [WinApkTestWin]::SetProcessDpiAwarenessContext([IntPtr]-4) | Out-Null
+    $logs = Join-Path $out 'test-data\logs'
+    New-Item -ItemType Directory -Force $logs | Out-Null
+    $log = Join-Path $logs 'T10-surface.log'
+    $data = Join-Path $out 'test-data\surface'
+    $oldOptions = [Environment]::GetEnvironmentVariable('JAVA_TOOL_OPTIONS')
+    try {
+        $env:JAVA_TOOL_OPTIONS = "$oldOptions -Xcheck:jni"
+        $p = Start-App $apk $data $log 'restricted'
+    } finally { Set-TestEnv @{ JAVA_TOOL_OPTIONS = $oldOptions } }
+    try {
+        $h = Find-AppWindow $p.Id 'Hello Surface' 15 $p
+        $initial = Wait-Log $log 'T10\.surface: initial=(\d+x\d+)' 15 $p
+        $rc = New-Object WinApkTestWin+RECT
+        $ok = $h -and $initial -and [WinApkTestWin]::GetClientRect($h, [ref]$rc) -and
+            $initial.Groups[1].Value -eq "$($rc.R)x$($rc.B)"
+        Check 'T10.surface.attach' $ok "actual Java holder and initial client extent $($rc.R)x$($rc.B)"
+        if (-not $ok) { return }
+        $wr = New-Object WinApkTestWin+RECT
+        $resized = [WinApkTestWin]::GetWindowRect($h, [ref]$wr) -and
+            [WinApkTestWin]::SetWindowPos($h, [IntPtr]::Zero, 0, 0, ($wr.R - $wr.L + 64), ($wr.B - $wr.T + 32), 0x16) -and
+            [WinApkTestWin]::GetClientRect($h, [ref]$rc)
+        $extent = "$($rc.R)x$($rc.B)"
+        $after = if ($resized) { Wait-Log $log "T10\.surface: resized=$extent\b" 10 $p }
+        Check 'T10.surface.resize' ($after -and $initial.Groups[1].Value -ne $extent) "same guest reference at new client extent $extent"
+        $replaced = Wait-Log $log 'T10\.surface: PASS release/replace/stale' 10 $p
+        $code = Close-App $h $p
+        $text = Read-Log $log
+        Check 'T10.surface.replace' ($replaced -and $code -eq 0 -and
+            $text -notmatch 'WARNING in native method|FATAL ERROR in native method|Java GLES request=|AssertionError') 'new attachment identity, negative token matrix, CheckJNI and normal close'
+    } finally {
+        if (!$p.HasExited) { $p.Kill(); $p.WaitForExit() }
+        $p.Dispose()
+    }
+}
+
+switch ($Suite) { 'Host' { Test-Host } 'Java' { Test-Java } 'Native' { Test-Native } 'Bionic' { Test-Bionic } 'Modules' { Test-Modules } 'Memory' { Test-Bionic -Command memory } 'Io' { Test-Bionic -Command io } 'Faults' { Test-Bionic -Command faults } 'Format' { Test-Bionic -Command format } 'Libraries' { Test-Libraries } 'Jni' { Test-Jni } 'ApkJni' { Test-ApkJni } 'GraphicsHost' { Test-GraphicsHost } 'GraphicsJava' { Test-GraphicsJava } 'Surface' { Test-Surface } }
 if ($script:failed -gt 0) { Write-Host "$script:failed check(s) failed"; exit 1 }
 Write-Host 'all checks passed'
 exit 0

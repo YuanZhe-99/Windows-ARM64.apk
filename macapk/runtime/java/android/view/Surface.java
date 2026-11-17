@@ -54,7 +54,7 @@ public class Surface implements android.os.Parcelable {
     // a TextureView's texture (AOSP Surface(SurfaceTexture)). null for the plain
     // SurfaceView-backed case.
     private android.graphics.SurfaceTexture mSurfaceTexture;
-    private boolean mReleased;
+    private volatile boolean mReleased;
 
     // The SurfaceView whose SurfaceHolder handed this Surface out, when there
     // is one (SurfaceHolderImpl sets it at construction). On real Android the

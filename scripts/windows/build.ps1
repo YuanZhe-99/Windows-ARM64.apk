@@ -288,9 +288,12 @@ function Build-Fixtures {
             foreach ($recipe in $recipes) {
                 $so = Join-Path $work $recipe.Name
                 $links = @($recipe.Links | ForEach-Object { Join-Path $work $_ })
+                $system = @(if ($recipe.ContainsKey('AndroidLibraries')) {
+                    $recipe.AndroidLibraries | ForEach-Object { "-l$_" }
+                })
                 Invoke-Checked $clang (@("--target=aarch64-linux-android$api", '-shared', '-fPIC', '-O2',
                     '-Wl,-z,max-page-size=16384', "-Wl,-soname,$($recipe.Name)", '-o', $so,
-                    (Join-Path $jni $recipe.Source)) + $links)
+                    (Join-Path $jni $recipe.Source)) + $links + $system)
                 # PLAN.md §7: every built ELF is checked to be ELF64 for AArch64 (e_machine 183).
                 $b = [IO.File]::ReadAllBytes($so)
                 if (-not ($b[0] -eq 0x7F -and $b[1] -eq 0x45 -and $b[4] -eq 2 -and [BitConverter]::ToUInt16($b, 18) -eq 183)) { throw "$so is not an ELF64 AArch64 library" }
@@ -331,6 +334,9 @@ function Build-Fixtures {
         }
         if ($name -eq 'hello-gles') {
             $info.expected = 'T10.java: distinct RGBA8 halves after resize with one context; no-current and read-only buffer refused; explicit unavailable Vulkan fails'
+        }
+        if ($name -eq 'hello-surface') {
+            $info.expected = 'T10.surface: client extent follows resize; Java release, detach, spent/unknown tokens and a distinct reattachment verified'
         }
         $info | ConvertTo-Json -Depth 6 | Set-Content (Join-Path $fixtures "$name.json") -Encoding utf8NoBOM
         Write-Step "$name.apk: dex sha256 $($info.dexSha256)"

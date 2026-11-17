@@ -237,6 +237,17 @@ Native 58, Bionic 104, Jni 24, ApkJni 8 and GraphicsHost 6 passed. Logs: `P5b-*.
 T10 Java APK SHA-256: `61e2cda0de295ea98f02d144abe3fbf81b1d9b64acbd84e3a8e10804f1d3c291`.
 macOS build and smoke for the shared SurfaceView/GLSurfaceView edits remain NOT_RUN.
 
+## P5b native window references
+
+`Surface`: 4 PASS in 3.48 s on the same Windows ARM64 machine. `hello-surface.apk` uses
+the five admitted `libandroid.so` functions under CheckJNI. It verifies reference ownership
+across resize and replacement, Java release, rejection of unrelated/unknown objects and tokens,
+and normal close. This is not a drawing test; neither guest EGL nor guest Vulkan is enabled.
+The fixture APK SHA-256 was `f727d1c50d3cf7b0845816dd80f08a2b9c27254e6e5921ca6cda53bda6f433d6`.
+Requirements and Build All passed, as did Host 27, Java 43, Native 58, Bionic 104, Jni 24,
+ApkJni 8, GraphicsHost 6 and GraphicsJava 4. Logs: `P5-surface-*.log`.
+The shared `Surface` and `SurfaceView` edits have no macOS build or smoke evidence (`NOT_RUN`).
+
 ## Known limitations
 
 - Shared Windows hooks are platform-gated CMake/SQLite changes and the Windows guest DEX,

@@ -49,6 +49,7 @@ add_library(winapk-bridge SHARED
   ${_win}/src/bridge/log.cpp
   ${_win}/src/bridge/window.cpp
   ${_win}/src/bridge/graphics.cpp
+  ${_win}/src/bridge/surface.cpp
   ${_win}/src/bridge/guest.cpp
   ${CMAKE_CURRENT_LIST_DIR}/../../guest/jni/bridge.cpp
   ${CMAKE_CURRENT_LIST_DIR}/../../guest/jni/entries.cpp
