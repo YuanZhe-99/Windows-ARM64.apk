@@ -382,7 +382,7 @@ PASS（2026-11-17，所声明的 N1 C/JNI 子集）；以下全部由真实 APK/
 P5a 固定 ANGLE `801a1a5f6e00ed0028937067b7663fd7053bff31`，ARM64 源码构建通过。
 `GraphicsHost` 6 项 PASS（2.38 秒）：Adreno 8cx Gen 3 上分别验证 Vulkan/Dozen 和 D3D11，
 两路均完成真实窗口 resize、shader 回读和 EGL 销毁；屏蔽子进程 Vulkan ICD 后显式 Vulkan 退出 2，
-未回退到 D3D11。厂商 Vulkan 仍 BLOCKED，产品 `auto`、打包和 G4 均未验收。
+未回退到 D3D11。厂商 Vulkan 仍 BLOCKED，打包和 G4 均未验收；`auto` 的 Java 路径另由 T10.java 验证。
 
 ### 12.1 P5a：先证明宿主后端可用
 
@@ -390,11 +390,12 @@ P5a 固定 ANGLE `801a1a5f6e00ed0028937067b7663fd7053bff31`，ARM64 源码构建
 - [x] 只应用经审计的 Chromium 构建补丁；不迁移 Metal 补丁。
 - [x] 原生 Windows 测试程序创建 Win32 窗口、EGL display/context/surface，通过 ANGLE/Vulkan（Dozen）及 D3D11 绘制图案。
 - [x] 宿主验证记录实际 renderer/backend、GPU、驱动和 EGL/GLES capabilities，见双语图形能力文档。
-- [ ] Vulkan 不可用时，可在 `auto` 模式选择经测试的 D3D11；用户明确选择 Vulkan 时不得悄悄切换。
+- [x] Java `GLSurfaceView` 在 Vulkan 不可用时，`auto` 选择经测试的 D3D11；显式 Vulkan 不回退。
 - [ ] Windows DLL 搜索路径与包内依赖确定，不依赖开发机 PATH 中偶然存在的 DLL。
 
 ### 12.2 P5b：接通 Framework 和客体 ABI
 
+- [x] T10.java：真实 APK 的受限 Java GLES20 已验证两色回读、resize、最小化/恢复、不支持调用拒绝及销毁。
 - [ ] 先验证 Java GLES 调用进入宿主 ANGLE，再接入客体 ELF 的 `libEGL.so`/`libGLESv2.so` 虚拟模块。
 - [ ] 将 guest `EGLNativeWindowType`/`ANativeWindow` 映射到受管理的 Windows Surface 对象；不是裸指针强转。
 - [ ] 管理 display/context/surface 生命周期、线程绑定、context current 状态与销毁顺序。

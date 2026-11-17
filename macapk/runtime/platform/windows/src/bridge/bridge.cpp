@@ -1,5 +1,6 @@
 // bridge.cpp -- the registration entry points of winapk-bridge.dll.
 #include "bridge.h"
+#include "graphics.h"
 
 #include <windows.h>
 
@@ -62,6 +63,7 @@ extern "C" __declspec(dllexport) jboolean winapk_bridge_register(JNIEnv* env) {
     bool ok = RegisterLog(env);
     ok = RegisterWindow(env) && ok;
     ok = RegisterGuest(env) && ok;
+    ok = RegisterJavaGraphics(env) && ok;
     macapk::sqlite::RegisterNativeSqliteMethods(env);  // logs its own result, as upstream
     return ok ? JNI_TRUE : JNI_FALSE;
 }

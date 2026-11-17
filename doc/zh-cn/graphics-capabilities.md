@@ -9,7 +9,7 @@ G3 之后 P5/P6 进行中，尚无图形关卡通过。Java 位图路径保持�
 |---|---|---|
 | 宿主 ANGLE/D3D11 | PASS | Adreno 8cx Gen 3 硬件，驱动 `30.0.4122.4000`，EGL 1.5 / GLES 3.0；绘制/回读、resize 及销毁 |
 | 宿主 ANGLE/Vulkan 经 Dozen | PASS；用户批准的实验（ADR-0004） | 同一 Adreno GPU 经 D3D12，Mesa `26.3.0-devel (git-e3fc7749c6)`、Vulkan `1.2.359`、EGL 1.5 / GLES 2.0；`translated=yes software=no` |
-| Java GLES 进入 ANGLE | NOT_RUN | 真实 APK GLSurfaceView 的值/生命周期，不是宿主探测 |
+| Java GLES 进入 ANGLE | 下述受限 GLES20 profile PASS | 真实 APK `GLSurfaceView` 颜色、resize、恢复、销毁及显式拒绝 |
 | 客体 GLES/N2 | NOT_RUN | 受管理 Surface/ANativeWindow、审计后的 EGL/GLES 调用与函数指针、正负 APK 契约 |
 | 客体 Vulkan/N2 | NOT_RUN | 独立 Android/Win32 WSI 及 dispatch/handle/callback 契约，不是 ANGLE 私有 device |
 | 厂商 ARM64 Vulkan ICD | BLOCKED | 具有该驱动的机器；Dozen 结果不能填入此行 |
@@ -61,4 +61,25 @@ P5a 从受控私有 DLL 目录加载 libEGL/libGLESv2，显式选择 Vulkan 或 
 `GraphicsHost`：Windows ARM64 上 **6 项 PASS，2.38 秒**（`P5-GraphicsHost.log`）。
 两个正例都在客户区从 `304x201` 变到 `400x265` 前后各绘制并回读两点，RGBA 均精确为
 `64,128,191,255`，销毁后正常退出。负例在显式 Vulkan 不可用时退出 2，未改用 D3D11。
-不覆盖产品 `auto` 选择及打包。
+宿主探测不覆盖 `auto` 选择及打包。
+
+## Java GLES 增量
+
+Windows Java GLES 实验使用一个铺满客户区的 `GLSurfaceView`、由宿主管理的 EGL context
+和显式绑定的 GLES20 方法。不向 Java 或客体代码暴露 EGL 句柄。`--graphics=off` 为默认值；
+Java 位图路径不加载 ANGLE。`vulkan` 和 `d3d11` 显式请求对应后端；`auto` 可在 Vulkan
+初始化失败后尝试 D3D11。此增量从 viewport、scissor、clear、查询和 RGBA8 直接回读起步。
+其他 GLES 方法保持未绑定；GL10 调用与自定义 EGL 配置明确拒绝。不包含混合合成、
+应用自管 EGL 或 context loss 的自动恢复。只有 Win32 渲染回调期间 context 才是 current，
+Activity/UI Java 调用线程没有该 context。resize 更新 drawable 而保留 context；
+最小化时停止 GLES 绘制，恢复时请求新帧。
+
+先构建 `Angle`，再构建 `Host` 或 `All` 以使用固定头文件。只有 `GLSurfaceView` 使用所请求
+后端时，才从桥 DLL 的私有 `angle` 目录加载 ANGLE DLL。
+`test.ps1 -Suite GraphicsJava` 在 CheckJNI 下运行真实 `hello-gles.apk`：显式 Vulkan 经 Dozen、
+子进程看不到 Vulkan 时 `auto` 回退到 D3D11，以及相同 ICD 限制下显式 Vulkan 拒绝。
+APK 断言带 position 的直接缓冲区回读出两种 RGBA 颜色、只读和非 current 调用拒绝及 renderer 回调。
+在同一 Adreno 硬件上通过 4 项。客户区从 `360x720` 改到 `424x752`；D3D11 正例还以
+`424x752` 完成最小化/恢复，保留原有 context。显式后端不可用在任何绘制之前退出 1。
+`doctor` 只盘点 ARM64 DLL 文件，不做渲染，`angleBackends` 保持为空。
+尚未通过 Java GLES 验证 shader、纹理、混合及 FBO；宿主探测的 shader 测试不替代它们。

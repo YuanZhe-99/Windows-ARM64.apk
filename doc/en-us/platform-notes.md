@@ -203,8 +203,8 @@ The user approved the existing ARM64 Dozen path (ADR-0004). The source build of 
 6 checks in 2.38 s: Adreno 8cx Gen 3 D3D11 and Vulkan/Dozen draw, readback, resize and
 teardown, plus explicit Vulkan unavailability without fallback. See
 [graphics capabilities](graphics-capabilities.md) for the drivers and pixel evidence.
-Vendor Vulkan remains BLOCKED; Java GLES, guest GLES/Vulkan, product `auto`, G4/G5 and
-layers C/D remain NOT_RUN.
+Vendor Vulkan remains BLOCKED. The Java-only increment below does not pass G4/G5 or
+layers C/D; guest GLES/Vulkan remain NOT_RUN.
 
 The preparation regression passes requirements/build All and AngleProbe compilation, Host 24
 (the extra PE is angle-probe), Java 43, Native 58, Bionic 104, Jni 24 and ApkJni 8.
@@ -219,6 +219,23 @@ not reported as PASS. After `ignore ./build` in go.mod, package discovery takes 
 covers the same six product packages; Go vet/tests, CGO-disabled tests, MyGo vet/i18n and
 documentation mirror checks pass. Version remains 0.1.0, unreleased; followed upstreams were
 checked unchanged, merged Mac.apk `3f35611`; only origin → `<local_gitea_address>` is configured.
+
+## P5b Java-only GLES
+
+`GraphicsJava` passes four checks on the same Adreno 8cx Gen 3: explicit Vulkan using Dozen
+and `auto` selecting D3D11 when the child has no Vulkan ICD, plus a hash check and explicit
+unavailable Vulkan refusal with exit 1. The regular APK uses CheckJNI and verifies two pixel
+colors, one context across resize, refusal without a current context and for read-only buffers,
+restore on D3D11 and normal EGL teardown. The bitmap path remains independent.
+Backend inventory in `doctor` is not a rendering test. One intermediate combined regression
+found PowerShell restoring absent loader variables as empty; the test now removes variables
+that were originally absent rather than leaving empty strings.
+
+Final Windows ARM64 regression after that fix: requirements and `build.ps1 -Component All`
+plus the final incremental `Host` build passed. GraphicsJava 4 (7.63 s), Host 27, Java 43,
+Native 58, Bionic 104, Jni 24, ApkJni 8 and GraphicsHost 6 passed. Logs: `P5b-*.log`.
+T10 Java APK SHA-256: `61e2cda0de295ea98f02d144abe3fbf81b1d9b64acbd84e3a8e10804f1d3c291`.
+macOS build and smoke for the shared SurfaceView/GLSurfaceView edits remain NOT_RUN.
 
 ## Known limitations
 

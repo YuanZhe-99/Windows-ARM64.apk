@@ -2,7 +2,7 @@
 //
 //   winapk doctor [--json] [--present] [--no-jvm] [--java-home <dir>]
 //   winapk inspect <apk> [--json]
-//   winapk run <apk> [--native=off|restricted] [--data-dir <dir>] [--java-home <dir>] [--size <w>x<h>]
+//   winapk run <apk> [--native=off|restricted] [--graphics=off|auto|vulkan|d3d11] [...]
 //   winapk dex <apk> <out.jar> [--java-home <dir>]   (the conversion step of run, in its own process)
 //   winapk --version
 #include "doctor.h"
@@ -57,7 +57,8 @@ void Limitations(Report& r) {
     if (r.host.processArch != "arm64") add("HOST_ARCH_UNSUPPORTED", "winapk runs as " + r.host.processArch + ", not native arm64");
     if (r.jvm.started != "ok") add("DEPENDENCY_MISSING", "JVM: " + r.jvm.started);
     add("GUEST_ABI_UNSUPPORTED", "guest native defaults off; restricted C/JNI profile only, not arbitrary NDK/C++/ELF TLS or graphics compatibility");
-    add("ANGLE_NOT_BUILT", "no ANGLE for Windows ARM64 yet (P5a): no OpenGL ES");
+    if (!r.angleFilesArm64)
+        add("ANGLE_DLLS_MISSING", "private ARM64 libEGL.dll/libGLESv2.dll not found; the Java bitmap path is independent");
     if (r.vulkan.loader != "available") {
         add("GRAPHICS_CAPABILITY_MISSING", "Vulkan loader: " + r.vulkan.loader);
     } else if (r.vulkan.devices.empty()) {
@@ -106,7 +107,8 @@ void PrintJson(const Report& r) {
              ", \"queueFamilies\": " + std::to_string(d.queueFamilies) + ", \"win32Presentation\": " + Bool(d.win32Presentation) + " }";
     }
     o += std::string(v.devices.empty() ? "" : "\n    ") + "],\n";
-    o += "    \"win32Present\": " + Json(v.win32Present) + ",\n    \"angleBackends\": []\n  },\n";
+    o += "    \"win32Present\": " + Json(v.win32Present) + ",\n    \"angleFilesArm64\": " + Bool(r.angleFilesArm64) +
+         ",\n    \"angleBackends\": []\n  },\n";
     o += "  \"runtime\": { \"guestNativeProfiles\": [], \"guestVulkan\": false },\n  \"limitations\": [";
     for (size_t i = 0; i < r.limitations.size(); ++i) {
         o += std::string(i ? "," : "") + "\n    { \"id\": " + Json(r.limitations[i].first) + ", \"reason\": " + Json(r.limitations[i].second) + " }";
@@ -137,6 +139,7 @@ void PrintText(const Report& r) {
                d.apiVersion.c_str(), d.driverName.empty() ? "?" : d.driverName.c_str(), d.translated ? " (translated)" : "",
                d.queueFamilies, d.win32Presentation ? "yes" : "no");
     }
+    printf("ANGLE     private ARM64 DLLs %s; renderer not tested by doctor\n", r.angleFilesArm64 ? "found" : "not found");
     printf("Not yet:\n");
     for (const auto& [id, why] : r.limitations) printf("  %s: %s\n", id.c_str(), why.c_str());
 }
@@ -144,7 +147,8 @@ void PrintText(const Report& r) {
 int Usage() {
     fputs("usage: winapk doctor [--json] [--present] [--no-jvm] [--java-home <dir>]\n"
           "       winapk inspect <apk> [--json]\n"
-          "       winapk run <apk> [--native=off|restricted] [--data-dir <dir>] [--java-home <dir>] [--size <w>x<h>]\n"
+          "       winapk run <apk> [--native=off|restricted] [--graphics=off|auto|vulkan|d3d11]\n"
+          "                        [--data-dir <dir>] [--java-home <dir>] [--size <w>x<h>]\n"
           "       winapk dex <apk> <out.jar> [--java-home <dir>]\n"
           "       winapk --version\n", stderr);
     return 2;
@@ -178,6 +182,7 @@ int wmain(int argc, wchar_t** argv) {
         for (int i = 3; i < argc; ++i) {
             std::wstring a = argv[i];
             if (a.rfind(L"--native=", 0) == 0) ra.native = a.substr(9);
+            else if (a.rfind(L"--graphics=", 0) == 0) ra.graphics = a.substr(11);
             else if (a == L"--data-dir" && i + 1 < argc) ra.dataDir = full(argv[++i]);
             else if (a == L"--java-home" && i + 1 < argc) ra.javaHome = argv[++i];
             else if (a == L"--size" && i + 1 < argc && swscanf_s(argv[++i], L"%dx%d", &ra.width, &ra.height) == 2) {}
@@ -210,6 +215,8 @@ int wmain(int argc, wchar_t** argv) {
     ProbeHost(r);
     ProbeJvm(r, javaHome, dir + L"\\winapk-probe.jar", noJvm);
     ProbeVulkan(r, present);
+    r.angleFilesArm64 = PeArch(dir + L"\\angle\\libEGL.dll") == "arm64" &&
+                        PeArch(dir + L"\\angle\\libGLESv2.dll") == "arm64";
     Limitations(r);
     if (json) PrintJson(r);
     else PrintText(r);

@@ -23,7 +23,7 @@ public class GLSurfaceView extends SurfaceView
     public static final int DEBUG_CHECK_GL_ERROR = 1;
     public static final int DEBUG_LOG_GL_CALLS   = 2;
 
-    private Renderer renderer;
+    private volatile Renderer renderer;
     // volatile: written on the UI thread (setRenderMode), read on the render tick
     // (AOSP writes it under sGLThreadManager and reads it under the same lock).
     private volatile int renderMode = RENDERMODE_CONTINUOUSLY;
@@ -188,6 +188,7 @@ public class GLSurfaceView extends SurfaceView
 
     public GLSurfaceView(Context c) {
         super(c);
+        if (System.getProperty("winapk.graphics") != null) return; // Windows SurfaceView bound this instance.
         // SurfaceView's ctor already pointed nativeHandle at the singleton
         // MTKView. Wire OUR per-frame callback to it so onDrawFrame fires
         // here. If multiple GLSurfaceView instances are constructed (e.g.
@@ -198,6 +199,66 @@ public class GLSurfaceView extends SurfaceView
         if (handle != 0) NativeCocoa.setRenderer(handle, this);
     }
     public GLSurfaceView(Context c, android.util.AttributeSet a) { this(c); }
+
+    /** Returns the client version, -1 before setRenderer, or -2 for an unsupported custom configuration. */
+    private int macapkWindowsClientVersion() {
+        if (renderer == null) return -1;
+        if (macapkHasCustomEGLFactories() || mRequestedConfigSizes != null || mGLWrapper != null) return -2;
+        int version = macapkRequestedEGLContextClientVersion();
+        return version < 0 ? 0 : version;
+    }
+
+    /** Keeps the opaque config and GL10 callback objects separate from the macOS EGL facade. */
+    private static final class WindowsGles2 {
+        static final EGLConfig CONFIG = new EGLConfig() {};
+        static final GL10 GL = (GL10) java.lang.reflect.Proxy.newProxyInstance(
+            GL10.class.getClassLoader(), new Class<?>[] { GL10.class },
+            (proxy, method, args) -> {
+                if (method.getDeclaringClass() == Object.class) {
+                    switch (method.getName()) {
+                        case "toString": return "Windows GLES2 (GLES1 unavailable)";
+                        case "hashCode": return System.identityHashCode(proxy);
+                        case "equals": return proxy == args[0];
+                    }
+                }
+                throw new UnsupportedOperationException("GRAPHICS_CAPABILITY_MISSING: Windows GLSurfaceView has no GL10 methods");
+            });
+    }
+
+    /** Draws the full Win32 client area with the host's current context, without Metal overlays. */
+    private boolean macapkWindowsDrawFrame(int w, int h, boolean freshContext, boolean exposed) {
+        if (freshContext) lifecycleDeliveredTo = null;
+        if (exposed) requestRenderPending.set(true);
+        if (!macapkEnterRendererCall()) return false;
+        try {
+            Renderer r = renderer;
+            if (r == null) return false;
+            lastWidthPx = w;
+            lastHeightPx = h;
+            macapkRunQueuedGlEvents();
+            android.os.Looper.macapkEnterGlRenderer();
+            try {
+                if (lifecycleDeliveredTo != r) {
+                    r.onSurfaceCreated(WindowsGles2.GL, WindowsGles2.CONFIG);
+                    lifecycleDeliveredTo = r;
+                    lifecycleDeliveredW = -1;
+                }
+                if (lifecycleDeliveredW != w || lifecycleDeliveredH != h) {
+                    r.onSurfaceChanged(WindowsGles2.GL, w, h);
+                    lifecycleDeliveredW = w;
+                    lifecycleDeliveredH = h;
+                    requestRenderPending.set(true);
+                }
+                if (!macapkTakeRenderRequest()) return false;
+                r.onDrawFrame(WindowsGles2.GL);
+                return true;
+            } finally {
+                android.os.Looper.macapkExitGlRenderer();
+            }
+        } finally {
+            macapkExitRendererCall();
+        }
+    }
 
     public void setRenderer(Renderer r) {
         this.renderer = r;
@@ -1213,6 +1274,7 @@ public class GLSurfaceView extends SurfaceView
     /** AOSP: mGLThread.onWindowResize(w, h) -- note it IGNORES `format`. */
     @Override public void surfaceChanged(android.view.SurfaceHolder holder,
             int format, int w, int h) {
+        if (System.getProperty("winapk.graphics") != null) return; // Only the EGL owner may deliver callbacks.
         // 2026-09-26 (MACAPK_SV_DISPLAY_SIZE, which either MACAPK_SV_VIEW_SIZE
         // gate forces on): w x h is the holder's BUFFER, and lastWidthPx /
         // lastHeightPx are the DISPLAY drawable (the renderer is sized from

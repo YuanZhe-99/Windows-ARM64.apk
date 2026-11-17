@@ -82,6 +82,7 @@ struct Report {
     std::vector<Adapter> adapters;
     JvmInfo jvm;
     VulkanInfo vulkan;
+    bool angleFilesArm64 = false; ///< private EGL/GLES PE files found; no rendering was probed
     /// Stable identifiers of what this build cannot do yet (PLAN.md §14.2 style), each with
     /// a reason; doctor reports them rather than letting a missing capability look present.
     std::vector<std::pair<std::string, std::string>> limitations;

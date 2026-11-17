@@ -329,6 +329,9 @@ function Build-Fixtures {
             $info.libs = [ordered]@{}
             foreach ($so in $libs) { $info.libs["lib/arm64-v8a/$([IO.Path]::GetFileName($so))"] = (Get-FileHash $so -Algorithm SHA256).Hash.ToLower() }
         }
+        if ($name -eq 'hello-gles') {
+            $info.expected = 'T10.java: distinct RGBA8 halves after resize with one context; no-current and read-only buffer refused; explicit unavailable Vulkan fails'
+        }
         $info | ConvertTo-Json -Depth 6 | Set-Content (Join-Path $fixtures "$name.json") -Encoding utf8NoBOM
         Write-Step "$name.apk: dex sha256 $($info.dexSha256)"
     }

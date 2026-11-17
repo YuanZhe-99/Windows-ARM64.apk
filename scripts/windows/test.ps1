@@ -38,11 +38,11 @@ and hardware TLS/syscall/register access remain refused. Each probe has a
 60-second deadline. Build first: build.ps1 -Component NativeProbe.
 
 .PARAMETER Suite
-Host, Java, Native, Bionic, Jni, ApkJni, GraphicsHost, or a targeted Bionic subset.
+Host, Java, Native, Bionic, Jni, ApkJni, GraphicsHost, GraphicsJava, or a targeted Bionic subset.
 #>
 [CmdletBinding()]
 param(
-    [ValidateSet('Host', 'Java', 'Native', 'Bionic', 'Modules', 'Memory', 'Io', 'Faults', 'Format', 'Libraries', 'Jni', 'ApkJni', 'GraphicsHost')]
+    [ValidateSet('Host', 'Java', 'Native', 'Bionic', 'Modules', 'Memory', 'Io', 'Faults', 'Format', 'Libraries', 'Jni', 'ApkJni', 'GraphicsHost', 'GraphicsJava')]
     [string]$Suite = 'Host'
 )
 Set-StrictMode -Version Latest
@@ -59,16 +59,25 @@ function Check([string]$Id, [bool]$Ok, [string]$Evidence) {
     if ($Ok) { Write-Host "PASS  $Id  $Evidence" } else { Write-Host "FAIL  $Id  $Evidence"; $script:failed++ }
 }
 
+<# Sets process-local test variables, preserving the distinction between unset and empty. #>
+function Set-TestEnv([hashtable]$Entries) {
+    foreach ($key in $Entries.Keys) {
+        if ($null -eq $Entries[$key]) { Remove-Item -LiteralPath "Env:$key" -ErrorAction SilentlyContinue }
+        else { [Environment]::SetEnvironmentVariable($key, $Entries[$key]) }
+    }
+}
+
 <# Runs doctor --json with an environment of its own and returns the report. #>
 function Invoke-Doctor([hashtable]$Env, [string[]]$Arguments = @()) {
     $saved = @{}
-    foreach ($k in $Env.Keys) { $saved[$k] = [Environment]::GetEnvironmentVariable($k); [Environment]::SetEnvironmentVariable($k, $Env[$k]) }
+    foreach ($k in $Env.Keys) { $saved[$k] = [Environment]::GetEnvironmentVariable($k) }
+    Set-TestEnv $Env
     try {
         $json = & $winapk doctor --json @Arguments
         if ($LASTEXITCODE -ne 0) { throw "winapk doctor exited with $LASTEXITCODE" }
         ($json -join "`n") | ConvertFrom-Json
     } finally {
-        foreach ($k in $saved.Keys) { [Environment]::SetEnvironmentVariable($k, $saved[$k]) }
+        Set-TestEnv $saved
     }
 }
 
@@ -96,6 +105,8 @@ function Test-Host {
     Check 'T01.fonts' ([int]$p.fontFamilies -gt 0) "fontFamilies=$($p.fontFamilies)"
     Check 'T01.jvm.desktop' ($r.jvm.javaDesktop -and $r.jvm.jniHeaders) "java.desktop=$($r.jvm.javaDesktop) jniHeaders=$($r.jvm.jniHeaders)"
     Check 'T01.vulkan.loader' ($r.graphics.vulkanLoader -eq 'available' -and $r.graphics.vulkanLoaderArch -eq 'arm64') "loader=$($r.graphics.vulkanLoader) arch=$($r.graphics.vulkanLoaderArch)"
+    $privateAngle = (Test-Path (Join-Path $out 'bin\angle\libEGL.dll')) -and (Test-Path (Join-Path $out 'bin\angle\libGLESv2.dll'))
+    Check 'T01.angle.inventory' ($r.graphics.angleFilesArm64 -eq $privateAngle -and @($r.graphics.angleBackends).Count -eq 0) 'inventory only; no claimed rendering'
     Check 'T01.guestVulkan.off' ($r.runtime.guestVulkan -eq $false) 'guest Vulkan is not reported as available'
 
     # T01: upstream's patch modules load on this JVM (built by -Component Java).
@@ -181,8 +192,8 @@ public static class WinApkTestWin {
 "@
 
 <# Starts winapk run on an APK at $script:appSize (points) with its log in $Log; returns the process. #>
-function Start-App([string]$Apk, [string]$Data, [string]$Log, [string]$Native = 'off') {
-    Start-Process -FilePath $winapk -ArgumentList @('run', "`"$Apk`"", '--data-dir', "`"$Data`"", '--size', $script:appSize, "--native=$Native") `
+function Start-App([string]$Apk, [string]$Data, [string]$Log, [string]$Native = 'off', [string]$Graphics = 'off') {
+    Start-Process -FilePath $winapk -ArgumentList @('run', "`"$Apk`"", '--data-dir', "`"$Data`"", '--size', $script:appSize, "--native=$Native", "--graphics=$Graphics") `
         -RedirectStandardError $Log -RedirectStandardOutput "$Log.out" -PassThru -NoNewWindow
 }
 
@@ -193,20 +204,22 @@ function Read-Log([string]$Log) {
 }
 
 <# Waits until the log matches $Pattern; returns the match, or $null after $Seconds. #>
-function Wait-Log([string]$Log, [string]$Pattern, [int]$Seconds = 30) {
+function Wait-Log([string]$Log, [string]$Pattern, [int]$Seconds = 30, $Process = $null) {
     $until = (Get-Date).AddSeconds($Seconds)
     while ((Get-Date) -lt $until) {
         $m = [regex]::Matches((Read-Log $Log), $Pattern)
         if ($m.Count -gt 0) { return $m[$m.Count - 1] }
+        if ($Process -and $Process.HasExited) { break }
         Start-Sleep -Milliseconds 200
     }
     $null
 }
 
 <# Finds the app window of process $Id titled $Title. #>
-function Find-AppWindow([int]$Id, [string]$Title, [int]$Seconds = 60) {
+function Find-AppWindow([int]$Id, [string]$Title, [int]$Seconds = 60, $Process = $null) {
     $until = (Get-Date).AddSeconds($Seconds)
     while ((Get-Date) -lt $until) {
+        if ($Process -and $Process.HasExited) { break }
         $h = [WinApkTestWin]::FindWindowW('WinApkAppWindow', $Title)
         if ($h -ne [IntPtr]::Zero) { $p = 0; [WinApkTestWin]::GetWindowThreadProcessId($h, [ref]$p) | Out-Null; if ($p -eq $Id) { return $h } }
         Start-Sleep -Milliseconds 250
@@ -869,7 +882,7 @@ function Test-GraphicsHost {
             $p = Start-Process $probe -ArgumentList @($variant.Backend, "`"$directory`"") -NoNewWindow -PassThru `
                 -RedirectStandardOutput $stdout -RedirectStandardError $stderr
         } finally {
-            foreach ($key in $saved.Keys) { [Environment]::SetEnvironmentVariable($key, $saved[$key]) }
+            Set-TestEnv $saved
         }
         try {
             if (-not $p.WaitForExit(30000)) {
@@ -892,7 +905,82 @@ function Test-GraphicsHost {
     }
 }
 
-switch ($Suite) { 'Host' { Test-Host } 'Java' { Test-Java } 'Native' { Test-Native } 'Bionic' { Test-Bionic } 'Modules' { Test-Modules } 'Memory' { Test-Bionic -Command memory } 'Io' { Test-Bionic -Command io } 'Faults' { Test-Bionic -Command faults } 'Format' { Test-Bionic -Command format } 'Libraries' { Test-Libraries } 'Jni' { Test-Jni } 'ApkJni' { Test-ApkJni } 'GraphicsHost' { Test-GraphicsHost } }
+<# Runs one APK through explicit Vulkan, auto-to-D3D11, and explicit Vulkan refusal. #>
+function Test-GraphicsJava {
+    $script:appSize = '360x720'
+    $apk = Join-Path $repo 'tests\fixtures\hello-gles.apk'
+    $fixture = Get-Content (Join-Path $repo 'tests\fixtures\hello-gles.json') -Raw | ConvertFrom-Json
+    Check 'T10.java.hash' ((Get-FileHash $apk).Hash.ToLower() -eq $fixture.apkSha256) 'APK build record'
+    $logs = Join-Path $out 'test-data\logs'
+    New-Item -ItemType Directory -Force $logs | Out-Null
+    $data = Join-Path $out 'test-data\graphics-java'
+    foreach ($variant in @(
+        @{ Name = 'vulkan'; Request = 'vulkan'; Backend = 'vulkan'; Unavailable = $false },
+        @{ Name = 'auto'; Request = 'auto'; Backend = 'd3d11'; Unavailable = $true },
+        @{ Name = 'vulkan-unavailable'; Request = 'vulkan'; Backend = ''; Unavailable = $true }
+    )) {
+        $log = Join-Path $logs "T10-java-$($variant.Name).log"
+        $saved = @{}
+        foreach ($key in 'VK_DRIVER_FILES', 'VK_ICD_FILENAMES', 'VK_LOADER_DRIVERS_SELECT', 'JAVA_TOOL_OPTIONS') {
+            $saved[$key] = [Environment]::GetEnvironmentVariable($key)
+        }
+        try {
+            if ($variant.Unavailable) {
+                $env:VK_DRIVER_FILES = Join-Path $logs 'not-an-installed-icd.json'
+                $env:VK_ICD_FILENAMES = $env:VK_DRIVER_FILES
+                $env:VK_LOADER_DRIVERS_SELECT = '*not-an-installed-icd*'
+            }
+            $env:JAVA_TOOL_OPTIONS = "$($saved.JAVA_TOOL_OPTIONS) -Xcheck:jni"
+            $p = Start-App $apk $data $log 'off' $variant.Request
+        } finally {
+            Set-TestEnv $saved
+        }
+        try {
+            if (-not $variant.Backend) {
+                $exited = $p.WaitForExit(30000)
+                $text = Read-Log $log
+                Check 'T10.java.vulkan-unavailable' ($exited -and $p.ExitCode -eq 1 -and
+                    $text -match 'GRAPHICS_CAPABILITY_MISSING: Java GLES backend=vulkan.*no fallback' -and
+                    $text -notmatch 'backend=d3d11|T10\.java: PASS|WARNING in native method|FATAL ERROR in native method') 'explicit Vulkan, no alternate renderer'
+                continue
+            }
+            $h = Find-AppWindow $p.Id 'Hello GLES' 15 $p
+            $first = Wait-Log $log 'T10\.java: PASS frame=1 contexts=1 size=(\d+)x(\d+)' 30 $p
+            if (!$first -or !$h) {
+                Check "T10.java.$($variant.Name)" $false 'no first frame or window; see APK log'
+                continue
+            }
+            $wr = New-Object WinApkTestWin+RECT
+            $rc = New-Object WinApkTestWin+RECT
+            $resized = [WinApkTestWin]::GetWindowRect($h, [ref]$wr) -and
+                [WinApkTestWin]::SetWindowPos($h, [IntPtr]::Zero, 0, 0, ($wr.R - $wr.L + 64), ($wr.B - $wr.T + 32), 0x16) -and
+                [WinApkTestWin]::GetClientRect($h, [ref]$rc)
+            $extent = "$($rc.R)x$($rc.B)"
+            $second = if ($resized) { Wait-Log $log "T10\.java: PASS frame=2 contexts=1 size=$extent\b" 10 $p }
+            $restored = $false
+            if ($second -and $variant.Request -eq 'auto') {
+                Send-SysCommand $h 0xF020
+                if (Wait-Log $log 'minimised; Java GLES suspended' 5 $p) {
+                    Send-SysCommand $h 0xF120
+                    $restored = $null -ne (Wait-Log $log "restored; drawing at full rate[\s\S]*T10\.java: PASS frame=3 contexts=1 size=$extent\b" 10 $p)
+                }
+            }
+            $code = Close-App $h $p
+            $text = Read-Log $log
+            $nextFrame = if ($variant.Request -eq 'auto') { 4 } else { 3 }
+            Check "T10.java.$($variant.Name)" ($first -and $second -and $extent -ne "$($first.Groups[1].Value)x$($first.Groups[2].Value)" -and
+                $code -eq 0 -and $text -match "Java GLES request=$($variant.Request) backend=$($variant.Backend) renderer=" -and
+                ($variant.Request -ne 'auto' -or ($restored -and $text -match 'Java GLES auto: backend=vulkan.*trying d3d11')) -and
+                $text -match 'Java GLES teardown complete' -and
+                $text -notmatch "GRAPHICS_RENDER_FAILED|WARNING in native method|FATAL ERROR in native method|T10\.java: PASS frame=$nextFrame\b") "APK frame readbacks, resized to $extent, one context, restore=$restored and normal teardown"
+        } finally {
+            if (!$p.HasExited) { $p.Kill(); $p.WaitForExit() }
+            $p.Dispose()
+        }
+    }
+}
+
+switch ($Suite) { 'Host' { Test-Host } 'Java' { Test-Java } 'Native' { Test-Native } 'Bionic' { Test-Bionic } 'Modules' { Test-Modules } 'Memory' { Test-Bionic -Command memory } 'Io' { Test-Bionic -Command io } 'Faults' { Test-Bionic -Command faults } 'Format' { Test-Bionic -Command format } 'Libraries' { Test-Libraries } 'Jni' { Test-Jni } 'ApkJni' { Test-ApkJni } 'GraphicsHost' { Test-GraphicsHost } 'GraphicsJava' { Test-GraphicsJava } }
 if ($script:failed -gt 0) { Write-Host "$script:failed check(s) failed"; exit 1 }
 Write-Host 'all checks passed'
 exit 0

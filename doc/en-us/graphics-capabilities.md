@@ -9,7 +9,7 @@ independent; enabling guest native does not enable GLES or guest Vulkan.
 |---|---|---|
 | Host ANGLE/D3D11 | PASS | Adreno 8cx Gen 3 hardware, driver `30.0.4122.4000`, EGL 1.5 / GLES 3.0; draw/readback, resize and teardown |
 | Host ANGLE/Vulkan on Dozen | PASS; user-approved experiment (ADR-0004) | same Adreno GPU via D3D12, Mesa `26.3.0-devel (git-e3fc7749c6)`, Vulkan `1.2.359`, EGL 1.5 / GLES 2.0; `translated=yes software=no` |
-| Java GLES into ANGLE | NOT_RUN | real APK GLSurfaceView values/lifecycle, not a host probe |
+| Java GLES into ANGLE | PASS for the bounded GLES20 profile below | real APK `GLSurfaceView` colors, resize, restore, teardown, and explicit refusal |
 | Guest GLES/N2 | NOT_RUN | managed Surface/ANativeWindow, audited EGL/GLES calls and function pointers, positive/negative APK contracts |
 | Guest Vulkan/N2 | NOT_RUN | separate Android/Win32 WSI and dispatch/handle/callback contracts, not ANGLE's private device |
 | Vendor ARM64 Vulkan ICD | BLOCKED | a machine with that driver; Dozen results cannot fill this row |
@@ -67,5 +67,31 @@ the host fixture's source hash, compiler/configuration, executable hash and expe
 `GraphicsHost`: **6 PASS, 2.38 s** on Windows ARM64 (`P5-GraphicsHost.log`). Both positive
 processes drew and read exact RGBA `64,128,191,255` at two points before and after the client
 area changed from `304x201` to `400x265`; both exited normally after teardown. The negative
-process exited 2 with explicit Vulkan unavailable, without switching to D3D11. Product
-`auto` selection and packaging are not covered.
+process exited 2 with explicit Vulkan unavailable, without switching to D3D11. The host probe
+does not test `auto` or packaging.
+
+## Java GLES increment
+
+The Windows Java GLES experiment uses one full-client `GLSurfaceView`, a host-owned EGL context
+and explicitly bound GLES20 methods. It does not expose EGL handles to Java or guest code.
+`--graphics=off` is the default; the Java bitmap path does not load ANGLE. `vulkan` and `d3d11`
+request those backends explicitly; `auto` may try D3D11 after Vulkan initialization fails.
+This increment starts with viewport, scissor, clear, queries and direct RGBA8 readback. Other
+GLES methods remain unbound; GL10 calls and custom EGL configuration are refused. Mixed
+composition, app-owned EGL and automatic recovery from context loss are outside the profile.
+The current context is scoped to the Win32 render callback, never the Activity/UI caller's
+Java thread. Resize renews the drawable while retaining the context; minimized windows stop
+GLES draws and request a new frame on restore.
+
+Build `Angle` before `Host` or `All` to provide the pinned headers. ANGLE DLLs still load only
+from the bridge's private `angle` directory when a `GLSurfaceView` uses the requested backend.
+`test.ps1 -Suite GraphicsJava` runs the real `hello-gles.apk` under CheckJNI: explicit Vulkan
+through Dozen, `auto` falling back to D3D11 when the child cannot see Vulkan, and explicit
+Vulkan refusal with the same ICD restriction. The APK asserts two different RGBA colors with
+a positioned direct buffer, read-only and off-context refusal, and renderer callbacks.
+The suite passed 4 checks on the same Adreno hardware. The client changed from `360x720`
+to `424x752`; the D3D11 case also minimized and restored at `424x752`, retaining the same
+context. The explicit unavailable case exited 1 before any draw. `doctor` only inventories
+ARM64 DLL files; its `angleBackends` list stays empty because it does not render.
+Shaders, textures, blending and FBOs are not yet verified through Java GLES; the host probe's
+shader test does not fill that gap.

@@ -48,6 +48,7 @@ add_library(winapk-bridge SHARED
   ${_win}/src/bridge/bridge.cpp
   ${_win}/src/bridge/log.cpp
   ${_win}/src/bridge/window.cpp
+  ${_win}/src/bridge/graphics.cpp
   ${_win}/src/bridge/guest.cpp
   ${CMAKE_CURRENT_LIST_DIR}/../../guest/jni/bridge.cpp
   ${CMAKE_CURRENT_LIST_DIR}/../../guest/jni/entries.cpp
@@ -62,6 +63,11 @@ target_include_directories(winapk-bridge PRIVATE "${CMAKE_CURRENT_LIST_DIR}/../.
 target_compile_definitions(winapk-bridge PRIVATE UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX _CRT_SECURE_NO_WARNINGS)
 target_compile_options(winapk-bridge PRIVATE /W4 /EHsc -Wno-missing-field-initializers)
 target_link_libraries(winapk-bridge PRIVATE unofficial::sqlite3::sqlite3 user32 gdi32 shcore capstone::capstone mincore)
+set(_angle_headers "${CMAKE_CURRENT_LIST_DIR}/../../../../build/windows-arm64/deps/angle/include")
+if(EXISTS "${_angle_headers}/EGL/eglext_angle.h")
+  target_include_directories(winapk-bridge PRIVATE "${_angle_headers}")
+  target_compile_definitions(winapk-bridge PRIVATE WINAPK_HAS_ANGLE_HEADERS)
+endif()
 
 # The standalone guest ELF experiment (PLAN.md §9.1): the N0 loader and its ABI suite, without
 # the JVM or a window. Same compiler flags and mitigations as winapk.exe, the process guest code
@@ -106,7 +112,7 @@ add_executable(angle-probe EXCLUDE_FROM_ALL
   ${_win}/winapk.manifest)
 target_include_directories(angle-probe PRIVATE
   "${JAVA_HOME}/include" "${JAVA_HOME}/include/win32"
-  "${CMAKE_CURRENT_LIST_DIR}/../../../../build/windows-arm64/deps/angle/include")
+  "${_angle_headers}")
 target_compile_definitions(angle-probe PRIVATE UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX)
 target_compile_options(angle-probe PRIVATE /W4 /EHsc -Wno-missing-field-initializers)
 target_link_libraries(angle-probe PRIVATE Vulkan::Headers user32 dxgi advapi32)

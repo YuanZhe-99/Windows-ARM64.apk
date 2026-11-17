@@ -1,6 +1,6 @@
 // run.cpp -- `winapk run`: runs one APK's Java code in this process (PLAN.md §8, G1).
 //
-//   winapk run <apk> [--native=off|restricted] [--data-dir <dir>] [--java-home <dir>] [--size <w>x<h>]
+//   winapk run <apk> [--native=off|restricted] [--graphics=off|auto|vulkan|d3d11] [...]
 //
 // Steps, each logged as "[winapk] stage …": inspect the APK (no code runs), convert its DEX
 // to classes.jar with com.macapk.dex in a child `winapk dex` (cached by content), create the JVM here
@@ -342,6 +342,10 @@ int Run(const RunArgs& a) {
         Log("GUEST_ABI_UNSUPPORTED: --native must be off or restricted");
         return 64;
     }
+    if (a.graphics != L"off" && a.graphics != L"auto" && a.graphics != L"vulkan" && a.graphics != L"d3d11") {
+        Log("GRAPHICS_CAPABILITY_MISSING: --graphics must be off, auto, vulkan or d3d11");
+        return 64;
+    }
     Log("stage inspect " + Utf8(a.apk));
     ApkInfo apk;
     if (std::string err = InspectApk(a.apk, apk); !err.empty()) {
@@ -446,6 +450,7 @@ int Run(const RunArgs& a) {
         "-Dmacapk.bundle.apk=" + Utf8(a.apk),
         "-Ddex2jvm.redirectNativeLoad=com/macapk/loader/GuestNativeLoader",
         "-Dwinapk.guestNative=" + Utf8(a.native),
+        "-Dwinapk.graphics=" + Utf8(a.graphics),
         "-Dwinapk.guestLibraryDir=" + Utf8(guestLibraries),
     };
     std::string err;

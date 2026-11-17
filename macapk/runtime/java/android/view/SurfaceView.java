@@ -72,8 +72,9 @@ public class SurfaceView extends View implements MetalSurfaceCallbacks {
         // MTKView's CAMetalLayer it sees first; if every SurfaceView
         // had its own, the visible one and the ANGLE-bound one could
         // diverge (and they did -- caused a black screen on Flappy).
-        long handle = NativeCocoa.getOrCreateSharedMetalSurfaceView(
-            NativeCocoa.phoneWidth(), NativeCocoa.phoneHeight());
+        long handle = System.getProperty("winapk.graphics") != null
+            ? NativeCocoa.createMetalSurfaceView(NativeCocoa.phoneWidth(), NativeCocoa.phoneHeight())
+            : NativeCocoa.getOrCreateSharedMetalSurfaceView(NativeCocoa.phoneWidth(), NativeCocoa.phoneHeight());
         setNativeHandle(handle);
         // Self-register as the per-frame target. Subclasses that
         // implement their own macapkDrawFrame (like our v2

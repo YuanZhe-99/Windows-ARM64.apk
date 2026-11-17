@@ -9,6 +9,7 @@ namespace winapk {
 struct RunArgs {
     std::wstring apk;        ///< absolute path of the APK
     std::wstring native = L"off";  ///< guest native mode: off (default) or restricted APK namespace
+    std::wstring graphics = L"off";  ///< optional Windows ANGLE Java GLSurfaceView backend
     std::wstring dataDir;    ///< "" for %LOCALAPPDATA%\Windows-ARM64.apk\Apps
     std::wstring javaHome;   ///< "" to search as doctor does
     int width = 0, height = 0;  ///< the app's size in points; 0 to fit the screen

@@ -195,7 +195,7 @@ D3D11 永不替代 Vulkan 结果。
 `ec77017` 的源码构建及 ARM64 DLL 暂存通过。`GraphicsHost` 6 项通过（2.38 秒）：
 Adreno 8cx Gen 3 上 D3D11 和 Vulkan/Dozen 均完成绘制、回读、resize 和销毁；
 显式 Vulkan 不可用时不回退。驱动和像素证据见[图形能力](graphics-capabilities.md)。
-厂商 Vulkan 仍为 BLOCKED；Java GLES、客体 GLES/Vulkan、产品 `auto`、G4/G5 与层 C/D 仍为 NOT_RUN。
+厂商 Vulkan 仍为 BLOCKED。下文的 Java 增量不通过 G4/G5 或层 C/D；客体 GLES/Vulkan 仍为 NOT_RUN。
 
 准备阶段回归通过 requirements/build All 及 AngleProbe 编译、Host 24
 （新增 PE 是 angle-probe）、Java 43、Native 58、Bionic 104、Jni 24、ApkJni 8。
@@ -208,6 +208,21 @@ go.mod 加入 `ignore ./build` 后，包发现耗时 2.51 秒，仍覆盖相同�
 Go vet/测试、CGO 关闭测试、MyGo vet/i18n 及文档镜像检查通过。
 版本仍为 0.1.0、未发布；跟随上游已检查、未变，已合并 Mac.apk `3f35611`；
 仅配置 origin → `<local_gitea_address>`。
+
+## P5b 仅 Java 的 GLES
+
+在同一 Adreno 8cx Gen 3 上，`GraphicsJava` 四项通过：显式 Vulkan 经 Dozen、子进程没有
+Vulkan ICD 时 `auto` 选择 D3D11、哈希检查及显式 Vulkan 不可用时拒绝并退出 1。
+普通 APK 启用 CheckJNI，验证两种像素颜色、resize 保留一个 context、无 current context
+和只读缓冲区的拒绝、D3D11 恢复及 EGL 正常销毁。位图路径保持独立。
+`doctor` 的后端盘点不是渲染测试。一次中间组合回归发现 PowerShell 会把原本未设置的 loader
+变量恢复成空字符串；测试现会移除原本未设置的变量。
+
+修复后的 Windows ARM64 回归：环境要求、`build.ps1 -Component All` 及最终增量 `Host`
+构建通过。GraphicsJava 4（7.63 秒）、Host 27、Java 43、Native 58、Bionic 104、Jni 24、
+ApkJni 8、GraphicsHost 6 通过。日志为 `P5b-*.log`。
+T10 Java APK SHA-256：`61e2cda0de295ea98f02d144abe3fbf81b1d9b64acbd84e3a8e10804f1d3c291`。
+共享 SurfaceView/GLSurfaceView 改动的 macOS 构建和 smoke 仍为 NOT_RUN。
 
 ## 已知限制
 

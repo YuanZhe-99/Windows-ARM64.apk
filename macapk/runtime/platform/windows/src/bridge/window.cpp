@@ -19,6 +19,7 @@
 // (1/96 inch); a point is a dp because the runtime starts with density = 160 × the window's
 // DPI scale.
 #include "bridge.h"
+#include "graphics.h"
 
 #include <windows.h>
 #include <shellscalingapi.h>
@@ -53,6 +54,7 @@ struct View {
     std::vector<uint32_t> pixels;   ///< ARGB (0xAARRGGBB), top-down, width × height
     int frameW = 0, frameH = 0;
     int sizedW = -1, sizedH = -1;   ///< the size last reported by macapkSurfaceChanged
+    uint64_t rendererRevision = 0;   ///< invalidates an EGL owner when callbacks change
 };
 
 /// An app window and the view it shows.
@@ -65,6 +67,12 @@ struct Window {
     std::deque<wchar_t> keyChars;   ///< characters sent with their WM_KEYDOWN, their WM_CHAR still to come
     bool minimized = false;
     ULONGLONG lastHiddenFrame = 0;  ///< when a minimised window last drew
+    std::shared_ptr<JavaGraphics> graphics;
+    View* graphicsView = nullptr;
+    uint64_t graphicsRevision = 0;
+    bool inGraphicsFrame = false;
+    bool closingGraphics = false;
+    bool graphicsExposed = false;
 };
 
 /// A function posted to the UI thread by RunOnUi, shared by the waiting caller and the loop.
@@ -90,6 +98,8 @@ std::atomic<float> g_maxAspect{0};        // the app's max aspect ratio, 0 = unc
 bool g_userLandscape = false;             // the orientation the app booted in (the "user rotation")
 std::mutex g_dirsMu;
 std::string g_dataSubdir, g_nativeLibDir; // for the guest loader (P2–P4); not used by the Java path
+std::string g_graphicsRequest = "off";   // CLI option, captured before app code
+bool g_graphicsFailed = false;            // window thread; read after Boot.run returns
 
 /// Returns the JNIEnv of the calling thread, attaching it to the VM when it is not.
 JNIEnv* Env() {
@@ -306,17 +316,111 @@ void TaskToFront() {
     CheckCallback(env, "ActivityHost.macapkTaskToFront");
 }
 
+/// Closes the app on a graphics error rather than pretending a bitmap fallback drew it.
+void FailGraphics(Window* w, const std::string& category, const std::string& detail) {
+    LogLine(category + ": Java GLES " + detail);
+    g_graphicsFailed = true;
+    w->closingGraphics = true;
+    PostMessageW(w->hwnd, WM_CLOSE, 0, 0);
+}
+
+/// Runs one full-client Java GLES frame, owning the current context only during callbacks.
+void TickGraphics(Window* w, View* v, JNIEnv* env, jclass cls) {
+    if (w->minimized || w->inGraphicsFrame || w->closingGraphics) return;
+    RECT rc{};
+    if (!GetClientRect(w->hwnd, &rc) || rc.right <= 0 || rc.bottom <= 0) return;
+    static jmethodID requested = nullptr, draw = nullptr;
+    if (!requested || !draw) {
+        requested = env->GetMethodID(cls, "macapkWindowsClientVersion", "()I");
+        if (requested) draw = env->GetMethodID(cls, "macapkWindowsDrawFrame", "(IIZZ)Z");
+        if (!requested || !draw) {
+            CheckCallback(env, "bind Windows GLSurfaceView");
+            FailGraphics(w, "GRAPHICS_CAPABILITY_MISSING", "Windows GLSurfaceView callbacks are missing");
+            return;
+        }
+    }
+    const jint version = env->CallIntMethod(v->renderer, requested);
+    if (env->ExceptionCheck()) {
+        CheckCallback(env, "macapkWindowsClientVersion");
+        FailGraphics(w, "GRAPHICS_RENDER_FAILED", "client version callback failed");
+        return;
+    }
+    if (version == -1) return; // The Activity has not installed its Renderer yet.
+    if (version != 2 || g_graphicsRequest == "off") {
+        const char* detail = version == -2 ? "custom EGL configuration is not implemented" :
+            version != 2 ? "only GLES2 is implemented" : "use --graphics=auto, vulkan or d3d11";
+        FailGraphics(w, "GRAPHICS_CAPABILITY_MISSING", detail);
+        return;
+    }
+    w->inGraphicsFrame = true;
+    std::string error;
+    const bool fresh = !w->graphics;
+    if (fresh) {
+        // A second live HWND would share an EGLDisplay; don't terminate another owner's display.
+        for (const auto& [handle, other] : g_windows) {
+            if (handle != w->hwnd && other->graphics) {
+                w->inGraphicsFrame = false;
+                FailGraphics(w, "GRAPHICS_CAPABILITY_MISSING", "only one EGL window is supported");
+                return;
+            }
+        }
+        w->graphics = JavaGraphics::Open(w->hwnd, g_graphicsRequest, error);
+        w->graphicsView = v;
+        w->graphicsRevision = v->rendererRevision;
+    }
+    if (!w->graphics) {
+        w->inGraphicsFrame = false;
+        FailGraphics(w, "GRAPHICS_CAPABILITY_MISSING", error);
+        return;
+    }
+    if (!w->graphics->Begin(rc.right, rc.bottom, error)) {
+        w->inGraphicsFrame = false;
+        FailGraphics(w, "GRAPHICS_RENDER_FAILED", error);
+        return;
+    }
+    const bool exposed = w->graphicsExposed;
+    w->graphicsExposed = false;
+    const bool rendered = env->CallBooleanMethod(v->renderer, draw, static_cast<jint>(rc.right),
+        static_cast<jint>(rc.bottom), static_cast<jboolean>(fresh), static_cast<jboolean>(exposed));
+    const bool threw = env->ExceptionCheck();
+    if (threw) CheckCallback(env, "macapkWindowsDrawFrame");
+    const bool stillCurrent = w->content == v && w->graphicsRevision == v->rendererRevision && !w->closingGraphics;
+    const bool ended = w->graphics->End(rendered && !threw && stillCurrent, error);
+    w->inGraphicsFrame = false;
+    if (!ended || threw)
+        FailGraphics(w, "GRAPHICS_RENDER_FAILED", threw ? "renderer callback failed" : error);
+    else if (w->closingGraphics)
+        PostMessageW(w->hwnd, WM_CLOSE, 0, 0);
+}
+
 /// Runs one frame of `w`'s view: reports a new size, then asks the renderer to draw.
 /// Notes: a minimised window has no client area; it keeps its last size and draws at 2 Hz.
 void Tick(Window* w) {
     View* v = w->content;
+    if (w->inGraphicsFrame || w->closingGraphics) return;
+    if (w->graphics && (v != w->graphicsView || v->rendererRevision != w->graphicsRevision)) {
+        w->graphics.reset();
+        w->graphicsView = nullptr;
+        InvalidateRect(w->hwnd, nullptr, FALSE);
+    }
     if (!v || !v->renderer) return;
+    JNIEnv* env = Env();
+    static const jclass glView = [&] {
+        jclass local = env->FindClass("android/opengl/GLSurfaceView");
+        if (!local) { CheckCallback(env, "load GLSurfaceView"); return static_cast<jclass>(nullptr); }
+        jclass global = static_cast<jclass>(env->NewGlobalRef(local));
+        env->DeleteLocalRef(local);
+        return global;
+    }();
+    if (glView && env->IsInstanceOf(v->renderer, glView)) {
+        TickGraphics(w, v, env, glView);
+        return;
+    }
     if (w->minimized) {
         const ULONGLONG now = GetTickCount64();
         if (now - w->lastHiddenFrame < kHiddenFrameMs) return;
         w->lastHiddenFrame = now;
     }
-    JNIEnv* env = Env();
     static jmethodID changed = nullptr, draw = nullptr;
     if (!draw) {
         jclass c = env->FindClass("com/macapk/loader/MetalSurfaceCallbacks");
@@ -343,6 +447,10 @@ void Tick(Window* w) {
 void Paint(Window* w) {
     PAINTSTRUCT ps;
     HDC dc = BeginPaint(w->hwnd, &ps);
+    if (w->graphics && w->graphicsView == w->content) {
+        EndPaint(w->hwnd, &ps);
+        return;
+    }
     RECT rc;
     GetClientRect(w->hwnd, &rc);
     View* v = w->content;
@@ -438,9 +546,11 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             if (wp == SIZE_MINIMIZED && !w->minimized) {
                 w->minimized = true;
                 w->lastHiddenFrame = 0;
-                LogLine("[winapk] window: minimised; drawing at 2 Hz");
+                LogLine(w->graphics ? "[winapk] window: minimised; Java GLES suspended" :
+                    "[winapk] window: minimised; drawing at 2 Hz");
             } else if (wp != SIZE_MINIMIZED && w->minimized) {
                 w->minimized = false;
+                w->graphicsExposed = static_cast<bool>(w->graphics);
                 LogLine("[winapk] window: restored; drawing at full rate");
                 TaskToFront();
             }
@@ -468,6 +578,12 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         }
         case WM_CLOSE:
             // The person closed the app: end the loop; Boot.run returns and the process exits.
+            if (w->inGraphicsFrame) {
+                w->closingGraphics = true;
+                return 0;
+            }
+            w->closingGraphics = true;
+            w->graphics.reset();
             DestroyWindow(hwnd);
             return 0;
         case WM_DESTROY:
@@ -513,6 +629,16 @@ Window* FromHandle(jlong h) {
 /// the dispatcher. Returns false when Windows refuses a class.
 jboolean JNICALL Init(JNIEnv* env, jclass) {
     env->GetJavaVM(&g_vm);
+    if (jclass sys = env->FindClass("java/lang/System")) {
+        const auto property = env->GetStaticMethodID(sys, "getProperty", "(Ljava/lang/String;)Ljava/lang/String;");
+        jstring key = env->NewStringUTF("winapk.graphics");
+        auto mode = static_cast<jstring>(env->CallStaticObjectMethod(sys, property, key));
+        if (!env->ExceptionCheck() && mode) g_graphicsRequest = Utf8(env, mode);
+        if (mode) env->DeleteLocalRef(mode);
+        env->DeleteLocalRef(key);
+        env->DeleteLocalRef(sys);
+        if (env->ExceptionCheck()) return JNI_FALSE;
+    } else return JNI_FALSE;
     g_uiThread = GetCurrentThreadId();
     SetThreadDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
     HINSTANCE inst = GetModuleHandleW(nullptr);
@@ -606,7 +732,7 @@ void JNICALL ShowWindowNative(JNIEnv*, jclass, jlong window) {
 }
 
 void JNICALL CloseWindowNative(JNIEnv*, jclass, jlong window) {
-    RunOnUi("closeWindow", [&] { if (Window* w = FromHandle(window)) DestroyWindow(w->hwnd); });
+    RunOnUi("closeWindow", [&] { if (Window* w = FromHandle(window)) SendMessageW(w->hwnd, WM_CLOSE, 0, 0); });
 }
 
 void JNICALL SetWindowTitle(JNIEnv* env, jclass, jlong window, jstring title) {
@@ -628,6 +754,7 @@ void JNICALL SetRenderer(JNIEnv* env, jclass, jlong view, jobject callbacks) {
     const bool ran = RunOnUi("setRenderer", [&] {
         if (v->renderer) Env()->DeleteGlobalRef(v->renderer);
         v->renderer = ref;
+        ++v->rendererRevision;
         v->sizedW = v->sizedH = -1;
     });
     if (!ran && ref) env->DeleteGlobalRef(ref);
@@ -640,6 +767,7 @@ void JNICALL ReleaseRenderer(JNIEnv*, jclass, jlong view) {
     RunOnUi("releaseRenderer", [&] {
         if (v->renderer) Env()->DeleteGlobalRef(v->renderer);
         v->renderer = nullptr;
+        ++v->rendererRevision;
     });
 }
 
@@ -671,7 +799,7 @@ void JNICALL PresentBitmap(JNIEnv* env, jclass, jintArray argb, jint w, jint h) 
 /// Runs the UI thread's message loop until the app's window closes.
 /// Side effects: from its start, RunOnUi's waits are limited; after it ends, RunOnUi fails at
 /// once and waiting callers give up.
-void JNICALL RunLoop(JNIEnv*, jclass) {
+void JNICALL RunLoop(JNIEnv* env, jclass) {
     g_loop = 1;
     MSG m;
     while (GetMessageW(&m, nullptr, 0, 0) > 0) {
@@ -679,6 +807,13 @@ void JNICALL RunLoop(JNIEnv*, jclass) {
         DispatchMessageW(&m);
     }
     g_loop = 2;
+    if (g_graphicsFailed) {
+        jclass error = env->FindClass("java/lang/IllegalStateException");
+        if (error) {
+            env->ThrowNew(error, "Windows Java GLES failed; see graphics diagnostic");
+            env->DeleteLocalRef(error);
+        }
+    }
 }
 
 /// Shapes every app window for `landscape` (wider than tall) or portrait, keeping its area.
