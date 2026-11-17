@@ -64,13 +64,36 @@
 | 在真实 ARM64 上 | PASS | 上述机器；`native-probe.exe` 和 `capstone.dll` 为 ARM64 |
 | `abi-compatibility.md` | PASS | [abi-compatibility.md](abi-compatibility.md)：直通、需 thunk 和不支持的签名及其用例 |
 
+## P3 线程基础检查
+
+`test.ps1 -Suite Bionic`，2026-11-16，在上述 Windows ARM64 机器上 25/25 项检查 PASS。这是 T08，不是 G3；
+客体夹具用 NDK r30、API 30、`-O2 -nostdlib -femulated-tls -fno-stack-protector` 构建。
+哈希与完整选项在 `tests/fixtures/elf/fixtures.json`（生成产物，不提交）；
+输出在 `build/windows-arm64/test-data/logs/T08-*`。
+基础正例探测包含九个用例；已检查的拒绝/终止文件不证明依赖加载或 JNI 集成已可用。
+
+| 条目（`PLAN.md` §10） | 结果 | 证据 |
+|---|---|---|
+| 客体 pthread/errno/key 隔离 | PASS | 8 与 32 个同时存在的 worker；标识、errno/TLS 地址和值独立；join 返回精确指针；主上下文不变 |
+| TLS 初始值、对齐与析构 | PASS | 初始值 41、零初始化、64 字节对齐；析构回调前 key 值已清空；重新设置 key 后回调两轮或受四轮上限约束；每次回调均可使用仿真 TLS |
+| 明确错误与字节 shim | PASS | 已删除/无效 key → `EINVAL`，第 129 个存活 key → `EAGAIN`，非空线程属性 → `ENOTSUP`，自身 join → `EDEADLK`，未知/已 join 线程 → `ESRCH`；客体 errno 不变；`memset` 返回值/范围/零长度/字节转换 |
+| 线程资源清理 | PASS | 预热后 200 轮 / 1600 个 worker：句柄增量 +0；每次调用后线程/上下文/key/仿真 TLS 注册表均清空；5413 次宿主状态回调，没有 x18/sp/errno 违规 |
+| 范围外原生行为 | PASS | 缺失的 `pthread_detach` 导入在入口前拒绝；使用 P3 导入表时 ELF PT_TLS、裸 `svc`、TPIDR_EL0 和 x18 仍被拒绝；损坏的 emutls 描述符与仍有未 join worker 时销毁运行时均带诊断终止，退出码 3 |
+| N1 依赖加载与 JNI 集成 | NOT_RUN | T07 与 T09 尚未实现；`winapk run` 的原生库加载仍关闭 |
+
+同一变更集还运行了 `check-requirements.ps1`、`build.ps1 -Component All`、
+`test.ps1 -Suite Host`（22 项 PASS）、`-Suite Java`（43 项 PASS）与 `-Suite Native`（58 项 PASS）。
+Go vet/测试（含 `CGO_ENABLED=0`）、MyGo vet/i18n 与文档镜像检查均通过。
+构建的宿主 PE/DLL 全为 ARM64；构建脚本检查正例 AArch64 客体夹具的架构。
+不宣称完成新关卡，不升级版本，无计划偏离。
+
 ## 已知限制
 
 - Mac.apk 的 Windows 改动：`runtime/CMakeLists.txt` 的 `if(WIN32)` 分支、`AppClassLoader.findLibrary` 的
   `winapk.guestNative` 检查，以及 `runtime/src/native_sqlite.cpp` 的 `_WIN32` Unicode 辅助函数；其余都是 `runtime/platform/windows` 和 `runtime/guest` 下的新代码。Windows 实现了 `NativeCocoa` 和其他宿主
   native 中的哪些、哪些仍未绑定，见 [port-audit.md](port-audit.md)。
 - 界面还没有启动 `winapk run`；它仍使用 `winapk.Mock`。
-- 客体原生：只有 profile N0，且只在 `native-probe.exe` 中；`winapk run` 不加载任何 APK 库（P4）。客体代码中的故障尚未被捕获（P3，`PLAN.md` §10.3）：它会结束探测程序。以 `winapk.exe` 的编译选项构建，关闭 Control Flow Guard；启用 CFG 的构建为 NOT_RUN（[abi-compatibility.md](abi-compatibility.md)）。
+- 客体原生：profile N0 加独立 P3 T08 线程基础，均只在 `native-probe.exe` 中；`winapk run` 不加载任何 APK 库（P4）。客体代码中的故障尚未被捕获（P3，`PLAN.md` §10.3）：它会结束探测程序。以 `winapk.exe` 的编译选项构建，关闭 Control Flow Guard；启用 CFG 的构建为 NOT_RUN（[abi-compatibility.md](abi-compatibility.md)）。
 - 这台电脑没有厂商 Vulkan 驱动：Vulkan 是基于 Direct3D 12 的 Mesa Dozen（[decisions.md](decisions.md)）。
 - `CMakeLists.txt`、`AppClassLoader` 与 `native_sqlite.cpp` 改动后的 macOS 构建和 smoke：NOT_RUN（这里没有 Mac）；该分支只在 `WIN32` 下返回，Java 检查在未设置 `winapk.guestNative` 时不起作用，`_WIN32` 之外的 CoreFoundation 辅助函数没有改变。
 - DPI：应用的 density 在启动时固定。把窗口移到另一缩放的显示器，或在运行中改变缩放，窗口会调整尺寸以保持其点数（`WM_DPICHANGED`），但应用保持最初的 density：NOT_RUN，也尚未作为 Android 的配置变更处理。

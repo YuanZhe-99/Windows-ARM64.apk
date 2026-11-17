@@ -40,6 +40,7 @@ The runtime's commands are in the next section.
 .\scripts\windows\test.ps1 -Suite Host
 .\scripts\windows\test.ps1 -Suite Java
 .\scripts\windows\test.ps1 -Suite Native
+.\scripts\windows\test.ps1 -Suite Bionic
 .\build\windows-arm64\bin\native-probe.exe suite .\tests\fixtures\elf\libn0abi.so
 .\build\windows-arm64\bin\winapk.exe doctor --json
 .\build\windows-arm64\bin\winapk.exe inspect .\tests\fixtures\hello-java.apk --json
@@ -72,6 +73,14 @@ to `build/windows-arm64/test-data`. `doctor --present` also opens a small test w
 Vulkan presentation; without it that check is `not-run`. `test.ps1 -Suite Native` is G2 (T05, T06):
 no JVM and no window; it runs `native-probe.exe suite` on each T05 build, `load` on each T06 file
 (checking the refusal against `fixtures.psd1`) and `stress`.
+
+`test.ps1 -Suite Bionic` runs the P3 thread foundation (T08) through `native-probe.exe threads`,
+not G3: 8/32 simultaneous workers, errno/key/emulated-TLS isolation and destructors, explicit
+unsupported cases, then 200 cycles (1600 workers) with empty-registry and handle checks. Each
+probe has a 60-second deadline. It also checks the unchanged refusals for ELF TLS, raw syscalls
+and platform-reserved registers using the P3 import table. The fixture deliberately uses
+`-nostdlib -femulated-tls`; dependencies, mutex/cond, other Bionic groups and JNI are not proved
+by it. Sources, expected results and binary hashes remain in the fixture recipe/manifest.
 
 `winapk run` keeps each app's data under `%LOCALAPPDATA%\Windows-ARM64.apk\Apps` (`--data-dir`
 moves it): `android\` is the Android root the app sees (`data\data\<package>`, `sdcard`),

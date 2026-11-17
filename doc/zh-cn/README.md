@@ -11,7 +11,7 @@ MyGo 前端在手机式窗格或独立窗口中打开每个应用，每个 APK �
 |---|---|
 | [gui.md](gui.md) | 界面：窗口、窗格和组、面板、它的文件、运行时契约草案、示例数据 |
 | [abi-compatibility.md](abi-compatibility.md) | 宿主与客体代码之间哪些调用直通、哪些需要 thunk、哪些不受支持，以及证据 |
-| [native-profiles.md](native-profiles.md) | 客体原生执行 profile（N0）：ELF 加载器接纳什么、如何加载以及它的拒绝 |
+| [native-profiles.md](native-profiles.md) | 客体原生执行 profile（N0）、P3 线程基础（T08）、加载器准入与拒绝 |
 | [port-audit.md](port-audit.md) | P0：Mac.apk 中哪些部分与 macOS 绑定，以及在 Windows 上如何处理 |
 | [decisions.md](decisions.md) | 架构决策（ADR） |
 | [upstream.md](upstream.md) | 上游契约与特殊行为：Mac.apk、Windows ARM64 ABI、Android NDK、MyGo |
@@ -31,6 +31,8 @@ ABI 测试集；MyGo 界面对接示例数据（`winapk.Mock`），尚不启动�
 Go 1.27.4 和 MyGo v0.9.2。
 
 后续工作按 `PLAN.md` §10（P3：Bionic、线程、errno、TLS）和 §11（P4：JNI，以及在 `winapk run` 中加载 APK 的库）推进。
+独立 T08 线程基础现已覆盖受管理 pthread、errno、key/析构和显式仿真 C TLS；它不开放 N1 或 APK 原生库加载。
+优先推进后端，暂缓前端集成。
 
 ## 上游版本
 

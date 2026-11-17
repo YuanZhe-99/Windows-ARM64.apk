@@ -152,7 +152,8 @@ N0 加载器（`runtime/guest/loader`，[native-profiles.md](native-profiles.md)
 
 ## 下一步
 
-P2 的 profile N0 已完成（G2）。原生路径的下一步是 P3：为 profile N1 实现 Bionic、客体线程、errno 和 TLS，从
-[abi-compatibility.md](abi-compatibility.md) 中的导入 thunk 开始；之后 P4 把 APK 的库和 `System.load` 转到加载器。P1 尚未完成的是
+P2 的 profile N0 已完成（G2）。P3 现有独立 T08 线程基础（受管理 pthread、errno、key/析构与 C 仿真 TLS），
+实现于 `runtime/guest/bionic`，不移植 Darwin shim。N1 依赖/构造、其余 Bionic 功能组与客体故障边界仍未完成
+（[native-profiles.md](native-profiles.md)）；之后 P4 把 APK 的库和 `System.load` 转到加载器。P1 尚未完成的是
 应用运行中的 density 变化，以及应用接下来可能需要的宿主 native（`NativeOs`、宿主字体）；界面从 `winapk.Mock` 切换到
 `winapk run` 属于 P7（`PLAN.md` §14）。

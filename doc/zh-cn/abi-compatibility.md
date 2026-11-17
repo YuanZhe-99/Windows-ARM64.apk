@@ -37,6 +37,7 @@ Native`）；下文的用例名即其本身的名称。2026-11-04 在 [platform-
 | `va_list` | 绝不 | 绝不 | — |
 | 通过导入共享的数据（客体经 GLOB_DAT 读写的宿主变量） | — | 两侧布局相同的类型可直通 | `import.call` |
 | 布局不同的结构体（`stat`、`timespec`、`sockaddr`、pthread 类型） | 显式的客体布局与转换（P3） | 同左 | 尚无 |
+| 线程/key shim 与 C 仿真 TLS | 固定整数/指针签名；Android `pthread_t` 用 `int64_t`，key 用 `int32_t` | 显式包装；不把宿主 pthread/CRT 对象交给客体 | T08（`threads`）；见 [native-profiles.md](native-profiles.md) |
 | `long double`、C++ 类、异常 | 不受支持 | 不受支持 | — |
 
 直通指宿主通过匹配的宿主原型的指针调用，或客体的导入被绑定到宿主函数的地址，中间没有任何东西。只有本表列出的签名

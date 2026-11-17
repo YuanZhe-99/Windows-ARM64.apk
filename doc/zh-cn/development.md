@@ -33,6 +33,7 @@ go run ./tools/checkdocs           # doc/en-us and doc/zh-cn mirror each other
 .\scripts\windows\test.ps1 -Suite Host
 .\scripts\windows\test.ps1 -Suite Java
 .\scripts\windows\test.ps1 -Suite Native
+.\scripts\windows\test.ps1 -Suite Bionic
 .\build\windows-arm64\bin\native-probe.exe suite .\tests\fixtures\elf\libn0abi.so
 .\build\windows-arm64\bin\winapk.exe doctor --json
 .\build\windows-arm64\bin\winapk.exe inspect .\tests\fixtures\hello-java.apk --json
@@ -57,6 +58,12 @@ clang-cl 把 `winapk.exe`、`winapk-bridge.dll`、`native-probe.exe` 和 `winapk
 `build/windows-arm64/test-data`。`doctor --present` 还会打开一个小测试窗口检查 Vulkan 呈现；不加时该项为 `not-run`。`test.ps1 -Suite Native` 是 G2（T05、T06）：
 不需要 JVM 和窗口；它对每个 T05 构建运行 `native-probe.exe suite`，对每个 T06 文件运行 `load`（对照 `fixtures.psd1` 检查拒绝），
 并运行 `stress`。
+
+`test.ps1 -Suite Bionic` 通过 `native-probe.exe threads` 运行 P3 线程基础（T08），并非 G3：8/32 个同时存在
+的 worker、errno/key/仿真 TLS 隔离及析构、明确不支持的用例，再执行 200 轮（1600 个 worker），检查注册表清空和句柄。
+每个探测进程有 60 秒期限。还使用 P3 导入表检查 ELF TLS、裸系统调用、平台保留寄存器仍被拒绝。夹具刻意使用
+`-nostdlib -femulated-tls`；不能据此证明依赖加载、mutex/cond、其他 Bionic 功能组或 JNI。
+源码、预期结果与二进制哈希仍记录在夹具配方/清单中。
 
 `winapk run` 把每个应用的数据放在 `%LOCALAPPDATA%\Windows-ARM64.apk\Apps` 下（`--data-dir` 可改）：`android\`
 是应用看到的 Android 根目录（`data\data\<package>`、`sdcard`），`code\<package>\` 是转换后的代码及缓存戳，

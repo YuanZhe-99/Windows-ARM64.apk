@@ -2,6 +2,7 @@
 //
 //   native-probe load <elf>                  load and report, or print the refusal
 //   native-probe suite <elf>                 T05: call every n0_* export, compare exact values
+//   native-probe threads <elf>               T08: managed pthread/errno/emulated TLS
 //   native-probe stress <elf> [--iterations N] [--copies K] [--rejected <elf>]
 //
 // Exit codes: 0 every check passed; 1 usage or unreadable input; 2 the module was refused
@@ -13,6 +14,7 @@
 // and sp 16-byte aligned whenever the guest calls back, and x19-x28/d8-d15 must survive.
 
 #include "elf_loader.h"
+#include "threads.h"
 
 #include <windows.h>
 #include <psapi.h>
@@ -453,6 +455,7 @@ int Stress(const std::wstring& path, int iterations, int copies, const std::wstr
 int UsageError() {
     std::fputs("usage: native-probe load <elf>\n"
                "       native-probe suite <elf>\n"
+               "       native-probe threads <elf>             T08: managed pthread/errno/emutls\n"
                "       native-probe stress <elf> [--iterations N] [--copies K] [--rejected <elf>]\n", stderr);
     return 1;
 }
@@ -467,6 +470,7 @@ int wmain(int argc, wchar_t** argv) {
         return 1;
     }
     PrintHost();
+    if (cmd == L"threads" && argc == 3) return ProbeThreads(path);
     if (cmd == L"load" || cmd == L"suite") {
         auto m = LoadOrReport(path);
         if (!m) return 2;

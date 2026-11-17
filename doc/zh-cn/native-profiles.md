@@ -7,7 +7,7 @@
 | Profile | 状态 |
 |---|---|
 | N0，可审计的 leaf ELF | 已实现；G2 在本机通过（[platform-notes.md](platform-notes.md)） |
-| N1，受限的 C/JNI ELF（依赖、导入、构造函数、JNI） | 未开始（P3、P4） |
+| N1，受限的 C/JNI ELF（依赖、导入、构造函数、JNI） | 已独立实现 P3 线程基础（T08）；依赖与 JNI 尚未实现，G3 NOT_RUN |
 | N2，图形样例 | 未开始（P5、P6） |
 
 ## N0
@@ -47,6 +47,35 @@
 宿主未提供的未定义弱导入绑定为 0，与 Android 一致。模块自己定义的符号绑定到模块自身的定义，绝不绑定到同名的宿主
 符号。
 
+## P3 线程基础（T08）
+
+这是独立探测，不是 APK 的 N1 准入。`native-probe threads` 将 `ThreadRuntime::Imports()` 加仅供测试的宿主状态回调绑定给经审计、
+无依赖的 ELF，沿用未改变的 N0 加载检查。其 `-nostdlib -femulated-tls -fno-stack-protector` 构建为特制夹具，
+不能证明常规 NDK 产物可运行。N0 原有 ABI 测试与导入保持不变。
+
+- `__errno` 返回每个受管理线程上下文中独立的 32 位客体 errno，绝非 UCRT errno 或 `GetLastError`。
+  pthread 函数返回 Linux 错误码，不修改它。
+- 编译器需要的 `memset` 导入有显式固定签名字节包装（64 位大小、32 位填充值）；T08 检查范围、返回指针、
+  零长度和字节转换。
+- `pthread_create` 只接受空属性指针（可 join、默认宿主栈）。`pthread_join`、`pthread_self`、
+  `pthread_equal`、`pthread_key_create`、`pthread_key_delete`、`pthread_getspecific` 和
+  `pthread_setspecific` 使用显式 Android LP64 类型：`pthread_t` 为 64 位，`pthread_key_t` 为有符号 32 位。
+  标识不是 Windows HANDLE 或 CRT 对象。非空属性返回 `ENOTSUP`；设置或删除无效/已删除 key 返回 `EINVAL`。
+- 每个宿主 worker 先进入新的客体上下文，再调用固定签名的客体函数。最多同时分配 128 个 key，不复用旧标识；
+  析构回调前清空值，最多执行四轮析构。删除 key 不运行析构函数。仿真 TLS 在所有 key 析构期间保持有效，之后释放。
+- `__emutls_get_address` 读取 LLVM compiler-rt 的 AArch64 描述符布局（四个 64 位字段：大小、对齐、
+  object、初始值）。每个上下文按描述符地址拥有独立初始化、正确对齐的存储，不修改描述符。
+  目前只覆盖 C `__thread` 数据；C++ TLS 析构和客体 ELF TLS（GD/LD、IE/LE、TLSDESC、PT_TLS）仍不支持。
+  resolver 必须是绑定到本 shim 的未定义导入，不能是客体库内嵌的另一份 compiler-rt。
+- 调用方必须保持所有模块映射，直到上下文与回调结束。运行时销毁时仍有未 join 的 worker、从未管理线程调用有状态 shim、
+  emutls 描述符损坏或编译器 TLS resolver 分配失败时，探测进程带诊断终止，绝不伪造 TLS 地址。
+  不允许异常经客体代码展开。客体故障范围处理、mutex/cond、`pthread_exit`、detach/取消、文件/时间/日志 shim
+  和依赖加载仍是 P3 后续工作；JNI 属于 P4。
+
+T08 检查损坏描述符与仍有未 join worker 时销毁运行时导致的终止、8 与 32 个同时存在的客体线程的隔离、精确 join
+指针、主线程状态、初始值/零值/对齐 TLS、析构重设值与轮数
+上限、已删除 key、key 耗尽、不支持的属性、无效/自身 join，以及只读 x18/sp 宿主状态检查。
+
 ## 筛查
 
 检查每个可执行段中的每个 4 字节字：按编码识别裸 `svc`、`hvc`、`smc` 以及任何对 `TPIDR_EL0` 的 `mrs`/`msr`；对
@@ -81,6 +110,8 @@ NativeProbe` 把它们构建到 `tests/fixtures/elf`（生成产物，从不提�
 | T05 `libn0abi-rela.so`、`-sysv.so`、`-4k.so` | 同一源码，分别用 RELATIVE 项代替 RELR、只有 SysV 哈希表、4 KiB 段对齐 | `-Wl,--pack-dyn-relocs=none`、`-Wl,--hash-style=sysv`、`-Wl,-z,max-page-size=4096` |
 | T06 构建所得（`negative/negative.c`） | 每个一种缺陷，由 `NEG_*` 定义、目标或链接选项选定 | IFUNC 用例用 `-O0`：在 `-O2` 下 clang 会把其解析函数折叠掉 |
 | T06 派生所得 | 修补了一个字段的 `libn0abi.so`（`build.ps1`，`Write-ElfMutation`） | — |
+| T08 `libthreads.so` | `threads/threads.c`：受管理 pthread、errno、key/析构、C 仿真 TLS 与编译器需要的 `memset`；九个探测用例必须 PASS | API 30、`-O2 -nostdlib -femulated-tls`，公共选项与 T05 相同 |
+| T08 负例文件 | 同一源码：缺失 `pthread_detach`（加载时拒绝）、损坏的仿真 TLS 描述符和仍有未 join worker 时销毁运行时（诊断，退出码 3） | `T08_MISSING`、`T08_BAD_EMUTLS`、`T08_UNJOINED`；完整配方/结果在 `fixtures.psd1` |
 
 每个夹具都由 NDK 自带的 clang 和链接器构建；除其选项所表明的以外，没有哪个是可以代表普通 NDK 产物的特制构建
 （`PLAN.md` §5.3）。

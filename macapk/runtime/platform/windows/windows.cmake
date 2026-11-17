@@ -60,6 +60,8 @@ target_link_libraries(winapk-bridge PRIVATE unofficial::sqlite3::sqlite3 user32 
 # will run in. The ELF record layouts come from upstream's translator headers.
 add_executable(native-probe
   ${_win}/src/native_probe/main.cpp
+  ${_win}/src/native_probe/threads.cpp
+  ${CMAKE_CURRENT_LIST_DIR}/../../guest/bionic/threads.cpp
   ${CMAKE_CURRENT_LIST_DIR}/../../guest/loader/elf_loader.cpp)
 target_include_directories(native-probe PRIVATE
   "${CMAKE_CURRENT_LIST_DIR}/../../guest/loader" "${CMAKE_CURRENT_LIST_DIR}/../../translator/include")

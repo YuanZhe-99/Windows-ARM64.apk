@@ -64,6 +64,30 @@ Verified on Windows 11 ARM64 (2026-11-16): build 26300.9974, Snapdragon Compute 
 | On real ARM64 | PASS | the machine above; `native-probe.exe` and `capstone.dll` ARM64 |
 | `abi-compatibility.md` | PASS | [abi-compatibility.md](abi-compatibility.md): direct, thunk and unsupported signatures with their cases |
 
+## P3 thread foundation checks
+
+`test.ps1 -Suite Bionic`, 2026-11-16: 25/25 checks PASS on the Windows ARM64 machine above. This is T08, not G3;
+the guest fixture is built with NDK r30, API 30, `-O2 -nostdlib -femulated-tls -fno-stack-protector`.
+Its hash and exact flags are in `tests/fixtures/elf/fixtures.json`
+(generated, not committed); output is in `build/windows-arm64/test-data/logs/T08-*`.
+The foundation's positive probe has nine cases; its checked refusal/fatal files are not evidence
+that dependency or JNI integration works.
+
+| Item (`PLAN.md` §10) | Result | Evidence |
+|---|---|---|
+| Guest pthread/errno/key isolation | PASS | 8 and 32 simultaneous workers; distinct tokens, errno/TLS addresses and values; exact pointer return on join; main context unchanged |
+| TLS initialization, alignment and destruction | PASS | initialized value 41, zero-filled values, 64-byte alignment; cleared keys before destructor callbacks; re-armed keys called twice or limited to four rounds; emutls still usable in every callback |
+| Explicit errors and byte shim | PASS | deleted/invalid keys → `EINVAL`, 129th live key → `EAGAIN`, non-null thread attributes → `ENOTSUP`, self join → `EDEADLK`, unknown/already-joined thread → `ESRCH`; guest errno unchanged; `memset` return/bounds/zero length/byte conversion |
+| Thread resource cleanup | PASS | 200 cycles / 1600 workers after warm-up: handle delta +0; thread/context/key/emutls registries empty after every call; 5413 host-state callbacks, no x18/sp/errno violation |
+| Out-of-scope native behavior | PASS | missing `pthread_detach` import refused before entry; ELF PT_TLS, raw `svc`, TPIDR_EL0 and x18 still refused with the P3 import table; malformed emutls descriptor and unjoined-worker teardown both terminate with a diagnostic and exit 3 |
+| N1 dependency loading and JNI integration | NOT_RUN | T07 and T09 not implemented; `winapk run` native loading remains disabled |
+
+The same change set ran `check-requirements.ps1`, `build.ps1 -Component All` and
+`test.ps1 -Suite Host` (22 PASS), `-Suite Java` (43 PASS), `-Suite Native` (58 PASS).
+Go vet/tests (including `CGO_ENABLED=0`), MyGo vet/i18n and the documentation mirror check pass.
+All built host PE/DLL files are ARM64; positive AArch64 guest fixture architecture is checked
+by the build script. No new gate is claimed, no version bump, and no plan deviation.
+
 ## Known limitations
 
 - Mac.apk's Windows changes: the `if(WIN32)` branch of `runtime/CMakeLists.txt`, the
@@ -72,7 +96,7 @@ Verified on Windows 11 ARM64 (2026-11-16): build 26300.9974, Snapdragon Compute 
   `runtime/platform/windows` and `runtime/guest`. What of `NativeCocoa` and the other host natives Windows implements,
   and what stays unbound, is in [port-audit.md](port-audit.md).
 - The interface does not launch `winapk run` yet; it still uses `winapk.Mock`.
-- Guest native: profile N0 only, and only in `native-probe.exe`; `winapk run` loads no APK library (P4). A fault inside guest code is not caught yet (P3, `PLAN.md` §10.3): it ends the probe. Built with `winapk.exe`'s flags, Control Flow Guard off; a CFG build is NOT_RUN ([abi-compatibility.md](abi-compatibility.md)).
+- Guest native: profile N0 plus the separate P3 T08 thread foundation, only in `native-probe.exe`; `winapk run` loads no APK library (P4). A fault inside guest code is not caught yet (P3, `PLAN.md` §10.3): it ends the probe. Built with `winapk.exe`'s flags, Control Flow Guard off; a CFG build is NOT_RUN ([abi-compatibility.md](abi-compatibility.md)).
 - This PC has no vendor Vulkan driver: Vulkan is Mesa Dozen on Direct3D 12 ([decisions.md](decisions.md)).
 - macOS build and smoke after the `CMakeLists.txt`, `AppClassLoader` and `native_sqlite.cpp` changes: NOT_RUN (no Mac here); the branch returns only under `WIN32`, the Java check is inert unless `winapk.guestNative` is set, and the CoreFoundation helpers are unchanged outside `_WIN32`.
 - DPI: the app's density is fixed when it starts. Moving its window to a display of another scale, or changing the scale while it runs, resizes the window to keep its size in points (`WM_DPICHANGED`) but the app keeps its first density: NOT_RUN, and not yet handled as Android's configuration change.

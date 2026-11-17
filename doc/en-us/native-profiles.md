@@ -8,7 +8,7 @@ Guest native code is off by default and runs only within a declared, tested prof
 | Profile | State |
 |---|---|
 | N0, an auditable leaf ELF | implemented; G2 passes on this PC ([platform-notes.md](platform-notes.md)) |
-| N1, a restricted C/JNI ELF (dependencies, imports, constructors, JNI) | not started (P3, P4) |
+| N1, a restricted C/JNI ELF (dependencies, imports, constructors, JNI) | P3 thread foundation implemented separately (T08); dependencies and JNI not implemented, G3 NOT_RUN |
 | N2, graphics samples | not started (P5, P6) |
 
 ## N0
@@ -53,6 +53,44 @@ How a module loads, in this order; none of its code runs, and a refusal releases
 An undefined weak import the host does not provide binds to 0, as on Android. A symbol the module
 defines binds to the module's own definition, never to a host symbol of the same name.
 
+## P3 thread foundation (T08)
+
+This is an independent probe, not N1 admission for APKs. `native-probe threads` binds
+`ThreadRuntime::Imports()` plus a test-only host-state callback to an audited, dependency-free ELF under the unchanged N0 loader
+checks. Its `-nostdlib -femulated-tls -fno-stack-protector` build is special, not evidence that
+ordinary NDK output works. N0's original ABI suite and imports are unchanged.
+
+- `__errno` returns a separate 32-bit guest errno in each managed thread context, never UCRT
+  errno or `GetLastError`. The pthread functions return Linux error numbers without changing it.
+- The compiler-required `memset` import has an explicit fixed-signature byte wrapper (64-bit
+  size, 32-bit fill value); T08 checks bounds, return pointer, zero length and byte conversion.
+- `pthread_create` accepts only a null attributes pointer (joinable, default host stack).
+  `pthread_join`, `pthread_self`, `pthread_equal`, `pthread_key_create`, `pthread_key_delete`,
+  `pthread_getspecific` and `pthread_setspecific` use explicit Android LP64 types: `pthread_t`
+  is 64-bit, `pthread_key_t` is signed 32-bit. Tokens are not Windows handles or CRT objects.
+  Non-null attributes return `ENOTSUP`; invalid/deleted keys return `EINVAL` on set/delete.
+- Each host worker enters a fresh guest context before calling the fixed-signature guest
+  function. Keys support 128 concurrent allocations, no stale-token reuse, clearing before
+  destructor callbacks, and at most four destructor rounds. Key deletion does not run a
+  destructor. Emulated TLS remains alive during all key destructors and is freed afterwards.
+- `__emutls_get_address` reads the LLVM compiler-rt AArch64 descriptor layout (four 64-bit
+  fields: size, alignment, object, initializer). Each context owns aligned, independently
+  initialized storage keyed by descriptor address; the descriptor is not mutated.
+  Only C `__thread` data is covered; C++ TLS destructors and guest ELF TLS
+  (GD/LD, IE/LE, TLSDESC and PT_TLS) remain unsupported. The resolver must be an undefined
+  import bound to this shim, not a separate compiler-rt copy embedded in the guest library.
+- The caller must keep every module mapped until its contexts and callbacks have ended.
+  An unjoined worker at runtime destruction, an unmanaged stateful shim entry, a malformed emutls
+  descriptor or an allocation failure in the compiler TLS resolver terminates the probe with
+  a diagnostic, never a fabricated TLS address. No exception is unwound through guest code.
+  Guest fault-range handling, mutex/cond, `pthread_exit`, detach/cancellation, file/time/log
+  shims and dependency loading remain P3 work; JNI remains P4.
+
+T08 checks fatal refusal of malformed descriptors and unjoined-worker teardown, isolation in
+8 and 32 simultaneous guest threads, exact join pointers, main-thread
+state, initialized/zero/aligned TLS, destructor re-arming and limits, deleted keys, key exhaustion,
+unsupported attributes, invalid/self join, and read-only x18/sp host-state checks.
+
 ## Screening
 
 Every 4-byte word of each executable segment is checked: a raw `svc`, `hvc` or `smc` and any
@@ -91,6 +129,8 @@ and expected refusal; `build.ps1 -Component NativeProbe` builds them into `tests
 | T05 `libn0abi-rela.so`, `-sysv.so`, `-4k.so` | the same, with RELATIVE entries instead of RELR, a SysV hash table only, 4 KiB segment alignment | `-Wl,--pack-dyn-relocs=none`, `-Wl,--hash-style=sysv`, `-Wl,-z,max-page-size=4096` |
 | T06 built (`negative/negative.c`) | one defect each, chosen by a `NEG_*` define, a target or a link option | the IFUNC case at `-O0`: at `-O2` clang folds its resolver away |
 | T06 derived | `libn0abi.so` with one field patched (`build.ps1`, `Write-ElfMutation`) | — |
+| T08 `libthreads.so` | `threads/threads.c`: managed pthreads, errno, keys/destructors, C emutls and compiler-required `memset`; nine probe cases must PASS | API 30, `-O2 -nostdlib -femulated-tls`, common flags as T05 |
+| T08 negative files | same source, missing `pthread_detach` (load refusal), malformed emutls descriptor and unjoined-worker teardown (diagnostic, exit 3) | `T08_MISSING`, `T08_BAD_EMUTLS`, `T08_UNJOINED`; exact recipes/results in `fixtures.psd1` |
 
 Every fixture is built by the NDK's own clang and linker; none is a special build that would stand
 for ordinary NDK output beyond what its flags say (`PLAN.md` §5.3).

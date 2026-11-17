@@ -1,15 +1,30 @@
-# The guest ELF fixtures of P2 (PLAN.md §9.3, §16): T05, the N0 ABI suite in four builds, and T06,
-# ELF files the N0 loader must refuse. scripts/windows/build.ps1 -Component NativeProbe builds each
+# The guest ELF fixtures (PLAN.md §9.3, §10, §16): T05's N0 ABI suite, T06's refused ELF files,
+# and T08's managed-thread foundation. scripts/windows/build.ps1 -Component NativeProbe builds each
 # entry with the NDK of build-lock.json into tests/fixtures/elf/ (generated, never committed) and
 # records its hash in tests/fixtures/elf/fixtures.json; test.ps1 -Suite Native runs T05 with
-# native-probe suite/stress and checks each T06 refusal against Expect and Reason.
+# native-probe suite/stress and checks T06 refusals; Suite Bionic runs T08's thread cases.
 #
 # Name: the file. Source: under tests/windows-arm64/guest-elf. Target: clang --target.
 # Flags: added to Common. From + Mutation: a copy of another fixture with one field patched
 # (build.ps1, Write-ElfMutation). Expect: the error category. Reason: text the refusal contains.
+# Result: expected success/fatal output in the generated manifest. Exit: a runtime fatal's code.
 @{
     Common   = @('-shared', '-fPIC', '-fno-stack-protector', '-Wall', '-Wextra', '-Werror')
     Fixtures = @(
+        # T08: no ELF TLS or dependencies; only the audited P3 thread imports.
+        @{ Name = 'libthreads.so'; Id = 'T08'; Source = 'threads/threads.c'; Target = 'aarch64-linux-android30'
+           Flags = @('-O2', '-nostdlib', '-femulated-tls'); Result = 'T08 PASS' }
+        @{ Name = 'neg-threads-import.so'; Id = 'T08'; Source = 'threads/threads.c'; Target = 'aarch64-linux-android30'
+           Flags = @('-O2', '-nostdlib', '-femulated-tls', '-DT08_MISSING', '-Wno-unused-function')
+           Expect = 'GUEST_SYMBOL_UNRESOLVED'; Reason = 'pthread_detach' }
+        @{ Name = 'neg-emutls-descriptor.so'; Id = 'T08'; Source = 'threads/threads.c'; Target = 'aarch64-linux-android30'
+           Flags = @('-O2', '-nostdlib', '-femulated-tls', '-DT08_BAD_EMUTLS', '-Wno-unused-function')
+           Exit = 3; Reason = 'GUEST_ABI_UNSUPPORTED thread runtime: invalid emulated TLS descriptor'
+           Result = 'exit 3: GUEST_ABI_UNSUPPORTED thread runtime: invalid emulated TLS descriptor' }
+        @{ Name = 'neg-threads-unjoined.so'; Id = 'T08'; Source = 'threads/threads.c'; Target = 'aarch64-linux-android30'
+           Flags = @('-O2', '-nostdlib', '-femulated-tls', '-DT08_UNJOINED', '-Wno-unused-function')
+           Exit = 3; Reason = 'GUEST_ABI_UNSUPPORTED thread runtime: runtime destroyed with unjoined workers or active contexts'
+           Result = 'exit 3: GUEST_ABI_UNSUPPORTED thread runtime: runtime destroyed with unjoined workers or active contexts' }
         # T05: the same source four ways; every case must pass on each.
         @{ Name = 'libn0abi.so'; Id = 'T05'; Source = 'n0/abi.c'; Target = 'aarch64-linux-android30'
            Flags = @('-O2', '-nostdlib', '-ffp-contract=off') }

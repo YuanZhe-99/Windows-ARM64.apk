@@ -305,6 +305,11 @@ P2 与 G2（独立 `native-probe.exe` 上的 profile N0、ABI 正例 T05、提�
 
 ## 10. P3 — Bionic、线程、TLS 与客体模块语义
 
+进度（2026-11-16）：已实现并真机验证独立 T08 线程基础（每线程 errno、默认 joinable pthread、TLS keys 析构与显式
+`-femulated-tls` 的 C TLS），长期边界见 `doc/en-us/native-profiles.md`。它沿用 N0 加载检查、以特制无依赖
+ELF 验证，不表示 N1 或 G3 已通过。T07 依赖/构造、其余 Bionic 功能组、客体故障边界与 P4 JNI 仍待实现。
+前端暂缓，按用户决定优先后端；不改变 §6 的运行时依赖顺序。
+
 ### 10.1 按样例需求实现的第一批功能
 
 | 功能组 | 首批范围 | 必须注意 |

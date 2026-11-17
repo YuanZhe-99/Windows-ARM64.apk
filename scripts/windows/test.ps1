@@ -31,12 +31,17 @@ unload cycles and 32 copies at once) and T06 (malformed, foreign and out-of-
 profile ELF files, each refused with its category and reason). Build first:
 build.ps1 -Component NativeProbe.
 
+Suite Bionic is the P3 thread foundation (T08), not G3: managed pthreads, guest
+errno, TLS keys/destructors and explicitly emulated C TLS; unsupported imports
+and hardware TLS/syscall/register access remain refused. Each probe has a
+60-second deadline. Build first: build.ps1 -Component NativeProbe.
+
 .PARAMETER Suite
-Host, Java or Native.
+Host, Java, Native or Bionic.
 #>
 [CmdletBinding()]
 param(
-    [ValidateSet('Host', 'Java', 'Native')]
+    [ValidateSet('Host', 'Java', 'Native', 'Bionic')]
     [string]$Suite = 'Host'
 )
 Set-StrictMode -Version Latest
@@ -479,6 +484,7 @@ function Test-Native {
         Check "T05.pe.$pe" ($m -eq 'ARM64') $m
     }
     foreach ($f in $table.Fixtures) {
+        if ($f.Id -notin 'T05', 'T06') { continue }
         $file = Join-Path $dir $f.Name
         $stem = [IO.Path]::GetFileNameWithoutExtension($f.Name)
         $rec = $built | Where-Object name -EQ $f.Name
@@ -527,7 +533,49 @@ function Test-Native {
     Check 'T05.neg.unreadable' ($LASTEXITCODE -eq 1) "exit $LASTEXITCODE"
 }
 
-switch ($Suite) { 'Host' { Test-Host } 'Java' { Test-Java } 'Native' { Test-Native } }
+<# Runs T08 and its refusal matrix with a deadline so a broken join/barrier cannot hang tests. #>
+function Test-Bionic {
+    $probe = Join-Path $out 'bin\native-probe.exe'
+    $dir = Join-Path $repo 'tests\fixtures\elf'
+    $record = Join-Path $dir 'fixtures.json'
+    if (-not (Test-Path $probe) -or -not (Test-Path $record)) { throw 'Build NativeProbe first' }
+    $built = (Get-Content $record -Raw | ConvertFrom-Json).fixtures
+    $table = Import-PowerShellDataFile (Join-Path $repo 'tests\windows-arm64\guest-elf\fixtures.psd1')
+    $logs = Join-Path $out 'test-data\logs'
+    New-Item -ItemType Directory -Force $logs | Out-Null
+    foreach ($f in $table.Fixtures | Where-Object { $_.Id -eq 'T08' -or $_.Name -in 'neg-tls.so', 'neg-svc.so', 'neg-tpidr.so', 'neg-x18.so' }) {
+        $file = Join-Path $dir $f.Name
+        $rec = $built | Where-Object name -EQ $f.Name
+        $sha = if (Test-Path $file) { (Get-FileHash $file -Algorithm SHA256).Hash.ToLower() } else { 'missing' }
+        Check "T08.$($f.Name).hash" ($null -ne $rec -and $rec.sha256 -eq $sha) "sha256 $sha"
+        if (-not $rec -or $rec.sha256 -ne $sha) { continue }
+        $stdout = Join-Path $logs "T08-$($f.Name).out"
+        $stderr = Join-Path $logs "T08-$($f.Name).err"
+        $p = Start-Process $probe -ArgumentList @('threads', "`"$file`"") -PassThru -NoNewWindow -RedirectStandardOutput $stdout -RedirectStandardError $stderr
+        try {
+            if (-not $p.WaitForExit(60000)) {
+                $p.Kill()
+                $p.WaitForExit()
+                Check "T08.$($f.Name).deadline" $false 'probe exceeded 60 seconds'
+                continue
+            }
+            $o = Get-Content $stdout -Raw
+            $err = Get-Content $stderr -Raw
+            if ($f.ContainsKey('Expect')) {
+                Check "T08.$($f.Name).refusal" ($p.ExitCode -eq 2 -and $o -match "reject $($f.Expect) " -and $o.Contains($f.Reason)) $o.Trim()
+            } elseif ($f.ContainsKey('Exit')) {
+                Check "T08.$($f.Name).fatal" ($p.ExitCode -eq $f.Exit -and $err -and $err.Contains($f.Reason)) "exit $($p.ExitCode); $err"
+            } else {
+                $cases = [regex]::Matches($o, '(?m)^case (T08\.\S+) (PASS|FAIL): (.*)')
+                foreach ($c in $cases) { Check $c.Groups[1].Value ($c.Groups[2].Value -eq 'PASS') $c.Groups[3].Value.TrimEnd() }
+                $ok = $p.ExitCode -eq 0 -and $cases.Count -eq 9 -and $o -match 'result T08 PASS'
+                Check "T08.$($f.Name).result" $ok "exit $($p.ExitCode), $($cases.Count) cases$(if (-not $ok) { '; ' + $o + $err })"
+            }
+        } finally { $p.Dispose() }
+    }
+}
+
+switch ($Suite) { 'Host' { Test-Host } 'Java' { Test-Java } 'Native' { Test-Native } 'Bionic' { Test-Bionic } }
 if ($script:failed -gt 0) { Write-Host "$script:failed check(s) failed"; exit 1 }
 Write-Host 'all checks passed'
 exit 0

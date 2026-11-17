@@ -52,6 +52,7 @@ moves. The Mac.apk points below hold at `3f35611` (merged 2026-11-16); "read" me
 | `x18` is reserved for the platform on Android ARM64 | each binary is still checked; absence in one binary proves nothing general | verified for T05's builds: the screen finds no `x18` in them |
 | NDK r30 links with a 16 KiB maximum page size and, at API 30, packs relative relocations as `DT_ANDROID_RELR` | segments share a 4 KiB host page only with the same permissions; RELR is applied | verified (T05 builds) |
 | ELF TLS has several access models and TLSDESC (AOSP `elf-tls.md`) | each model is supported or refused explicitly | read |
+| Bionic LP64 `pthread_t` is a 64-bit `long`, key is signed 32-bit; LLVM emutls uses size/alignment/object/initializer descriptor fields | explicit guest types and a managed resolver, never Windows `long`, CRT pthread objects or hardware thread-pointer swapping | read in NDK r30 headers and compiler-rt `emutls.c`; T08 verifies C emutls initialization/alignment and thread/key semantics |
 
 ## MyGo
 

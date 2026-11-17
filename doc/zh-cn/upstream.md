@@ -51,6 +51,7 @@ Windows 11 ARM64 上构建或运行过（[port-audit.md](port-audit.md)）。
 | Android ARM64 上 `x18` 保留给平台 | 仍逐个检查二进制；某个二进制未使用不证明普遍成立 | 已对 T05 的构建验证：筛查未在其中发现 `x18` |
 | NDK r30 以 16 KiB 的最大页大小链接，并在 API 30 下把相对重定位压缩为 `DT_ANDROID_RELR` | 段只有在权限相同时才共用 4 KiB 的宿主页；RELR 会被应用 | 已验证（T05 构建） |
 | ELF TLS 有多种访问 model 及 TLSDESC（AOSP `elf-tls.md`） | 每种 model 要么明确支持，要么明确拒绝 | 已阅读 |
+| Bionic LP64 `pthread_t` 是 64 位 `long`，key 为有符号 32 位；LLVM emutls 描述符包含大小/对齐/object/初始值字段 | 使用显式客体类型和受管理 resolver，绝不用 Windows `long`、CRT pthread 对象或硬件线程指针切换 | 已阅读 NDK r30 头文件与 compiler-rt `emutls.c`；T08 验证 C 仿真 TLS 初始值/对齐及线程/key 语义 |
 
 ## MyGo
 

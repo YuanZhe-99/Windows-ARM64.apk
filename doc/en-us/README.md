@@ -14,7 +14,7 @@ per APK.
 |---|---|
 | [gui.md](gui.md) | The interface: windows, panes and groups, sheets, its files, the runtime contract draft, sample data |
 | [abi-compatibility.md](abi-compatibility.md) | Which calls between host and guest code go directly, which need a thunk, which are unsupported, with evidence |
-| [native-profiles.md](native-profiles.md) | The guest native profiles (N0): what the ELF loader admits, how it loads, and its refusals |
+| [native-profiles.md](native-profiles.md) | The guest native profiles (N0), P3 thread foundation (T08), loader admission and refusals |
 | [port-audit.md](port-audit.md) | P0: what in Mac.apk is tied to macOS and how each part is handled on Windows |
 | [decisions.md](decisions.md) | Architecture decisions (ADRs) |
 | [upstream.md](upstream.md) | Upstream contracts and quirks: Mac.apk, Windows ARM64 ABI, Android NDK, MyGo |
@@ -35,7 +35,9 @@ them; the MyGo interface runs against sample data (`winapk.Mock`) and does not s
 yet. The current build uses Mac.apk `3f35611`, Go 1.27.4 and MyGo v0.9.2.
 
 Active work continues with `PLAN.md` §10 (P3: Bionic, threads, errno, TLS) and §11 (P4: JNI and
-loading an APK's libraries in `winapk run`).
+loading an APK's libraries in `winapk run`). The independent T08 thread foundation now covers
+managed pthreads, errno, keys/destructors and explicitly emulated C TLS; it does not enable N1
+or APK native loading. Front-end integration is deferred while the backend progresses.
 
 ## Upstream versions
 

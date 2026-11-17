@@ -65,6 +65,7 @@ and Latin words only where it helps readability.
 | callee-saved register | 被调用方保存的寄存器 |
 | homogeneous floating-point aggregate (HFA) | 同质浮点聚合（HFA） |
 | variant calling convention | 变体调用约定 |
+| emulated TLS | 仿真 TLS |
 
 ## 6. Review checklist
 

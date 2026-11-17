@@ -39,6 +39,7 @@ Native`); the case names below are its own. Verified 2026-11-04 on the machine o
 | `va_list` | never | never | — |
 | Data shared through an import (a host variable a guest GLOB_DAT reads and writes) | — | direct, for a type of the same layout on both sides | `import.call` |
 | Structures whose layout differs (`stat`, `timespec`, `sockaddr`, pthread types) | explicit guest layouts and a conversion (P3) | the same | none yet |
+| Thread/key shims and C emutls | fixed integer/pointer signatures; Android `pthread_t` as `int64_t`, key as `int32_t` | explicit wrappers; no host pthread/CRT object passed to the guest | T08 (`threads`); see [native-profiles.md](native-profiles.md) |
 | `long double`, C++ classes, exceptions | not supported | not supported | — |
 
 Direct means the host calls through a pointer of the matching host prototype, or the guest's

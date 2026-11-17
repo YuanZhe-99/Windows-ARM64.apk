@@ -158,8 +158,10 @@ What the N0 loader (`runtime/guest/loader`, [native-profiles.md](native-profiles
 
 ## Next
 
-P2's profile N0 is done (G2). Next on the native path is P3: Bionic, guest threads, errno and TLS
-for profile N1, starting from the import thunks of [abi-compatibility.md](abi-compatibility.md);
-then P4 routes an APK's libraries and `System.load` to the loader. P1's open items are a density
+P2's profile N0 is done (G2). P3 now has a separate T08 thread foundation (managed pthreads,
+errno, keys/destructors and C emulated TLS), implemented under `runtime/guest/bionic` rather
+than porting Darwin's shim. N1 dependencies/constructors, the remaining Bionic groups and guest
+fault boundaries are still open ([native-profiles.md](native-profiles.md)); then P4 routes an
+APK's libraries and `System.load` to the loader. P1's open items are a density
 change while an app runs and the host natives an app may need next (`NativeOs`, host fonts); the
 interface's switch from `winapk.Mock` to `winapk run` belongs to P7 (`PLAN.md` §14).

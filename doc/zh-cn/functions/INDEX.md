@@ -12,9 +12,10 @@
 | `macapk/runtime/platform/windows` | Windows ARM64 宿主：`winapk.exe`（`doctor`、`inspect`、`run`、`dex`）、它的 APK 读取器、JVM 和 Vulkan 探测、`windows.cmake`、`vcpkg.json`、`winapk.manifest` | `wmain`、`Run`、`ConvertDex`、`StageCode`、`BuildId`、`InspectApk`、`FindJvm`、`CreateJvm`、`ProbeVulkan` |
 | `macapk/runtime/platform/windows/src/bridge` | `winapk-bridge.dll`：Java 侧宿主 native 的 Windows 实现——`NativeLog`（`log.cpp`）、`NativeCocoa` 的窗口、呈现和输入（`window.cpp`），以及上游的 `NativeSqlite`（`runtime/src/native_sqlite.cpp`） | `winapk_bridge_register`、`Bind`、`RunOnUi`、`Init`、`RunLoop`、`Tick`、`PresentBitmap`、`Touch`、`Key`、`Text`、`TaskToFront` |
 | `macapk/runtime/guest/loader` | N0 客体 ELF 加载器（[native-profiles.md](../native-profiles.md)）：检查、映射、筛查、重定位并保护 Android AArch64 共享库，而不运行它；宿主代码 | `Load`、`Module::Find`、`LoadError`、`CategoryName`、`Loader::Screen`、`Loader::Relocate`、`Loader::Protect` |
-| `macapk/runtime/platform/windows/src/native_probe` | `native-probe.exe`（`PLAN.md` §9.1）：`load`、`suite`（T05）和 `stress`，ABI 用例，被调用方保存寄存器的检查 | `wmain`、`Cases`、`RunSuite`、`CallPreserved`、`CheckHostState`、`Stress` |
-| `scripts/windows` | 环境检查、构建（Java、FrameworkRes、Fixtures、Host、NativeProbe）和测试套件（Host = T01，Java = G1，Native = G2） | `build.ps1`、`test.ps1`、`check-requirements.ps1`、`common.ps1` |
+| `macapk/runtime/guest/bionic` | P3 的受管理客体线程/errno/TLS key/仿真 TLS 基础（[native-profiles.md](../native-profiles.md)）；尚不开放 APK 原生准入 | `ThreadRuntime`、`ThreadRuntime::Call`、`ThreadRuntime::Imports`、`GuestThreadContext`、`Create`、`Join`、`EmutlsAddress` |
+| `macapk/runtime/platform/windows/src/native_probe` | `native-probe.exe`：`load`、`suite`（T05）、`stress`、`threads`（T08），ABI 与线程清理断言 | `wmain`、`Cases`、`RunSuite`、`CallPreserved`、`CheckHostState`、`Stress`、`ProbeThreads` |
+| `scripts/windows` | 环境检查、构建（Java、FrameworkRes、Fixtures、Host、NativeProbe）和测试套件（Host = T01，Java = G1，Native = G2，Bionic = T08 基础） | `build.ps1`、`test.ps1`、`Test-Bionic`、`check-requirements.ps1`、`common.ps1` |
 | `tests/windows-arm64/apk-fixtures` | 夹具 APK 的源码：`hello-java`（T03）、`hello-kotlin`（T04，G1.6）、`hello-jni`（G1.5，之后用于 T09） | 各自的 `MainActivity` |
-| `tests/windows-arm64/guest-elf` | 客体 ELF 夹具的源码：`n0/abi.c`（T05）、`negative/negative.c`（T06），以及记录每个夹具构建方式和预期拒绝的 `fixtures.psd1` | `fixtures.psd1` |
+| `tests/windows-arm64/guest-elf` | 客体 ELF 源码：`n0/abi.c`（T05）、`negative/negative.c`（T06）、`threads/threads.c`（T08）；构建参数与预期结果/拒绝 | `fixtures.psd1`、`t08_case` |
 | `internal/version` | 产品版本 | `Version`、`Older` |
 | `tools/checkdocs` | 文档镜像检查 | `main` |

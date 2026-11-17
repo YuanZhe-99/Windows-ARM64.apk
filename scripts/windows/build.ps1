@@ -359,7 +359,7 @@ function Write-ElfMutation([string]$src, [string]$dest, [string]$mutation) {
 }
 
 <#
-Builds the guest ELF fixtures of P2 (T05, T06) that tests/windows-arm64/guest-elf/fixtures.psd1
+Builds the guest ELF fixtures (T05, T06, T08) that tests/windows-arm64/guest-elf/fixtures.psd1
 lists into tests\fixtures\elf with the NDK, and records their build parameters and hashes in
 fixtures.json there. Notes: generated, never committed (AGENTS.md).
 #>
@@ -387,6 +387,12 @@ function Build-ElfFixtures {
             $rec.clang = ($cargs[0..($cargs.Count - 4)] -join ' ')
         }
         if ($f.ContainsKey('Expect')) { $rec.expect = "$($f.Expect): $($f.Reason)" }
+        if ($f.ContainsKey('Result')) { $rec.expect = $f.Result }
+        $bytes = [IO.File]::ReadAllBytes($dest)
+        if ($f.ContainsKey('Target') -and $f.Target -eq 'aarch64-linux-android30' -and
+            ($bytes[4] -ne 2 -or [BitConverter]::ToUInt16($bytes, 18) -ne 183)) {
+            throw "$($f.Name) is not ELF64 AArch64"
+        }
         $rec.sha256 = (Get-FileHash $dest -Algorithm SHA256).Hash.ToLower()
         Write-Step "$($f.Id) $($f.Name): $($rec.sha256.Substring(0, 16))"
         $rec
