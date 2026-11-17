@@ -403,7 +403,8 @@ P5a 固定 ANGLE `801a1a5f6e00ed0028937067b7663fd7053bff31`，ARM64 源码构建
 - [x] `eglGetProcAddress` 仅返回 guest 可调用的固定桥入口；未知入口返回空。
 - [x] T11 不暴露硬件私有 EGL/GLES 扩展，仅报告受限 EGL 1.4 / ES2 profile，不作一致性声明。
 - [x] T11 验证 resize、surface 销毁后重建及原 context 保留。
-- [ ] 客体 GLES 真实 context loss、最小化/恢复及长期稳定性未验收。
+- [x] T11 验证客体 GLES 最小化零尺寸拒绝和原 context 恢复，使用现有 D3D11 和 Vulkan/Dozen 正例进程。
+- [ ] 客体 GLES 真实 context loss 及长期稳定性未验收。
 - [x] 只支持单个明确归属的渲染 Surface；不提供 View/SurfaceView 混合合成。
 
 首个客体图形 APK 采用普通 Java Activity + SurfaceView + JNI 的结构，由 Java 将 `Surface` 交给 native。实现受限的 `ANativeWindow_fromSurface`、acquire/release、尺寸查询和对象注册；`jobject`、guest `ANativeWindow*` 与 `HWND` 是不同对象，不能相互强转。首轮不依赖 `NativeActivity`/`android_native_app_glue`；它们需要额外的生命周期、ALooper/AInputQueue 适配，另开任务。

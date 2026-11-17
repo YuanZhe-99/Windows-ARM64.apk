@@ -1077,6 +1077,17 @@ function Test-GraphicsGuest {
             $wr = New-Object WinApkTestWin+RECT
             $rc = New-Object WinApkTestWin+RECT
             $initial = [WinApkTestWin]::GetClientRect($h, [ref]$rc) -and $first.Groups[2].Value -eq "$($rc.R)x$($rc.B)"
+            Send-SysCommand $h 0xF020
+            $minimized = Wait-Log $log 'T11: (PASS minimized=EGL_BAD_SURFACE|FAIL [^\r\n]+)' 5 $p
+            Send-SysCommand $h 0xF120
+            $initialExtent = $first.Groups[2].Value
+            $restore = if ($minimized -and $minimized.Value -eq 'T11: PASS minimized=EGL_BAD_SURFACE') {
+                Wait-Log $log "T11: (PASS restored=$initialExtent\b|FAIL [^\r\n]+)" 5 $p
+            }
+            if (!$restore -or $restore.Value -ne "T11: PASS restored=$initialExtent") {
+                Check "T11.$($variant.Name)" $false 'expected zero-size swap refusal and same-extent draw after restore; see APK log'
+                continue
+            }
             $resized = [WinApkTestWin]::GetWindowRect($h, [ref]$wr) -and
                 [WinApkTestWin]::SetWindowPos($h, [IntPtr]::Zero, 0, 0, ($wr.R - $wr.L + 64), ($wr.B - $wr.T + 32), 0x16) -and
                 [WinApkTestWin]::GetClientRect($h, [ref]$rc)
@@ -1089,7 +1100,7 @@ function Test-GraphicsGuest {
                 $text -match "guest EGL request=$($variant.Request) backend=$($variant.Request)" -and
                 $text -match "guest GLES renderer backend=$($variant.Request) name=ANGLE" -and
                 $text -match 'guest EGL teardown complete' -and
-                $text -notmatch 'WARNING in native method|FATAL ERROR in native method|GRAPHICS_RENDER_FAILED|T11: FAIL') "APK drawing and readback at two client sizes; recreated $extent; EGL teardown"
+                $text -notmatch 'WARNING in native method|FATAL ERROR in native method|GRAPHICS_RENDER_FAILED|T11: FAIL') "APK readback through minimize/restore and resize; recreated $extent; EGL teardown"
         } finally {
             if (!$p.HasExited) { $p.Kill(); $p.WaitForExit() }
             $p.Dispose()

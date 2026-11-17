@@ -116,7 +116,11 @@ ANGLE；客体 Vulkan 使用独立 dispatch 与所有权。
 从同一张表返回桥入口或空值。不公布扩展；不支持 ES3 context、pbuffer / 无 surface context、
 多个 display、自定义 native display 或共享 context。报告的 1.4/ES2 字符串标识 profile，
 不是一致性声明。调用要求窗口消息循环已运行，display 归属不能在客体线程间转移。
-context loss 返回错误；真实 context loss、客体 EGL 最小化/恢复及长期稳定性尚未验证。
+受管理的 surface 最小化且尺寸为零时，桥拒绝 swap 并返回 `EGL_BAD_SURFACE`。
+恢复后，夹具用原客体 context、surface 和 program 绘制并回读，再测试 resize 和替换。
+这不等于真实 context loss 或长期稳定性验证。
+T11 仍只启动原有三个进程。首次扩展测试观察到一次 Vulkan 在 resize/替换后的 swap 失败；
+复测通过。驱动 swap 失败现会记录 EGL 错误码，不再只留下夹具步骤编号。
 
 `test.ps1 -Suite GraphicsGuest` 以一个 API-30 APK 分别测试显式硬件 D3D11 和 Vulkan/Dozen，
 并在仅隐藏子进程 Vulkan ICD 时额外启动一次。检查 RGBA8 纹理上传经 FBO 精确回读、

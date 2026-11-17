@@ -108,10 +108,22 @@ static int render(EGLint w, EGLint h) {
     glReadPixels(w/2, h/2, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, pixel);
     if (pixel[0] < 127 || pixel[0] > 129 || pixel[1] || pixel[2] < 126 || pixel[2] > 129 ||
         pixel[3] < 190 || pixel[3] > 192 || glGetError() != GL_NO_ERROR) return -4;
-    return eglSwapBuffers(display, surface) ? 0 : -5;
+    return eglSwapBuffers(display, surface) ? 0 : -eglGetError();
 }
 
-/** Checks the resized drawable before destroying it, then draws with the same context on a new surface. */
+/** Measures the live extent or verifies that swap is refused while it is zero. */
+JNIEXPORT jlong JNICALL Java_org_winapk_fixture_guestgles_MainActivity_probeExtent(JNIEnv* env, jclass type) {
+    (void)env;
+    (void)type;
+    EGLint w, h;
+    if (!eglQuerySurface(display, surface, EGL_WIDTH, &w) || !eglQuerySurface(display, surface, EGL_HEIGHT, &h)) return -1;
+    if (w && h) return ((jlong)w << 32) | (uint32_t)h;
+    if (w || h || ANativeWindow_getWidth(native) || ANativeWindow_getHeight(native) ||
+        eglSwapBuffers(display, surface) || eglGetError() != EGL_BAD_SURFACE) return -7;
+    return 0;
+}
+
+/** Draws on the current context, optionally replacing the resized surface and tearing down. */
 JNIEXPORT jlong JNICALL Java_org_winapk_fixture_guestgles_MainActivity_draw(JNIEnv* env, jclass type, jboolean finish) {
     (void)env;
     (void)type;

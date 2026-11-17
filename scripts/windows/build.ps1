@@ -339,7 +339,7 @@ function Build-Fixtures {
             $info.expected = 'T10.surface: client extent follows resize; Java release, detach, spent/unknown tokens and a distinct reattachment verified'
         }
         if ($name -eq 'hello-guest-gles') {
-            $info.expected = 'T11: texture/FBO readback, blended shader draw, resize and drawable replacement, EGL proc/token refusals and normal teardown'
+            $info.expected = 'T11: texture/FBO and blended shader readback, minimize refusal/restore, resize and drawable replacement, EGL proc/token refusals and normal teardown'
         }
         if ($name -eq 'hello-vulkan-wsi') {
             $info.expected = 'T13.wsi: real WSI and three guest swapchain clear/present calls; stale extent and surface refusal, resize/replacement and teardown'

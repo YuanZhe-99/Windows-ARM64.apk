@@ -128,7 +128,7 @@ driver handles stay on the Win32 message thread. The guest thread owns the logic
 and commands run synchronously on the message thread without holding a registry lock.
 A resized attachment renews the native drawable, not the guest context; an invalidated
 attachment cannot swap or be bound again. Guest EGL and Java EGL cannot own ANGLE at the
-same time. Guest Vulkan will use separate dispatch and ownership.
+same time. Guest Vulkan uses separate dispatch and ownership.
 
 The logical `libEGL.so` and `libGLESv2.so` expose a fixed set of ES2 and window EGL
 commands only. `eglGetProcAddress` returns a bridge entry from the same table or null.
@@ -136,8 +136,12 @@ No extensions are advertised; ES3 contexts, pbuffer/surfaceless contexts, multip
 displays, custom native displays and shared contexts are unsupported. The reported 1.4/ES2
 version strings identify the profile; they are not conformance claims. Calls require a
 running window message loop, and display ownership cannot transfer between guest threads.
-Context loss is returned as an error; a real loss, minimize/restore on guest EGL and
-long-running stability have not been exercised.
+At a minimized, zero-size managed surface, the bridge refuses swap with `EGL_BAD_SURFACE`.
+On restore, the fixture draws and reads back with the same guest context, surface and program
+before exercising resize and replacement. This is not real context loss or a stability run.
+T11 keeps its original three process launches. The first extended run observed one Vulkan
+swap failure after resize/replacement; the reruns passed. Driver swap errors now log the EGL
+error code, rather than losing it behind a numeric fixture step.
 
 `test.ps1 -Suite GraphicsGuest` runs one API-30 APK against explicit hardware D3D11 and
 Vulkan/Dozen, plus one launch with the Vulkan ICD hidden only from the child. It checks

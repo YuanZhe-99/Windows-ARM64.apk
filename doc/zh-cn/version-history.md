@@ -2,6 +2,7 @@
 
 ## 0.1.0（进行中）
 
+- 2026-11-17：在 D3D11 与 Vulkan/Dozen 上验证 T11 客体 GLES 最小化与恢复，未增加 APK 启动次数。Go 1.27.4、MyGo v0.10.0 和已合并的 Mac.apk `3f35611` 经检查未变。
 - 2026-11-17：生成并验证本地 ARM64 Release CLI ZIP，使用外部 Java/VC++ 依赖，另附源码快照。未发布，不等于 G5 通过。Go 1.27.4、MyGo v0.10.0 和已合并的 Mac.apk `3f35611` 经检查未变。
 - 2026-11-17：以真实 T13 APK 验证受限客体 Vulkan 清屏：经 Dozen 完成三次 FIFO 呈现，包括 resize 后重建交换链。shader/缓冲区、回调和 G4/G5 仍未验收。Go 1.27.4、MyGo v0.10.0 和已合并的 Mac.apk `3f35611` 经检查未变。
 - 2026-11-17：新增独立客体 Vulkan 实例/WSI profile（T13.wsi），在 Dozen 上验证窗口 resize/替换及仅对子进程屏蔽 ICD。客体 Vulkan 绘制和 G4/G5 仍为 NOT_RUN。Go 1.27.4、MyGo v0.10.0 和已合并的 Mac.apk `3f35611` 经检查未变。

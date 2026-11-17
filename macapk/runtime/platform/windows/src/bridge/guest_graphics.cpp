@@ -368,7 +368,11 @@ EGLBoolean Swap(EGLDisplay d, EGLSurface surface) {
         if (!surface || surface != session.surfaceId || !session.native) return EGL_BAD_SURFACE;
         if (session.current != id) return EGL_BAD_CURRENT_SURFACE;
         if (auto error = EnsureSurface(id); error != EGL_SUCCESS) return error;
-        if (!session.eglSwapBuffers(session.display, session.drawable)) return DriverError();
+        if (!session.eglSwapBuffers(session.display, session.drawable)) {
+            const auto error = DriverError();
+            LogLine("GRAPHICS_RENDER_FAILED: guest eglSwapBuffers error=" + std::to_string(error));
+            return error;
+        }
         session.presented = true;
         return EGL_SUCCESS;
     });
