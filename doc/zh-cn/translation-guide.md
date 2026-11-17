@@ -71,6 +71,9 @@ Microsoft），以及 API 与格式名称（JNI、ELF、PE、DEX、Bionic、EGL�
 | logical library | 逻辑库 |
 | exit callback | 退出回调 |
 | symbol version | 符号版本 |
+| static entry bank | 静态入口表 |
+| native registration | 原生方法注册 |
+| stack slot | 栈槽 |
 
 ## 6. 审阅清单
 

@@ -79,6 +79,7 @@ add_executable(jni-probe
   ${_win}/src/jvm_probe.cpp
   ${_win}/src/host_probe.cpp
   ${CMAKE_CURRENT_LIST_DIR}/../../guest/jni/bridge.cpp
+  ${CMAKE_CURRENT_LIST_DIR}/../../guest/jni/entries.cpp
   ${CMAKE_CURRENT_LIST_DIR}/../../guest/bionic/threads.cpp
   ${CMAKE_CURRENT_LIST_DIR}/../../guest/loader/faults.cpp
   ${CMAKE_CURRENT_LIST_DIR}/../../guest/loader/elf_loader.cpp

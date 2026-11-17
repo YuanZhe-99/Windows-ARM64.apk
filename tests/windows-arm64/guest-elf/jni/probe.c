@@ -18,6 +18,88 @@ static int* persistent_address;
 static JavaVM* persistent_vm;
 static JNIEnv* persistent_env;
 
+/// Checks mixed fixed native registers and spills without using any variadic prototype.
+static jdouble native_mix(JNIEnv* env, jclass type, jboolean z, jbyte b, jchar c, jshort s, jint i,
+        jlong j, jfloat f, jdouble d, jobject object, jint a1, jint a2, jint a3, jint a4,
+        jint a5, jint a6, jint a7, jint a8, jdouble d1, jdouble d2, jdouble d3, jdouble d4,
+        jdouble d5, jdouble d6, jdouble d7, jdouble d8) {
+    if ((*env)->GetVersion(env) != JNI_VERSION_1_6 || !t09_host_state(type) ||
+        !z || b != -7 || c != 0x4e2d || s != -123 || i != 29 || j != 4294967297LL ||
+        f != 1.5f || d != 2.25 || !object || a1 != 1 || a2 != 2 || a3 != 3 || a4 != 4 ||
+        a5 != 5 || a6 != 6 || a7 != 7 || a8 != 8 || d1 != 1 || d2 != 2 || d3 != 3 ||
+        d4 != 4 || d5 != 5 || d6 != 6 || d7 != 7 || d8 != 8) return 0;
+    return 4294967297.75;
+}
+
+/// Reads an instance long field using the substituted guest environment, returning all 64 bits.
+static jlong native_number(JNIEnv* env, jobject object, jint increment) {
+    jclass type = (*env)->GetObjectClass(env, object);
+    jfieldID field = type ? (*env)->GetFieldID(env, type, "value", "J") : NULL;
+    jlong result = field ? (*env)->GetLongField(env, object, field) + increment : 0;
+    if (type) (*env)->DeleteLocalRef(env, type);
+    return result;
+}
+
+/// Returns a real JNI local reference and commits an observable primitive-array change.
+static jstring native_echo(JNIEnv* env, jclass type, jstring string, jintArray values) {
+    (void)type;
+    const jint value = 77;
+    (*env)->SetIntArrayRegion(env, values, 1, 1, &value);
+    return (*env)->ExceptionCheck(env) ? NULL : (*env)->NewLocalRef(env, string);
+}
+
+/// Reenters Java, which invokes this native again through the same persistent guest binding.
+static jint native_reenter(JNIEnv* env, jclass type, jint depth) {
+    jmethodID method = (*env)->GetStaticMethodID(env, type, "roundtrip", "(I)I");
+    jint result = method ? (*env)->CallStaticIntMethod(env, type, method, depth) : 0;
+    (*env)->ExceptionCheck(env);  // Preserve pending exceptions, also satisfying CheckJNI before returning.
+    return result;
+}
+
+/// Returns a fixed float result, distinct from default-promoted variadic doubles.
+static jfloat native_float(JNIEnv* env, jclass type, jfloat value) {
+    (void)env; (void)type;
+    return value + 1.25f;
+}
+
+/// Propagates a guest-created Java exception back through the JVM's native call boundary.
+static void native_throw(JNIEnv* env, jclass type) {
+    (void)type;
+    jclass error = (*env)->FindClass(env, "java/lang/IllegalArgumentException");
+    if (error) { (*env)->ThrowNew(env, error, "T09 native expected"); (*env)->DeleteLocalRef(env, error); }
+}
+
+/// Registers real native functions and rejects data targets, non-native methods and slot overflow.
+static int register_natives(JNIEnv* env) {
+    jclass type = (*env)->FindClass(env, class_name);
+    if (!type) return 1;
+    JNINativeMethod methods[] = {
+        {"nativeMix", (char*)mix_signature, (void*)native_mix},
+        {"nativeNumber", "(I)J", (void*)native_number},
+        {"nativeEcho", "(Ljava/lang/String;[I)Ljava/lang/String;", (void*)native_echo},
+        {"nativeReenter", "(I)I", (void*)native_reenter},
+        {"nativeFloat", "(F)F", (void*)native_float},
+        {"nativeThrow", "()V", (void*)native_throw}
+    };
+    if ((*env)->RegisterNatives(env, type, methods, 6) != JNI_OK || (*env)->ExceptionCheck(env)) return 2;
+    JNINativeMethod bad = {"nativeFloat", "(F)F", (void*)&persistent_key};
+    if ((*env)->RegisterNatives(env, type, &bad, 1) != JNI_ERR || !(*env)->ExceptionCheck(env)) return 3;
+    (*env)->ExceptionClear(env);
+    bad = (JNINativeMethod){"intValue", "()I", (void*)native_reenter};
+    if ((*env)->RegisterNatives(env, type, &bad, 1) != JNI_ERR || !(*env)->ExceptionCheck(env)) return 4;
+    (*env)->ExceptionClear(env);
+    JNINativeMethod quota[64];
+    for (int i = 0; i < 64; i++) quota[i] = methods[3];
+    if ((*env)->RegisterNatives(env, type, quota, 64) != JNI_ERR || !(*env)->ExceptionCheck(env)) return 5;
+    (*env)->ExceptionClear(env);
+    jclass system = (*env)->FindClass(env, "java/lang/System");
+    if (!system || (*env)->RegisterNatives(env, system, methods + 4, 1) != JNI_ERR || !(*env)->ExceptionCheck(env)) return 6;
+    (*env)->ExceptionClear(env);
+    (*env)->DeleteLocalRef(env, system);
+    (*env)->DeleteLocalRef(env, type);
+    return 0;
+}
+
 /// Checks JNI availability and retained errno/emutls after the last host entry, then deletes its key.
 static void persistent_destructor(void* argument) {
     JNIEnv* env = NULL;
@@ -27,6 +109,8 @@ static void persistent_destructor(void* argument) {
     if ((*persistent_vm)->GetEnv(persistent_vm, (void**)&env, JNI_VERSION_1_6) != JNI_OK || env != persistent_env) ok = 0;
     jclass type = env ? (*env)->FindClass(env, class_name) : NULL;
     if (!type || !t09_host_state(type)) ok = 0;
+    jmethodID reenter = type ? (*env)->GetStaticMethodID(env, type, "nativeReenter", "(I)I") : NULL;
+    if (!reenter || (*env)->CallStaticIntMethod(env, type, reenter, 1) != 8 || (*env)->ExceptionCheck(env)) ok = 0;
     if (type) (*env)->DeleteLocalRef(env, type);
     if (t09_nested(1) || persistent_tls != 43 || errno != 316) ok = 0;
     if (pthread_key_delete(persistent_key)) ok = 0;
@@ -287,6 +371,8 @@ static void* worker(void* argument) {
     if ((*worker->vm)->AttachCurrentThread(worker->vm, &again, &args) != JNI_OK || again != env) return NULL;
     jclass type = (*env)->FindClass(env, class_name);
     if (!type || !t09_host_state(type)) return NULL;
+    jmethodID reenter = (*env)->GetStaticMethodID(env, type, "nativeReenter", "(I)I");
+    if (!reenter || (*env)->CallStaticIntMethod(env, type, reenter, 1) != 8 || (*env)->ExceptionCheck(env)) return NULL;
     (*env)->DeleteLocalRef(env, type);
     if (!worker->mode) {
         if ((*worker->vm)->DetachCurrentThread(worker->vm) != JNI_OK) return NULL;
@@ -335,6 +421,7 @@ int t09_case(JNIEnv* env, JavaVM* vm, int number) {
     case 9: return verify_context();
     case 10: return nested_context(0);
     case 11: return nested_context(1);
+    case 12: return register_natives(env);
     default: return -1;
     }
 }

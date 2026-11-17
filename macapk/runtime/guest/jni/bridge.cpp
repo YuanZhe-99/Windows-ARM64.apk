@@ -1,5 +1,6 @@
 // Host-domain JNI adapters. Only fixed, ABI-audited signatures enter here from Android code.
 #include "bridge.h"
+#include "entries.h"
 #include "../bionic/threads.h"
 
 #include <windows.h>
@@ -84,6 +85,16 @@ thread_local ThreadEnvironments environments;
 std::mutex vmsMutex;
 std::map<void*, JniState*> vms;
 
+/// Retains one process-lifetime PE slot's screened target and descriptor-derived stack extent.
+struct NativeSlot {
+    JniState* state = nullptr;
+    void* target = nullptr;
+    uint64_t stackSlots = 0;
+};
+std::mutex nativesMutex;
+std::array<NativeSlot, 64> natives;
+size_t nextNative = 0;
+
 /// Validates environment identity against the calling thread's live proxies before dereferencing.
 EnvProxy& Checked(void* pointer) {
     for (const auto& entry : environments.entries) if (entry.get() == pointer) return *entry;
@@ -160,6 +171,12 @@ struct JniState {
     std::mutex mutex;
     std::map<jmethodID, Method> methods;
     std::atomic<size_t> proxies = 0;
+    std::vector<const Module*> images;
+    std::vector<size_t> nativeSlots;
+    std::vector<jclass> nativeClasses;
+    std::atomic<size_t> nativeCalls = 0;
+    bool nativeClosing = false;
+    DWORD closingThread = 0;
 };
 
 namespace {
@@ -368,6 +385,112 @@ jint Detach(void* guestVm) {
     return JNI_OK;
 }
 
+/// Counts only arguments beyond the fixed JNI integer/FP register banks, not JVM or C varargs.
+uint64_t StackSlots(const char* descriptor) {
+    unsigned integers = 2, floating = 0;
+    uint64_t slots = 0;
+    const char* at = descriptor + 1;
+    while (*at != ')') {
+        const bool fp = *at == 'F' || *at == 'D';
+        Type(at, false);  // Descriptor was fully validated before this call.
+        if (fp ? floating++ >= 8 : integers++ >= 8) slots++;
+    }
+    return slots;
+}
+
+/// Admits only classes actually defined by the bridge's configured app loader.
+bool NativeClass(EnvProxy& proxy, jclass type) {
+    JNIEnv* env = proxy.host;
+    if (!proxy.state->loader) {
+        Error(env, "GUEST_ABI_UNSUPPORTED JNI registration requires an app loader");
+        return false;
+    }
+    jclass cls = env->FindClass("java/lang/Class");
+    jmethodID lookup = cls ? env->GetMethodID(cls, "getClassLoader", "()Ljava/lang/ClassLoader;") : nullptr;
+    jobject loader = lookup ? env->CallObjectMethodA(type, lookup, nullptr) : nullptr;
+    const bool ok = !env->ExceptionCheck() && env->IsSameObject(loader, proxy.state->loader);
+    if (loader) env->DeleteLocalRef(loader);
+    if (cls) env->DeleteLocalRef(cls);
+    if (!ok) Error(env, "GUEST_ABI_UNSUPPORTED JNI native class loader");
+    return ok;
+}
+
+/// Describes Android's native registration fields explicitly, without reusing a host CRT object.
+struct GuestNativeMethod { const char* name; const char* signature; void* target; };
+static_assert(sizeof(GuestNativeMethod) == 24 && sizeof(JNINativeMethod) == 24);
+
+/// Registers PE adapters for audited fixed JNI signatures; the JVM validates Java declarations.
+jint Register(void* guest, jclass type, const GuestNativeMethod* methods, jint count) {
+    auto& proxy = Checked(guest);
+    auto& state = *proxy.state;
+    JNIEnv* env = proxy.host;
+    if (count < 0 || count > 64 || (count && !methods)) {
+        Error(env, "GUEST_ABI_UNSUPPORTED JNI native registration count");
+        return JNI_ERR;
+    }
+    if (!NativeClass(proxy, type)) return JNI_ERR;
+    if (!count) return env->RegisterNatives(type, nullptr, 0);
+    try {
+        std::vector<JNINativeMethod> host(static_cast<size_t>(count));
+        std::vector<uint64_t> stackSlots(static_cast<size_t>(count));
+        for (jint i = 0; i < count; i++) {
+            const auto& method = methods[i];
+            bool executable = false;
+            {
+                std::lock_guard lock(state.mutex);
+                for (const auto* image : state.images)
+                    if (image->Executable(reinterpret_cast<uintptr_t>(method.target))) { executable = true; break; }
+            }
+            if (!executable || !method.name || strnlen(method.name, 4097) > 4096 ||
+                method.name[0] == '<' || !Descriptor(method.signature)) {
+                Error(env, "GUEST_ABI_UNSUPPORTED JNI native entry or descriptor");
+                return JNI_ERR;
+            }
+            stackSlots[i] = StackSlots(method.signature);
+            host[i] = {const_cast<char*>(method.name), const_cast<char*>(method.signature), nullptr};
+        }
+        auto pinned = static_cast<jclass>(env->NewGlobalRef(type));
+        if (!pinned) return JNI_ERR;
+        bool reserved = false;
+        try {
+            std::lock_guard lock(nativesMutex);
+            if (!state.nativeClosing && static_cast<size_t>(count) <= natives.size() - nextNative) {
+                state.nativeSlots.reserve(state.nativeSlots.size() + count);
+                state.nativeClasses.reserve(state.nativeClasses.size() + 1);
+                for (jint i = 0; i < count; i++) {
+                    const size_t slot = nextNative++;
+                    natives[slot] = {&state, methods[i].target, stackSlots[i]};
+                    state.nativeSlots.push_back(slot);
+                    host[i].fnPtr = winapk_jni_entries[slot];
+                }
+                state.nativeClasses.push_back(pinned);
+                reserved = true;
+            }
+        } catch (...) { env->DeleteGlobalRef(pinned); throw; }
+        if (!reserved) {
+            env->DeleteGlobalRef(pinned);
+            Error(env, "GUEST_ABI_UNSUPPORTED JNI native slot capacity or shutdown");
+            return JNI_ERR;
+        }
+        // The JVM validates existence/native modifiers without extra GetMethodID initialization.
+        // Keep slots/classes pinned even on JVM failure: JNI may have bound part of the batch.
+        return env->RegisterNatives(type, host.data(), count);
+    } catch (const std::bad_alloc&) {
+        Error(env, "GUEST_ABI_UNSUPPORTED JNI native registration allocation");
+        return JNI_ERR;
+    }
+}
+
+/// Holds a single fixed-signature guest invocation while its thread binding is active.
+struct NativeCall { NativeSlot slot; EntryFrame* frame; };
+
+/// Invokes the assembly's proven fixed JNI ABI, never a variadic host prototype.
+void* InvokeNative(void* argument) {
+    auto& call = *static_cast<NativeCall*>(argument);
+    winapk_jni_invoke(call.slot.target, call.frame, call.slot.stackSlots);
+    return nullptr;
+}
+
 /// Invokes an object constructor through the JVM A entry after validating its recorded signature.
 jobject NewObject(void* guest, jclass type, jmethodID method, const jvalue* arguments) {
     if (!Signature(guest, method, 3, 'V')) return nullptr;
@@ -428,6 +551,7 @@ void Install(JniState& state) {
     SET(GetStaticMethodID, &Lookup<true>);
     SET(GetJavaVM, &GetVm);
     SET(NewObjectA, &NewObject);
+    SET(RegisterNatives, &Register);
     FIXED(GetSuperclass); FIXED(IsAssignableFrom);
     FIXED(Throw); FIXED(ThrowNew); FIXED(ExceptionOccurred); FIXED(ExceptionDescribe);
     FIXED(ExceptionClear); FIXED(ExceptionCheck); FIXED(FatalError);
@@ -502,12 +626,29 @@ std::unique_ptr<JniBridge> JniBridge::Load(JNIEnv* env, jobject loader, ThreadRu
 }
 
 JniBridge::~JniBridge() {
+    {
+        std::lock_guard lock(nativesMutex);
+        state_->nativeClosing = true;
+        state_->closingThread = GetCurrentThreadId();
+        if (state_->nativeCalls) Fatal("bridge destroyed during a native call");
+    }
     for (size_t i = 0; i < environments.entries.size();) {
         auto* proxy = environments.entries[i].get();
         if (proxy->state == state_.get()) environments.Remove(proxy);
         else i++;
     }
     if (state_->proxies) Fatal("bridge destroyed with live worker environments");
+    if (!state_->nativeClasses.empty()) {
+        JNIEnv* env = nullptr;
+        if (state_->vm->GetEnv(reinterpret_cast<void**>(&env), JNI_VERSION_1_6) != JNI_OK)
+            Fatal("native teardown requires an attached owner");
+        for (jclass type : state_->nativeClasses) {
+            if (env->UnregisterNatives(type) != JNI_OK) Fatal("native teardown unregister failed");
+            env->DeleteGlobalRef(type);
+        }
+        std::lock_guard lock(nativesMutex);
+        for (size_t slot : state_->nativeSlots) natives[slot].state = nullptr;
+    }
     if (state_->loader) {
         JNIEnv* env = nullptr;
         if (state_->vm->GetEnv(reinterpret_cast<void**>(&env), JNI_VERSION_1_6) != JNI_OK)
@@ -531,7 +672,41 @@ void* JniBridge::Call(JNIEnv* env, void* (*entry)(void*), void* argument) {
     return Checked(proxy).binding->Call(entry, argument);
 }
 
+void JniBridge::Admit(const Module& module) {
+    std::lock_guard lock(state_->mutex);
+    state_->images.push_back(&module);
+}
+
 void* JniBridge::Vm() const { return &state_->proxy; }
 size_t JniBridge::Environments() const { return state_->proxies; }
+
+extern "C" void winapk_jni_dispatch(uint32_t slot, EntryFrame* frame) {
+    NativeSlot target;
+    {
+        std::lock_guard lock(nativesMutex);
+        if (slot >= nextNative || !natives[slot].state) Fatal("closed or invalid native slot", slot);
+        target = natives[slot];
+        if (target.state->nativeClosing &&
+            (target.state->closingThread != GetCurrentThreadId() || !target.state->proxies))
+            Fatal("native call during shutdown", slot);
+        target.state->nativeCalls++;
+    }
+    /// Keeps a dispatcher reservation alive until all nested guest and JNI calls have returned.
+    struct ActiveCall {
+        JniState& state;
+        /// Releases the native-entry lifetime reservation, including a host allocation refusal.
+        ~ActiveCall() { state.nativeCalls--; }
+    } active{*target.state};
+    auto* host = reinterpret_cast<JNIEnv*>(frame->integers[0]);
+    JNIEnv* actual = nullptr;
+    if (target.state->vm->GetEnv(reinterpret_cast<void**>(&actual), JNI_VERSION_1_6) != JNI_OK || actual != host)
+        Fatal("native entry received a foreign host environment", slot);
+    auto* proxy = Environment(*target.state, host, false);
+    frame->integerResult = frame->floatingResult = 0;
+    if (!proxy) { Error(host, "GUEST_ABI_UNSUPPORTED JNI native thread binding allocation"); return; }
+    frame->integers[0] = reinterpret_cast<uintptr_t>(proxy);
+    NativeCall call{target, frame};
+    proxy->binding->Call(InvokeNative, &call);
+}
 
 }  // namespace winapk::guest

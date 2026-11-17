@@ -729,7 +729,7 @@ function Test-Jni {
                 $cases = [regex]::Matches($text, '(?m)^case (T09\.\S+) (PASS|FAIL)')
                 foreach ($c in $cases) { Check $c.Groups[1].Value ($c.Groups[2].Value -eq 'PASS') $c.Groups[2].Value }
                 $compilation = [IO.File]::ReadAllText((Join-Path $logs 'T09-compilation.xml'))
-                $ok = $p.ExitCode -eq 0 -and $cases.Count -eq 6 -and $text -match 'result T09.foundation PASS \(not G3\)' -and
+                $ok = $p.ExitCode -eq 0 -and $cases.Count -eq 7 -and $text -match 'result T09.foundation PASS \(not G3\)' -and
                       [string]::IsNullOrWhiteSpace($err) -and $text -notmatch '(?i)WARNING|FATAL ERROR' -and
                       $compilation -match "<nmethod\b[^>]*method='com.winapk.probe.GuestJniProbe implicit \(I\)I'"
             } else {

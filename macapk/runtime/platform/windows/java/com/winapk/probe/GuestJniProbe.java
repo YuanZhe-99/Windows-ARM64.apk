@@ -60,6 +60,52 @@ public class GuestJniProbe {
     /** Returns an exact float through its JNI result category. */
     public static float floatValue() { return 1.5f; }
 
+    /** Enters the guest through an explicitly registered, mixed fixed-signature PE adapter. */
+    public static native double nativeMix(boolean z, byte b, char c, short s, int i, long j, float f, double d,
+            Object object, int a1, int a2, int a3, int a4, int a5, int a6, int a7, int a8,
+            double d1, double d2, double d3, double d4, double d5, double d6, double d7, double d8);
+    /** Enters an instance native method and returns an untruncated guest long. */
+    public native long nativeNumber(int increment);
+    /** Enters a guest method with object/array tokens and an object result. */
+    public static native String nativeEcho(String text, int[] values);
+    /** Reenters Java from a guest native method, allowing another JVM-to-guest invocation. */
+    public static native int nativeReenter(int depth);
+    /** Returns a float through the native FP result register. */
+    public static native float nativeFloat(float value);
+    /** Leaves a pending Java exception in a guest native method. */
+    public static native void nativeThrow();
+
+    /** Completes a nested JVM/guest chain with a deterministic result. */
+    public static int roundtrip(int depth) { return depth == 0 ? 7 : nativeReenter(depth - 1) + 1; }
+
+    /** Runs actual JVM-to-guest native calls outside the host-controlled guest case entry. */
+    public static boolean runNatives() {
+        GuestJniProbe object = new GuestJniProbe(4294967297L, 2.0f, 3.0);
+        if (nativeMix(true, (byte)-7, '\u4e2d', (short)-123, 29, 4294967297L, 1.5f, 2.25, object,
+                1, 2, 3, 4, 5, 6, 7, 8, 1, 2, 3, 4, 5, 6, 7, 8) != 4294967297.75 ||
+                object.nativeNumber(7) != 4294967309L || nativeFloat(1.5f) != 2.75f ||
+                nativeReenter(5) != 12) return false;
+        int[] values = {-3, 42, 99};
+        String text = "中\u0000文";
+        if (nativeEcho(text, values) != text || values[1] != 77) return false;
+        try {
+            nativeThrow();
+            return false;
+        } catch (IllegalArgumentException expected) {
+            return expected.getMessage().equals("T09 native expected");
+        }
+    }
+
+    /** Confirms bridge teardown removed JVM bindings, rather than leaving a callable stale PE entry. */
+    public static boolean afterUnregister() {
+        try {
+            nativeFloat(1.5f);
+            return false;
+        } catch (UnsatisfiedLinkError expected) {
+            return true;
+        }
+    }
+
     /** Exercises implicit Java faults on a hot method while guest executable ranges are registered. */
     private static int implicit(int value) {
         try {

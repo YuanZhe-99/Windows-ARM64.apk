@@ -36,7 +36,7 @@ Native`）；下文的用例名即其本身的名称。2026-11-04 在 [platform-
 | 宿主的可变参数函数（`printf` 等） | — | 绝不把客体变参导入直接绑定到它 | 不共享宿主 va_list |
 | 受限客体格式化/日志变参 | — | Android ABI 辅助库执行客体 `...`/V 调用；只有固定 errno/字节/日志签名进入宿主 | T08 `format`：整数寄存器/栈溢出参数、LP64、客体 va_copy、截断、拒绝及精确 UTF-8 日志 |
 | 跨 ABI 域的 `va_list` | 绝不 | 绝不 | T08 format 把它保持在客体辅助库中 |
-| 客体 JNI .../V/A 调用 | 尚未实现 Java→guest native 绑定 | Android 辅助库按记录的描述符将 .../V 解码为八字节 jvalue 槽；固定代理包装器使用线程私有宿主环境调用宿主 A 入口 | T09：构造、静态/实例/非虚、float 默认提升、窄值及 64 位值、整数/浮点栈溢出、引用及重复 V 调用 |
+| 客体 JNI .../V/A 调用 | 已注册固定签名 native 方法使用静态 PE 入口：按描述符复制栈槽、保持兼容的整数/浮点参数位置、替换客体环境，返回标量/引用 | Android 辅助库按记录的描述符将 .../V 解码为八字节 jvalue 槽；固定代理包装器使用线程私有宿主环境调用宿主 A 入口 | T09：构造及 .../V/A；真实 JVM native 注册、混合 25 参数栈溢出、long/float/double/对象/void 结果、嵌套回调与 Java 异常 |
 | 通过导入共享的数据（客体经 GLOB_DAT 读写的宿主变量） | — | 两侧布局相同的类型可直通 | `import.call` |
 | `stat`、`timespec` | 显式 128/16 字节客体布局及转换，绝不使用宿主 CRT 对象 | 同左 | T08 `io`：NDK 布局断言、stat 哨兵/值、墙钟 epoch/单位及 monotonic 期限 |
 | 其他不同布局（`sockaddr` 等） | 不支持 | 不支持 | — |
@@ -57,3 +57,6 @@ Native`）；下文的用例名即其本身的名称。2026-11-04 在 [platform-
   `native-probe.exe` 以 `winapk.exe` 的编译选项构建；二者都在允许动态代码、关闭 Control Flow Guard 的条件下运行
   （`native-probe` 会打印该策略）。启用 CFG 或生成 thunk 的构建为 NOT_RUN。
 - 宿主状态只读：每次回调中将 x18 与 `NtCurrentTeb()` 比对并检查 sp，从不向 x18 写入哨兵值（`PLAN.md` §9.3）。
+- T09 的 native 入口表是静态链接 PE 代码，不是运行时生成代码。两个非叶汇编函数带有 Windows
+  `.pdata/.xdata`；`llvm-readobj --unwind` 已解码 160/512 字节栈区域、frame/LR 及 x19 保存/恢复对。
+  此检查和真实 JNI 调用不证明客体异常展开或启用 CFG 的构建。

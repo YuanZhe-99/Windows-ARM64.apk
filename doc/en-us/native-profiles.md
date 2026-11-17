@@ -219,7 +219,7 @@ Method descriptors are recorded on lookup, bounded to 64 arguments and checked b
 The fixed subset covers exception queries/throw/clear, local/global/weak references, superclass
 and instance checks, method and field lookup/access, UTF-16/modified-UTF8 strings and regions,
 primitive/object arrays and element/region acquire/release. Reflection, class definition,
-critical pinning, monitors, direct buffers and native registration are not yet admitted.
+critical pinning, monitors, direct buffers and guest UnregisterNatives are not admitted.
 
 Android-built helper entries implement constructor and instance/nonvirtual/static `...`/V
 calls with guest `va_copy`/`va_arg`, including default promotions, then use the proxy's A
@@ -233,11 +233,23 @@ entries: returning to Java deactivates rather than destroys errno/key/emulated-T
 Nested calls on the same runtime reuse that state; a Bionic worker borrows its existing context.
 The last binding closes key/TLS state while its JNI proxy is still valid, before detachment.
 Bindings cannot migrate between host threads or enter a different active runtime.
-The current nested-entry proof is a host-controlled fixed-signature callback, not JVM native
-method binding. Java→guest trampolines still need their own ABI and lifecycle verification.
+The state-persistence group uses host-controlled callbacks. A separate native group enters
+through actual JVM RegisterNatives bindings, including nested Java→guest→Java calls.
 
-This increment does not bind Java native methods, run `JNI_OnLoad`, load APK libraries, or
-establish G3. Java-to-guest signature thunks and APK/ClassLoader loading remain subsequent work.
+Java native registration uses a bounded bank of 64 statically linked ARM64 PE entries, never
+runtime-generated RWX code. Descriptors determine the exact outgoing stack slots; the verified
+fixed JNI scalar/reference ABI preserves integer/FP registers and substitutes the thread's
+guest environment. Only native methods of the configured loader and executable addresses in
+explicitly admitted, still-mapped guest images may register. Slots are never reused; closed
+slots refuse rather than targeting another method. Registered classes stay pinned until bridge
+teardown; their methods are unregistered before loader references are released.
+The JVM validates method existence/native modifiers, without a bridge GetMethodID lookup that
+would additionally initialize the class. Failed JVM batches keep their reserved slots and class
+references until shutdown because the JVM may have bound part of the batch; no atomic rollback
+is claimed. The process quota includes these reservations and replacement registrations.
+
+This is still standalone T09, not APK admission: `JNI_OnLoad`, export-name binding and
+APK/ClassLoader loading remain subsequent work. No G3 claim follows from registration alone.
 
 ## P3 module transactions (T07)
 

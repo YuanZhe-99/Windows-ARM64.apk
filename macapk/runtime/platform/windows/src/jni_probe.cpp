@@ -101,6 +101,7 @@ int wmain(int argc, wchar_t** argv) {
         ThreadRuntime threads;
         auto bridge = JniBridge::Load(env, loader, threads, argv[3], &error);
         if (!bridge) { std::printf("reject %s %s\n", CategoryName(error.category), error.reason.c_str()); return 2; }
+        bridge->Admit(*module);
         auto entry = reinterpret_cast<int (*)(void*, void*, int)>(module->Find("t09_case"));
         if (!entry) return 2;
         activeBridge = bridge.get();
@@ -110,7 +111,28 @@ int wmain(int argc, wchar_t** argv) {
         const char* names[] = {"calls", "references", "exceptions", "workers"};
         const int first = argc == 5 ? selected : 0;
         const int last = argc == 5 ? first + 1 : 4;
-        for (int number = first; number < last; number++) {
+        jclass nativeType = nullptr;
+        if (argc == 4 && !result) {
+            Case registration{entry, proxy, bridge->Vm(), 12};
+            bridge->Call(env, Run, &registration);
+            jclass loaderClass = env->FindClass("java/lang/ClassLoader");
+            jmethodID loadClass = loaderClass ? env->GetMethodID(loaderClass, "loadClass",
+                "(Ljava/lang/String;)Ljava/lang/Class;") : nullptr;
+            jstring name = env->NewStringUTF("com.winapk.probe.GuestJniProbe");
+            jvalue arg{}; arg.l = name;
+            auto guestType = loadClass ? static_cast<jclass>(env->CallObjectMethodA(loader, loadClass, &arg)) : nullptr;
+            const bool loaded = !env->ExceptionCheck() && guestType;
+            if (loaded) nativeType = static_cast<jclass>(env->NewLocalRef(guestType));
+            jmethodID runNatives = loaded ? env->GetStaticMethodID(guestType, "runNatives", "()Z") : nullptr;
+            jboolean called = runNatives ? env->CallStaticBooleanMethodA(guestType, runNatives, nullptr) : JNI_FALSE;
+            const bool ok = !env->ExceptionCheck() && !registration.result && called == JNI_TRUE;
+            std::printf("case T09.native %s registration=%d\n", ok ? "PASS" : "FAIL", registration.result);
+            if (!ok) result = 3;
+            if (guestType) env->DeleteLocalRef(guestType);
+            if (name) env->DeleteLocalRef(name);
+            if (loaderClass) env->DeleteLocalRef(loaderClass);
+        }
+        for (int number = first; number < last && !result; number++) {
             Case test{entry, proxy, bridge->Vm(), number};
             bridge->Call(env, Run, &test);
             const bool exception = env->ExceptionCheck();
@@ -130,7 +152,9 @@ int wmain(int argc, wchar_t** argv) {
         }
         bridge.reset();  // Key/TLS callbacks must still see a live proxy, loader and guest mappings.
         if (argc == 4) {
-            const bool ok = threads.Idle() && contextExits == 1 && !env->ExceptionCheck();
+            jmethodID after = nativeType ? env->GetStaticMethodID(nativeType, "afterUnregister", "()Z") : nullptr;
+            jboolean unregistered = after ? env->CallStaticBooleanMethodA(nativeType, after, nullptr) : JNI_FALSE;
+            const bool ok = !env->ExceptionCheck() && threads.Idle() && contextExits == 1 && unregistered;
             std::printf("case T09.teardown %s destructors=%d\n", ok ? "PASS" : "FAIL", contextExits);
             if (!ok) result = 3;
         }
@@ -138,6 +162,7 @@ int wmain(int argc, wchar_t** argv) {
         env->DeleteLocalRef(loader);
         env->DeleteLocalRef(type);
         env->DeleteGlobalRef(expectedLoader);
+        if (nativeType) env->DeleteLocalRef(nativeType);
     }
     vm->DestroyJavaVM();
     if (!result) std::printf("result T09.foundation PASS (not G3)\n");

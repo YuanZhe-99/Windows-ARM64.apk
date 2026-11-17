@@ -25,6 +25,8 @@ public:
     /// Calls a proven fixed-signature entry under this host thread's persistent/reentrant binding.
     /// Notes: returns to the host without clearing guest errno/key/TLS state; bridge outlives Call.
     void* Call(JNIEnv* env, void* (*entry)(void*), void* argument);
+    /// Admits native entry addresses only from this screened image, which must outlive the bridge.
+    void Admit(const Module& module);
     /// Returns the private guest JavaVM object, never the host JavaVM address.
     void* Vm() const;
     /// Counts live proxies, including borrowed JVM threads, for lifecycle assertions.

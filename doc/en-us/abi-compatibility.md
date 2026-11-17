@@ -38,7 +38,7 @@ Native`); the case names below are its own. Verified 2026-11-04 on the machine o
 | A host variadic function (`printf`, etc.) | — | never bind a guest variadic import directly to it | no host va_list is shared |
 | Restricted guest formatter/log varargs | — | Android-ABI helper executes guest `...`/V calls; only fixed errno/bytes/log signatures enter the host | T08 `format`: integer register/stack spill, LP64, guest va_copy, truncation, refusals and exact UTF-8 logs |
 | `va_list` across ABI domains | never | never | T08 format keeps it inside the guest helper |
-| Guest JNI .../V/A calls | Java-to-guest native binding not yet implemented | Android helper decodes .../V by recorded descriptor into 8-byte jvalue slots; fixed proxy wrappers call host A entries with a thread-private host environment | T09: constructor, static/instance/nonvirtual, default float promotion, narrow and 64-bit values, integer/FP stack spill, references and repeated V calls |
+| Guest JNI .../V/A calls | Registered fixed-signature native methods use static PE entries: descriptor-sized stack copies, unchanged compatible integer/FP argument locations, substituted guest environment and scalar/reference results | Android helper decodes .../V by recorded descriptor into 8-byte jvalue slots; fixed proxy wrappers call host A entries with a thread-private host environment | T09: constructors and .../V/A; actual JVM native registration, mixed 25-argument stack spills, long/float/double/object/void results, nested callbacks and Java exceptions |
 | Data shared through an import (a host variable a guest GLOB_DAT reads and writes) | — | direct, for a type of the same layout on both sides | `import.call` |
 | `stat`, `timespec` | explicit 128/16-byte guest layouts and conversion, never host CRT objects | the same | T08 `io`: NDK layout assertions, stat sentinels/values, wall-clock epoch/units and monotonic deadline |
 | Other differing layouts (`sockaddr`, etc.) | unsupported | unsupported | — |
@@ -62,3 +62,7 @@ when this table lists it; the rest of a module's imports and exports are not cal
   A build with CFG or generated thunks is NOT_RUN.
 - Host state is only read: x18 against `NtCurrentTeb()` and sp in every callback, never a sentinel
   written to x18 (`PLAN.md` §9.3).
+- T09's native entry bank is statically linked PE code, not runtime-generated code. Its two
+  non-leaf assembly functions have Windows `.pdata/.xdata`; `llvm-readobj --unwind` decoded
+  the 160/512-byte stack regions, frame/LR and x19 save/restore pairs. This inspection and
+  real JNI calls do not establish guest exception unwinding or a CFG-enabled build.

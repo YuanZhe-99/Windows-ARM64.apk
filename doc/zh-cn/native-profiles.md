@@ -178,7 +178,7 @@ T08 io 合并读写/seek/stat、open/追加标志、映射/错误拒绝与时钟
 查询方法时记录描述符，限定为 64 个参数，并在调用前检查。
 固定子集包含异常查询/throw/clear、局部/全局/弱引用、父类及实例检查、方法与字段查询/访问、
 UTF-16/modified-UTF8 字符串及 region、原生类型/对象数组及 element/region 获取/释放。
-尚不开放反射、类定义、critical pinning、monitor、直接缓冲区及 native 注册。
+尚不开放反射、类定义、critical pinning、monitor、直接缓冲区及客体 UnregisterNatives。
 
 Android 构建的辅助库入口用客体 `va_copy`/`va_arg` 实现构造及实例/非虚/静态 `...`/V
 调用，包含默认参数提升，再进入代理的 A 入口。宿主 `va_list` 不跨域。
@@ -190,11 +190,20 @@ Bionic key/TLS 清理之后 detach。桥及映射必须晚于所有 worker 销�
 不销毁 errno/key/仿真 TLS 状态。同一运行时的嵌套调用复用该状态；Bionic worker 借用既有上下文。
 最后一份绑定在 JNI 代理仍有效时关闭 key/TLS 状态，先于 detach。
 绑定不能迁移到其他宿主线程，也不能进入另一个已活动的运行时。
-当前嵌套入口证据是宿主控制的固定签名回调，不是 JVM native 方法绑定。
-Java→guest trampoline 仍需独立的 ABI 及生命周期验证。
+状态持久性组使用宿主控制的回调；独立 native 组经真实 JVM RegisterNatives 绑定进入，
+包含嵌套 Java→guest→Java 调用。
 
-该增量不绑定 Java native 方法、不运行 `JNI_OnLoad`、不加载 APK 库，也不证明 G3。
-Java→guest 签名 thunk 及 APK/ClassLoader 加载仍是后续工作。
+Java native 注册使用有界的 64 个静态链接 ARM64 PE 入口，绝不在运行时生成 RWX 代码。
+描述符决定准确的出站栈槽；已验证的固定 JNI 标量/引用 ABI 保留整数/浮点寄存器并替换线程客体环境。
+只有配置 loader 的 native 方法，以及显式准入、仍映射的客体映像内的可执行地址可注册。
+槽位不复用；关闭的槽位拒绝调用，不指向另一个方法。注册类保留到桥销毁，
+其方法在 loader 引用释放前注销。
+方法存在性/native 修饰符由 JVM 验证，桥不另做会初始化类的 GetMethodID 查询。
+JVM 失败批次的保留槽及类引用保留到退出，因为 JVM 可能已绑定批次的一部分；
+不宣称原子回滚。进程配额包含这些保留及替换注册。
+
+这仍是独立 T09，不是 APK 准入：`JNI_OnLoad`、导出名绑定及 APK/ClassLoader 加载仍待完成。
+单独注册通过不证明 G3。
 
 ## P3 模块事务（T07）
 

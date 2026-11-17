@@ -331,6 +331,11 @@ Java→guest native 签名 thunk、显式/导出名绑定、JNI_OnLoad 与 APK �
 后续线程绑定增量保持 errno/key/仿真 TLS 跨宿主入口存续，支持同一绑定的嵌套回调；
 JNI 代理销毁前执行 key/TLS 清理，Bionic worker 借用既有上下文。T09 增至 13 项，
 不另加进程或压力循环；这仍不是 Java→guest native thunk 的证据。
+后续静态 PE 入口增量已通过真实 JVM RegisterNatives 双向调用：六种固定签名、25 参数寄存器/栈混合、
+对象/数组、异常、多层 Java↔guest 重入及普通/daemon worker native 回调。
+T09 增为 14 项；数据入口、非 native 方法、槽位超额及其他 ClassLoader 均拒绝，销毁后真实注销。
+宿主入口的 Windows 展开记录已静态解码；不宣称客体 C++ 展开或 CFG-enabled 通过。
+导出名、JNI_OnLoad、APK 接入及完整 G3 仍未完成。
 
 ### 11.1 不能省略的加载适配
 
