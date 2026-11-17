@@ -17,6 +17,7 @@
 #include "elf_loader.h"
 #include "threads.h"
 #include "modules.h"
+#include "libraries.h"
 
 #include <windows.h>
 #include <psapi.h>
@@ -463,6 +464,7 @@ int UsageError() {
                "       native-probe io <elf> <android-root>    T08: file mapping and time contracts\n"
                "       native-probe faults <elf>              T08: guest fault/host exception boundary\n"
                "       native-probe format <elf> <helper>      T08: guest varargs formatting and byte logs\n"
+               "       native-probe libraries <cases> <helper> T07: NDK versions and CRT lifetime\n"
                "       native-probe modules <directory>      T07: dependency/constructor transactions\n"
                "       native-probe stress <elf> [--iterations N] [--copies K] [--rejected <elf>]\n", stderr);
     return 1;
@@ -484,6 +486,7 @@ int wmain(int argc, wchar_t** argv) {
     if (cmd == L"io" && argc == 4) return ProbeBionic(path, BionicSuite::Io, argv[3]);
     if (cmd == L"faults" && argc == 3) return ProbeBionic(path, BionicSuite::Faults);
     if (cmd == L"format" && argc == 4) return ProbeBionic(path, BionicSuite::Format, argv[3]);
+    if (cmd == L"libraries" && argc == 4) return ProbeLibraries(path, argv[3]);
     if (cmd == L"modules" && argc == 3) return ProbeModules(path);
     if (cmd == L"load" || cmd == L"suite") {
         auto m = LoadOrReport(path);

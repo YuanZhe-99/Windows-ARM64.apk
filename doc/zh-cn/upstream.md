@@ -57,6 +57,8 @@ Windows 11 ARM64 上构建或运行过（[port-audit.md](port-audit.md)）。
 | Bionic LP64 `pthread_t` 是 64 位 `long`，key 为有符号 32 位；LLVM emutls 描述符包含大小/对齐/object/初始值字段 | 使用显式客体类型和受管理 resolver，绝不用 Windows `long`、CRT pthread 对象或硬件线程指针切换 | 已阅读 NDK r30 头文件与 compiler-rt `emutls.c`；T08 验证 C 仿真 TLS 初始值/对齐及线程/key 语义 |
 | NDK LP64 mutex/condition 布局为 40/48 字节，对齐 4；静态类型/时钟位在 `pthread.h` 中；Bionic non-PI 递归计数为 11 位的深度减一 | 客体大小标记与宿主对象表，绝不复制宿主锁；不支持的属性/时钟明确失败 | 已阅读 NDK r30 头文件及 AOSP `pthread_mutex.cpp` / `pthread_cond.cpp`；T08 `sync` 覆盖已声明子集 |
 | AArch64 stat 为 128 字节，timespec 为两个有符号 64 位字段；open/open64 有可选整数 mode | 显式客体布局及三寄存器可选 mode 入口；绝不传递宿主 stat、long 或 va_list | 已阅读 NDK r30 `sys/stat.h`、`bits/timespec.h`、`fcntl.h`；T08 io 检查真实声明、哨兵范围、数值及带/不带 mode 调用 |
+| 普通链接的 API-30 NDK C 共享库需要 libc/libdl/liblog 及 `LIBC` 版本；CRT 启动文件还导入 `__cxa_atexit`、`__cxa_finalize`、`__register_atfork` | 声明显式逻辑提供方，验证版本需求，实现真实生命周期记录，绝不使用返回成功的空桩 | 已检查 NDK r30 普通链接及 llvm-readelf（2026-11-17）；T07 N1 运行所记录的源码/链接及回调 |
+| [DSO 对象析构 ABI](https://itanium-cxx-abi.github.io/cxx-abi/abi.html#dso-dtor) 注册函数/参数/DSO，逆序 finalization，可选单个 DSO 或全部，同一记录不得调用两次 | 独立客体注册表，在回调前移除记录，正常销毁运行时时在代码/堆仍有效时处理剩余记录 | 已阅读规范；T07 N1 验证选择、重入/仅一次及退出清理；不证明客体 C++ 异常支持 |
 
 ## MyGo
 

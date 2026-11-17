@@ -48,6 +48,14 @@ struct HostSymbol {
     void* address;
 };
 
+/// Declares one runtime-owned logical library and its exact audited exports/version.
+/// Notes: symbol addresses and names outlive the namespace; no host DLL search is performed.
+struct BuiltinLibrary {
+    std::string name;
+    std::vector<HostSymbol> symbols;
+    std::string version;
+};
+
 /// What loading found, for reports.
 struct LoadStats {
     std::string segments;     ///< the PT_LOAD permissions in order, "R, RX, RW"
@@ -124,13 +132,14 @@ std::unique_ptr<Module> Load(const std::wstring& path, std::span<const HostSymbo
                              LoadError* error);
 
 /// Owns a restricted C-library graph with transactional linking and process-lifetime pinning.
-/// Notes: no APK admission, JNI_OnLoad, ELF TLS, symbol versions or dynamic unload yet.
+/// Notes: no APK admission, JNI_OnLoad, ELF TLS, versioned guest exports or dynamic unload yet.
 /// The caller keeps this object alive until all guest threads/callbacks end and must enter
 /// a managed guest context before Open, because dependency constructors may call shims.
 class ModuleSet {
 public:
-    /// Creates a private library namespace under directory with audited fixed-signature imports.
-    ModuleSet(std::wstring directory, std::span<const HostSymbol> imports);
+    /// Creates a private namespace with audited imports and optional reserved logical libraries.
+    ModuleSet(std::wstring directory, std::span<const HostSymbol> imports,
+              std::span<const BuiltinLibrary> libraries = {});
     /// Releases mapped images after the caller has stopped every guest execution path.
     ~ModuleSet();
     ModuleSet(const ModuleSet&) = delete;
@@ -142,7 +151,7 @@ public:
     bool Close(uint64_t handle);
     /// Looks up an export in an open handle and its breadth-first dependency scope.
     void* Find(uint64_t handle, std::string_view symbol) const;
-    /// Returns the number of retained images, including closed-but-pinned dependencies.
+    /// Returns retained ELF images, including closed-but-pinned dependencies, excluding logical records.
     size_t Mapped() const;
 
 private:

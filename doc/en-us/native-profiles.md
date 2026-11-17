@@ -8,7 +8,7 @@ Guest native code is off by default and runs only within a declared, tested prof
 | Profile | State |
 |---|---|
 | N0, an auditable leaf ELF | implemented; G2 passes on this PC ([platform-notes.md](platform-notes.md)) |
-| N1, a restricted C/JNI ELF (dependencies, imports, constructors, JNI) | separate P3 Bionic groups (T08) and module transactions (T07); complete profile admission and JNI incomplete, G3 NOT_RUN |
+| N1, a restricted C/JNI ELF (dependencies, imports, constructors, JNI) | P3 declared C/Bionic admission passes T07/T08, including one normally linked NDK C fixture; APK/JNI integration incomplete, G3 NOT_RUN |
 | N2, graphics samples | not started (P5, P6) |
 
 ## N0
@@ -84,10 +84,12 @@ ordinary NDK output works. N0's original ABI suite and imports are unchanged.
   descriptor or an allocation failure in the compiler TLS resolver terminates the probe with
   a diagnostic, never a fabricated TLS address. No exception is unwound through guest code.
   The guest-PC fault boundary below terminates rather than recovers execution.
-  `pthread_exit` and detach/cancellation remain unsupported. Complete native-profile admission
-  remains unfinished; APK/JNI integration is P4. These probes alone never establish G3.
+  `pthread_exit` and detach/cancellation remain unsupported. The declared C/Bionic subset is
+  independent of APK/JNI admission (P4). These probes alone never establish G3.
 
 The P3 synchronization subset is exercised separately by `native-probe sync` (T08):
+
+Windows synchronization is an implementation component, not a general Linux futex implementation.
 
 - Android LP64 mutex/condition storage is 40/48 bytes, aligned to 4 bytes. The shim stores only
   a private generation marker in it; owner, recursion, waiters and host condition variables
@@ -214,7 +216,7 @@ refuses dependencies and constructors. This is not APK native admission or G3 co
 
 - Names are portable `.so` basenames under one supplied library directory, never search paths,
   Windows DLL names or arbitrary host exports. A declared SONAME must equal the requested name.
-  Cycles, versioned symbols and guest ELF TLS are explicitly refused in this subset.
+  Cycles, versioned guest exports and guest ELF TLS are explicitly refused in this subset.
 - Prepare every new image and dependency, screen instructions, resolve eager imports, apply
   relocations and protections, then validate every initializer before running any guest code.
   A failure rolls back all new images; already committed images are unchanged.
@@ -227,7 +229,7 @@ refuses dependencies and constructors. This is not APK native admission or G3 co
   rather than exposing incomplete state or blocking across a guest callback.
 - Opaque 64-bit handles carry explicit open references. Close decrements a reference; the graph
   remains pinned until the ModuleSet is destroyed after all guest execution has ended.
-  Finalizers and JNI_OnUnload are not invoked; this is the documented process-lifetime policy,
+  ELF DT_FINI/DT_FINI_ARRAY and JNI_OnUnload are not invoked; this is the process-lifetime policy,
   not full dynamic unload. Initialization does not call JNI_OnLoad.
 - `ThreadRuntime` can receive the namespace and bind guest `dlopen`, `dlsym`, `dlclose`,
   `dlerror` to it. Only RTLD_NOW|RTLD_LOCAL and explicit handles are supported; lazy/global/default
@@ -236,6 +238,40 @@ refuses dependencies and constructors. This is not APK native admission or G3 co
 T07 uses one positive dependency pair and a small refusal matrix to assert initialization
 order/values, guest dl API/error consumption, lookup scope, repeat-open/close, unresolved weak imports, cycle/name rejection,
 invalid constructor targets, and no constructor execution on a failed transaction.
+
+### N1 system-library admission
+
+The runtime namespace can provide explicit logical `libc.so`, `libdl.so` and `liblog.so`
+records backed only by audited shims and the guest formatting helper. They are not Windows
+DLLs or Android system libraries, never searched on the host, and cannot be replaced by an
+APK copy. Guest handles and lookup scopes apply to these records too; mapped-image counts
+exclude logical records.
+
+Versioned imports read and validate `DT_VERNEED`/`DT_VERSYM`, their strings, indices, hashes and
+linked-record bounds. A versioned import binds only to its named reachable logical provider
+and declared version (`LIBC` for the implemented libc/libdl subset). Unknown versions, missing
+providers and versioned guest exports fail before any constructor. N0's original admission
+remains unchanged. This is not general GNU symbol-version interposition.
+
+Normally linked NDK output also imports CRT lifecycle functions. `__cxa_atexit` records up to
+256 guest callbacks with their argument and DSO identity; `__cxa_finalize` removes records before
+calling them in reverse order, with DSO selection, reentry and exactly-once semantics. Remaining
+callbacks run in a fresh managed context at runtime teardown, before mappings or the private
+heap are released. Teardown cannot create new workers; self-rearming exit loops fail explicitly.
+This does not run ELF finalizer arrays, `JNI_OnUnload`, or permit cross-domain C++ unwinding.
+
+`__register_atfork` retains up to 128 registrations and removes a DSO's records on finalization.
+No fork occurs, so prepare/parent/child hooks are not called; `fork` itself remains an unresolved
+import and is refused. Registration is real bounded storage, not a success-returning empty stub.
+
+T07 N1 runs one normally linked API-30 NDK C fixture plus missing-fork, unknown-version and
+malformed-version-chain variants. Six semantic cases cover refusal before construction,
+normal imports, provider scope, explicit lifecycle, close/pinning and teardown in a fresh context.
+Exit quotas and exactly 255 callbacks are checked while the constructor retains the other
+registration; the last callback allocates/frees guest memory and confirms worker creation is
+refused during teardown. Only this source and recorded link are established, not arbitrary
+NDK/CMake builds or guest C++. Internal guest throw/catch would require an expanded-profile ADR
+and separate libc++/unwind/TLS validation; Windows SEH does not provide that support.
 
 ## P3 guest fault boundary (T08)
 
@@ -303,6 +339,7 @@ and expected refusal; `build.ps1 -Component NativeProbe` builds them into `tests
 | T08 faults | `threads/faults.c`: host exception chain, guest access violation and trap | API 30, `-O2 -nostdlib`, common flags as T05; `T08_GUEST_FAULT` / `T08_GUEST_TRAP` require a module/offset diagnostic and exit 3 |
 | T08 format | `threads/format.c`: integer/guest-V formatting, bounds/refusals and UTF-8 byte logs | API 30, `-O2 -nostdlib -fno-builtin`, common flags as T05; maps the separately built product formatting helper |
 | T07 module graph | `modules/dependency.c`, `root.c`, `cycle.c`: positive pair, missing import, invalid initializer, SONAME/cycle seed | API 30, `-O2 -nostdlib`, common flags as T05; explicit linked fixture dependencies and expected values in `fixtures.psd1` |
+| T07 N1 | `modules/bionic.c`: normal NDK CRT/libc/libdl/liblog link, lifecycle and three admission refusals | API 30, `-shared -fPIC -O2 -llog`, no `-nostdlib`/`-nostartfiles` or disabled stack protector; version mutations keep the original SONAME in isolated staged directories |
 
 Every fixture is built by the NDK's own clang and linker; none is a special build that would stand
 for ordinary NDK output beyond what its flags say (`PLAN.md` §5.3).

@@ -14,6 +14,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <cwchar>
+#include <iterator>
 #include <limits>
 #include <map>
 #include <mutex>
@@ -133,6 +134,21 @@ struct GuestStat {
 static_assert(sizeof(GuestStat) == 128 && offsetof(GuestStat, size) == 48 &&
               offsetof(GuestStat, access) == 72 && offsetof(GuestStat, unused4) == 120);
 
+/// Retains one guest C++-ABI exit callback without sharing the host CRT's destructor registry.
+struct ExitCallback {
+    void (*function)(void*);
+    void* argument;
+    void* dso;
+};
+
+/// Retains guest fork hooks without claiming to implement fork or invoking hooks at registration.
+struct ForkHooks {
+    void (*prepare)();
+    void (*parent)();
+    void (*child)();
+    void* dso;
+};
+
 }  // namespace
 
 /// Holds one runtime's synchronized token tables and exact cleanup counters.
@@ -143,6 +159,9 @@ struct ThreadState {
     std::map<void*, uint64_t> allocations;
     std::wstring androidRoot;  // Canonical extended-length host path, ending in a backslash.
     std::map<int32_t, std::unique_ptr<GuestFile>> descriptors;
+    std::vector<ExitCallback> exits;
+    std::vector<ForkHooks> forkHooks;
+    bool stopping = false;
     int32_t nextFd = 3;
     std::map<GuestThread, std::unique_ptr<Worker>> workers;
     std::array<Key, kKeys> keys{};
@@ -690,6 +709,50 @@ char* DlError() {
     return context.dlReturned.data();
 }
 
+/// Registers a real guest exit callback and DSO identity; returns failure if bounded storage is full.
+int32_t CxaAtExit(void (*function)(void*), void* argument, void* dso) {
+    if (!function) return IoError(kInvalid);
+    auto& runtime = Context().runtime;
+    std::lock_guard lock(runtime.mutex);
+    if (runtime.exits.size() >= 256) return IoError(kNoMemory);
+    try {
+        runtime.exits.push_back({function, argument, dso});
+        return 0;
+    } catch (const std::bad_alloc&) { return IoError(kNoMemory); }
+}
+
+/// Calls matching callbacks in reverse order after removing them, allowing safe guest reentry.
+void CxaFinalize(void* dso) {
+    auto& runtime = Context().runtime;
+    for (size_t calls = 0; ; calls++) {
+        ExitCallback callback{};
+        {
+            std::lock_guard lock(runtime.mutex);
+            auto found = std::find_if(runtime.exits.rbegin(), runtime.exits.rend(),
+                                     [dso](const ExitCallback& entry) { return !dso || entry.dso == dso; });
+            if (found == runtime.exits.rend()) {
+                std::erase_if(runtime.forkHooks, [dso](const ForkHooks& entry) { return !dso || entry.dso == dso; });
+                return;
+            }
+            if (calls == 4096) Fatal("exit callback iteration limit exceeded");
+            callback = *found;
+            runtime.exits.erase(std::next(found).base());
+        }
+        callback.function(callback.argument);
+    }
+}
+
+/// Stores guest atfork hooks for their DSO; fork itself remains unavailable in this profile.
+int32_t RegisterAtFork(void (*prepare)(), void (*parent)(), void (*child)(), void* dso) {
+    auto& runtime = Context().runtime;
+    std::lock_guard lock(runtime.mutex);
+    if (runtime.forkHooks.size() >= 128) return kNoMemory;
+    try {
+        runtime.forkHooks.push_back({prepare, parent, child, dso});
+        return 0;
+    } catch (const std::bad_alloc&) { return kNoMemory; }
+}
+
 /// Enters a new guest context on a CRT-initialized host worker and publishes its return value.
 unsigned __stdcall Start(void* pointer) {
     auto& worker = *static_cast<Worker*>(pointer);
@@ -707,6 +770,7 @@ int Create(GuestThread* token, const void* attributes, Entry entry, void* argume
     if (attributes) return kNotSupported;
     try {
         std::lock_guard lock(runtime.mutex);
+        if (runtime.stopping) return kNotSupported;
         if (runtime.nextThread == std::numeric_limits<GuestThread>::max()) return kAgain;
         const GuestThread id = runtime.nextThread++;
         auto worker = std::make_unique<Worker>();
@@ -1102,23 +1166,47 @@ ThreadRuntime::ThreadRuntime(ModuleSet* modules, const std::wstring& androidRoot
 }
 
 ThreadRuntime::~ThreadRuntime() {
+    // Check both before and after callbacks; never release executable code or host locks still in use.
+    const auto check = [&] {
+        if (!state_->workers.empty() || state_->contexts != 0)
+            Fatal("runtime destroyed with unjoined workers or active contexts");
+        for (const auto& [object, mutex] : state_->mutexes) {
+            (void)object;
+            if (mutex->owner || mutex->contenders || mutex->conditionWaiters)
+                Fatal("runtime destroyed with owned or waited-on synchronization objects");
+        }
+        for (const auto& [object, condition] : state_->conditions) {
+            (void)object;
+            if (condition->waiters) Fatal("runtime destroyed with owned or waited-on synchronization objects");
+        }
+    };
+    {
+        std::lock_guard lock(state_->mutex);
+        check();
+        state_->stopping = true;
+    }
+    for (int pass = 0; pass < 4; pass++) {
+        GuestThread token;
+        {
+            std::lock_guard lock(state_->mutex);
+            if (state_->exits.empty()) break;
+            if (state_->nextThread == std::numeric_limits<GuestThread>::max()) Fatal("thread token space exhausted");
+            token = state_->nextThread++;
+        }
+        GuestThreadContext context(*state_, token);
+        CxaFinalize(nullptr);
+    }
     std::lock_guard lock(state_->mutex);
-    if (!state_->workers.empty() || state_->contexts != 0)
-        Fatal("runtime destroyed with unjoined workers or active contexts");
-    for (const auto& [object, mutex] : state_->mutexes) {
-        (void)object;
-        if (mutex->owner || mutex->contenders || mutex->conditionWaiters)
-            Fatal("runtime destroyed with owned or waited-on synchronization objects");
-    }
-    for (const auto& [object, condition] : state_->conditions) {
-        (void)object;
-        if (condition->waiters) Fatal("runtime destroyed with owned or waited-on synchronization objects");
-    }
+    if (!state_->exits.empty()) Fatal("exit callbacks rearmed during context teardown");
+    check();
 }
 
 std::span<const HostSymbol> ThreadRuntime::Imports() {
     static const HostSymbol imports[] = {
         {"__errno", reinterpret_cast<void*>(&Errno)},
+        {"__cxa_atexit", reinterpret_cast<void*>(&CxaAtExit)},
+        {"__cxa_finalize", reinterpret_cast<void*>(&CxaFinalize)},
+        {"__register_atfork", reinterpret_cast<void*>(&RegisterAtFork)},
         {"pthread_create", reinterpret_cast<void*>(&Create)},
         {"pthread_join", reinterpret_cast<void*>(&Join)},
         {"pthread_self", reinterpret_cast<void*>(&Self)},

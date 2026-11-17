@@ -66,7 +66,7 @@
 
 ## P3 Bionic 与模块检查
 
-`test.ps1 -Suite Bionic`，2026-11-16，在上述 Windows ARM64 机器上 92/92 项检查 PASS（T08：75，T07：17），不是 G3；
+`test.ps1 -Suite Bionic`，2026-11-17，在上述 Windows ARM64 机器上 104/104 项检查 PASS（T08：75，T07：29），不是 G3；
 线程夹具用 NDK r30、API 30、`-O2 -nostdlib -femulated-tls -fno-stack-protector` 构建；
 独立同步夹具使用 `-O2 -nostdlib -fno-stack-protector`，没有 TLS。
 哈希与完整选项在 `tests/fixtures/elf/fixtures.json`（生成产物，不提交）；
@@ -82,6 +82,9 @@ T08 faults 用同一源码的三个构建新增八项检查：宿主 SEH 链正�
 客体访问违规与 trap 进程带模块/虚拟地址诊断终止。
 T08 format 新增九项检查：辅助库/夹具哈希、四项语义及宿主状态、汇总和精确日志字节。
 产品辅助库是 NDK 构建、经过筛查的 AArch64 ELF，不是 PE DLL。
+T07 N1 新增十二项检查：四项夹具哈希、辅助库哈希、六项语义及汇总/日志字节。
+正例源码使用 NDK 驱动的普通 API-30 共享库链接及 CRT 启动文件、libc/libdl/liblog，
+不使用 `-nostdlib` 或特殊 TLS/栈保护参数。
 
 | 条目（`PLAN.md` §10） | 结果 | 证据 |
 |---|---|---|
@@ -101,12 +104,17 @@ T08 format 新增九项检查：辅助库/夹具哈希、四项语义及宿主�
 | 时间（T08 io） | PASS | realtime Unix epoch 与宿主相差两秒以内，100 ns 转为规范纳秒单位；monotonic 间隔不少于请求的 2 ms；零时长 sleep、成功时 remainder 不变、无效时间和不支持的时钟/时长；四次宿主状态回调无违规。挂起与客体信号 NOT_RUN/不支持 |
 | 客体 PC 故障边界（T08 faults） | PASS | 宿主发起的访问违规到达宿主 SEH 处理器，客体 errno/x18/sp 不变；`neg-guest-fault.so` 虚拟地址 `0x42d0` 的访问违规（Windows `0xc0000005`）与 `neg-guest-trap.so` 虚拟地址 `0x42b4` 的 trap（`0xc000001d`）均输出 `GUEST_EXECUTION_FAULT` 后退出 3；不恢复/展开；N0 的 2000 轮循环仍保持堆分配/私有区域/句柄增量 +0 |
 | 受限格式化/日志（T08 format） | PASS | LP64 最小/最大值及溢出到栈的整数参数；标志/宽度/精度、客体 va_copy 与 V 变体；本应写入长度、保留哨兵的截断及内嵌 NUL；带 errno 拒绝 `%n`、浮点/宽文本/位置格式及超限；经固定宿主日志入口输出精确的字面百分号/UTF-8 记录；四次宿主状态回调无违规。不支持浮点变参和通用 stdio |
+| NDK 系统库准入（T07 N1） | PASS | 普通 NDK 链接执行构造函数并返回精确 `N1:4294967297` 结果；`LIBC` 需求仅绑定具名逻辑提供方；libc/log 查询隔离；fork、未知版本和损坏链在构造前失败，不保留映像；原有 N0 拒绝不变 |
+| 客体 CRT 生命周期（T07 N1） | PASS | 逆序/DSO 选择/重入顺序 `3412`，回调不重复；128 份 atfork 注册、溢出及 DSO 移除，不调用 hook；空退出回调与 256 项容量错误，保留一项时精确执行另外 255 个选定回调；关闭保持代码映射；最终回调具有新 errno、分配/释放客体堆、拒绝新 worker、保持 x18/sp，构造/退出 trace 为 `19` |
 | APK 原生库与 JNI 集成 | NOT_RUN | T09 尚未实现；`winapk run` 的原生库加载仍关闭 |
 
 同一变更集还运行了 `check-requirements.ps1`、`build.ps1 -Component All`、
 `test.ps1 -Suite Host`（22 项 PASS）、`-Suite Java`（43 项 PASS）与 `-Suite Native`（58 项 PASS）。
 Go vet/测试（含 `CGO_ENABLED=0`）、MyGo vet/i18n 与文档镜像检查均通过。
 格式化增量的完整输出保存在 `build/windows-arm64/test-data/logs/P3-format-*.log`。
+2026-11-17 的 N1 增量运行 requirements/build All 及 Host 22、Native 58、Bionic 104、Java 43；
+日志在同目录的 `P3-n1-*.log`。最终另跑 Bionic 104，覆盖加强后的退出上限/堆断言。
+这些 N1 C 库结果不包含 JNI/Java native 调用。
 构建的宿主 PE/DLL 全为 ARM64；构建脚本检查正例 AArch64 客体夹具的架构。
 不宣称完成新关卡，不升级版本，无计划偏离。
 

@@ -39,6 +39,7 @@ go run ./tools/checkdocs           # doc/en-us and doc/zh-cn mirror each other
 .\scripts\windows\test.ps1 -Suite Io
 .\scripts\windows\test.ps1 -Suite Faults
 .\scripts\windows\test.ps1 -Suite Format
+.\scripts\windows\test.ps1 -Suite Libraries
 .\build\windows-arm64\bin\native-probe.exe suite .\tests\fixtures\elf\libn0abi.so
 .\build\windows-arm64\bin\native-probe.exe sync .\tests\fixtures\elf\libsync.so
 .\build\windows-arm64\bin\winapk.exe doctor --json
@@ -99,6 +100,15 @@ N0 的 `Native` 回归也在已有加载/卸载循环中覆盖新的可执行范
 在 `bin/guest/bionic.json` 记录其源码、完整 NDK 参数及哈希。
 套件核对辅助库和夹具哈希、五项用例及精确 UTF-8 日志字节。
 辅助库是产品代码，不是系统 libc 或生成的测试夹具；不直接使用宿主可变参数导出。
+
+`-Suite Libraries` 选择 T07 的 N1 系统库/版本/CRT 矩阵（也在 `Bionic` 中）。
+正例库使用 NDK 驱动的普通共享库链接，包含 CRT 启动文件及 libc/libdl/liblog 依赖：
+不使用 `-nostdlib`、`-nostartfiles`、`-femulated-tls` 或禁用栈保护的参数。
+它只验证所记录的命令及源码，不表示所有 Android Studio/CMake 配置或任意 NDK 输出均可用。
+三个小拒绝变体在构造前覆盖不支持的 fork 导入、有效但未知的版本名称/哈希，以及损坏的版本链。
+同一进程还检查逻辑查询范围、真实 finalization 及保持映射的退出回调。
+`fixtures.json` 记录完整普通链接参数；被忽略的 `test-data/n1-libraries` 中的暂存副本保持各变体原有 SONAME，
+不修改源夹具。
 
 `winapk run` 把每个应用的数据放在 `%LOCALAPPDATA%\Windows-ARM64.apk\Apps` 下（`--data-dir` 可改）：`android\`
 是应用看到的 Android 根目录（`data\data\<package>`、`sdcard`），`code\<package>\` 是转换后的代码及缓存戳，

@@ -305,57 +305,18 @@ P2 与 G2（独立 `native-probe.exe` 上的 profile N0、ABI 正例 T05、提�
 
 ## 10. P3 — Bionic、线程、TLS 与客体模块语义
 
-进度（2026-11-16）：已真机验证独立 T08 线程/errno/keys/显式 C 仿真 TLS、进程私有 mutex/condition、
-私有堆/字节/字符串、映射文件/时间、客体 PC 故障诊断，以及客体 ABI 辅助 ELF 中的受限整数格式化/日志。
-T07 已覆盖事务式依赖加载、构造顺序、引用/保留映射、guest dl API 与失败回滚。
-长期支持范围、拒绝与夹具见 `doc/en-us/native-profiles.md`，结果见 `doc/en-us/platform-notes.md`。
-最新完整回归 Host 22、Java 43、Native 58、Bionic 92 项通过；不增加重复压力套件。
-这些特制夹具不表示普通 NDK 输出、完整 N1 或 G3 已通过。完整 profile 准入（含系统库依赖/版本化导入）、
-P4 JNI/APK 接入及 JVM/客体混合故障验证仍待完成。
-前端暂缓，按用户决定优先后端；不改变 §6 的运行时依赖顺序。
+P3 首批已声明 C/Bionic 子集完成并于 2026-11-17 真机验证。长期契约移至
+`doc/en-us/native-profiles.md`（线程/errno/TLS、同步、私有堆/字符串、文件/时间、受限格式化/日志、
+依赖/版本/引用/CRT 生命周期与故障边界），ABI 证据见 `doc/en-us/abi-compatibility.md`。
 
-### 10.1 按样例需求实现的第一批功能
+验收记录见 `doc/en-us/platform-notes.md`：T07/T08 覆盖关键正负路径，包括 8/32 线程隔离及清理、
+中文/空格文件路径、模块事务、普通 NDK 驱动链接的 C 库、限定系统库及 `LIBC` 版本需求、
+构造前失败回滚与只识别客体 PC 的致命故障。完整回归 Host 22、Java 43、Native 58、Bionic 104 项通过，
+不另加重复压力套件。
 
-| 功能组 | 首批范围 | 必须注意 |
-| --- | --- | --- |
-| 内存/字节 | malloc/calloc/realloc/free、memcpy/memmove/memset/memcmp | 分配与释放归属，大小/溢出，guest errno |
-| 字符串/日志 | 常用字符串、Android log、受限格式化 | Android `long`、`va_list`、编码 |
-| 文件 | open/read/write/close/lseek/fstat、基础目录映射 | 独立 guest fd 表，Windows HANDLE 不是 fd |
-| 时间 | monotonic/realtime、有限 sleep | 单位、epoch、超时返回和中断语义 |
-| 线程 | create/join、mutex、cond、TLS keys | pthread 对象不可 memcpy 成 SRWLOCK/CRITICAL_SECTION |
-| 动态加载 | dlopen/dlsym/dlerror、依赖引用 | guest handle、lookup scope、构造顺序和重复加载 |
-| TLS | 先实现夹具实际使用且可验证的 model | 模块 TLS 初始化、线程销毁和析构 |
-
-### 10.2 行为约束
-
-- [ ] 为 guest `errno` 建立每线程存储；错误码显式转换，不使用 `GetLastError` 原值充当 Linux errno。
-- [ ] 对 guest opaque 对象采用独立布局/对象表，管理初始化、销毁和无效 handle。
-- [ ] `pthread_create` 经宿主线程入口创建 GuestThreadContext，再调用客体入口；退出时清理 TLS/JNI 状态。
-- [ ] 处理 static initializer、依赖环、弱符号、重复 SONAME 和 symbol version 的已支持子集。
-- [ ] guest `dlclose` 初期可以将模块保留到进程结束，但必须文档化并保持引用语义一致；不能释放仍被线程/JNI 使用的代码。
-- [ ] 不按名称把 Bionic 导入直接绑定到任意 UCRT 导出；每个导入经过 ABI/语义审计。
-- [ ] `stdio`、`va_list`、pthread、`stat` 等不透明/布局不同对象不能直接跨域传递。
-- [ ] 原始 Linux `svc` 永远不传入 Windows 内核。当前不支持的内联 syscall 在已声明 profile 中拒绝。
-- [ ] WaitOnAddress/条件变量等只能作为实现组件；不得声称它们天然等价于所有 futex 操作。
-- [ ] 缺失符号在初始化前列出；已实现函数的错误遵循其 API 语义，不用万能“返回 0”补洞。
-
-### 10.3 异常与故障边界
-
-- MVP 不允许 Android C++ 异常穿越宿主桥或 JVM 边界。
-- 客体内部 C++ throw/catch 若需要支持，单独验证 guest libc++/unwind 和 TLS 依赖；不因为 Windows 有 SEH 就认为自动可用。
-- Windows 宿主 thunk 的展开元数据与 ELF 的 `.eh_frame` 是不同问题，不直接复用。
-- 诊断处理不得抢占 HotSpot 自己的异常处理。只识别本运行时管理的故障范围；未知故障交给正常处理链。
-- 遇到无法恢复的客体执行故障，记录诊断并终止该 APK 进程；不在损坏状态下继续运行。
-
-Windows ARM64 的异常展开有专用元数据和约定，应作为独立移植工作处理。[Windows ARM64 异常处理](https://learn.microsoft.com/en-us/cpp/build/arm64-exception-handling?view=msvc-170)
-
-### 验收
-
-- 多个 guest 线程拥有不同 errno/TLS 值，join 与析构结果正确；增加至少 8 线程的压力夹具。
-- 文件读写/seek/stat 与夹具预期一致；中文/空格路径可用，非法映射有明确失败。
-- 两个 ELF 的依赖、构造、导出解析和重复加载行为可重复。
-- 缺失导入、未知 TLS model 和禁止 syscall 均产生可定位错误。
-- 更新 `native-profiles.md`，列出支持函数、TLS model、限制及对应测试编号。
+这只证明文档声明的 C/Bionic 范围及所记录的源码/构建参数；不表示任意 NDK/CMake 输出、完整 N1 或 G3 通过。
+P4 继续验证 JNI/APK 接入、线程 JNI 状态清理及 JVM/客体混合故障；客体 C++ 展开、复杂 TLS 与完整动态卸载不在该子集中。
+前端继续暂缓，不改变 §6 的运行时依赖顺序。
 
 ## 11. P4 — JNI 与 APK 原生库集成
 

@@ -62,7 +62,9 @@ add_executable(native-probe
   ${_win}/src/native_probe/main.cpp
   ${_win}/src/native_probe/threads.cpp
   ${_win}/src/native_probe/modules.cpp
+  ${_win}/src/native_probe/libraries.cpp
   ${CMAKE_CURRENT_LIST_DIR}/../../guest/bionic/threads.cpp
+  ${CMAKE_CURRENT_LIST_DIR}/../../guest/bionic/libraries.cpp
   ${CMAKE_CURRENT_LIST_DIR}/../../guest/loader/faults.cpp
   ${CMAKE_CURRENT_LIST_DIR}/../../guest/loader/elf_loader.cpp)
 target_include_directories(native-probe PRIVATE

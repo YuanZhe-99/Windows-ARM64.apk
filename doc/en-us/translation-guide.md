@@ -72,6 +72,9 @@ and Latin words only where it helps readability.
 | process-private | 进程私有 |
 | reparse point | 重解析点 |
 | guest ABI helper | 客体 ABI 辅助库 |
+| logical library | 逻辑库 |
+| exit callback | 退出回调 |
+| symbol version | 符号版本 |
 
 ## 6. Review checklist
 

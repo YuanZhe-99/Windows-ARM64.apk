@@ -320,9 +320,9 @@ function Build-Fixtures {
 }
 
 <#
-Writes $dest, a copy of the ELF file $src with one field patched (tests/windows-arm64/guest-elf/
-fixtures.psd1, Mutation): T06's structural cases, each differing from a valid library by that
-field alone. Notes: little-endian ELF64 offsets; program header i is at e_phoff + 56 * i.
+Writes $dest with one controlled ELF defect (tests/windows-arm64/guest-elf/fixtures.psd1, Mutation).
+T06 patches one structural field; T07 changes a version name and its matching hash, or one chain offset.
+Notes: little-endian ELF64 offsets; program header i is at e_phoff + 56 * i.
 #>
 function Write-ElfMutation([string]$src, [string]$dest, [string]$mutation) {
     $b = [IO.File]::ReadAllBytes($src)
@@ -353,6 +353,41 @@ function Write-ElfMutation([string]$src, [string]$dest, [string]$mutation) {
             $seg = $loads | Where-Object { $_.Vaddr -le $rela } | Select-Object -Last 1
             & $put ($rela - $seg.Vaddr + $seg.Offset + 8) ([BitConverter]::GetBytes([uint32]0x7FFF))
         }
+        { $_ -in 'unknown-version', 'bad-version-chain' } {
+            $dyn = $ph | Where-Object Type -EQ 2
+            $tags = @{}
+            for ($e = $dyn.Offset; (& $u64 $e) -ne 0; $e += 16) { $tags[(& $u64 $e)] = & $u64 ($e + 8) }
+            $offset = {
+                param([uint64]$address)
+                $segment = $loads | Where-Object { $_.Vaddr -le $address } | Select-Object -Last 1
+                $address - $segment.Vaddr + $segment.Offset
+            }
+            $need = & $offset $tags[[uint64]0x6ffffffe]
+            if ($mutation -eq 'bad-version-chain') {
+                & $put ($need + 12) ([BitConverter]::GetBytes([uint32]1))
+            } else {
+                # Change the version name and matching ELF hash, keeping the version table valid.
+                $strings = & $offset $tags[[uint64]5]
+                [long]$hash = 0
+                foreach ($character in [Text.Encoding]::ASCII.GetBytes('NOPE')) {
+                    $hash = ($hash -shl 4) + $character
+                    $high = $hash -band 0xf0000000
+                    if ($high) { $hash = $hash -bxor ($high -shr 24) }
+                    $hash = $hash -band (-bnot $high)
+                }
+                for (;;) {
+                    $aux = $need + (& $u32 ($need + 8))
+                    for ($n = 0; $n -lt (& $u16 ($need + 2)); $n++) {
+                        & $put ($strings + (& $u32 ($aux + 8))) ([Text.Encoding]::ASCII.GetBytes('NOPE'))
+                        & $put $aux ([BitConverter]::GetBytes([uint32]$hash))
+                        $aux += & $u32 ($aux + 12)
+                    }
+                    $next = & $u32 ($need + 12)
+                    if (-not $next) { break }
+                    $need += $next
+                }
+            }
+        }
         default { throw "unknown mutation $mutation" }
     }
     [IO.File]::WriteAllBytes($dest, $b)
@@ -382,8 +417,10 @@ function Build-ElfFixtures {
             $rec.mutation = $f.Mutation
         } else {
             $soname = if ($f.ContainsKey('Soname')) { $f.Soname } else { $f.Name }
-            $cargs = @("--target=$($f.Target)") + $table.Common + $f.Flags + @("-Wl,-soname,$soname", '-o', $dest, (Join-Path $src $f.Source))
+            $common = if ($f.ContainsKey('Common')) { $f.Common } else { $table.Common }
+            $cargs = @("--target=$($f.Target)") + $common + $f.Flags + @("-Wl,-soname,$soname", '-o', $dest, (Join-Path $src $f.Source))
             if ($f.ContainsKey('Links')) { $cargs += @($f.Links | ForEach-Object { Join-Path $dir $_ }) }
+            if ($f.ContainsKey('Libraries')) { $cargs += @($f.Libraries | ForEach-Object { "-l$_" }) }
             Invoke-Checked $clang $cargs
             $rec.source = "tests/windows-arm64/guest-elf/$($f.Source)"
             $rec.clang = ($cargs -join ' ')

@@ -1,6 +1,7 @@
 // T08's host harness: no JVM/window, only fixed-signature calls into the audited guest fixture.
 #include "threads.h"
 #include "../../../../guest/bionic/threads.h"
+#include "../../../../guest/bionic/libraries.h"
 
 #include <windows.h>
 
@@ -55,22 +56,17 @@ int ProbeBionic(const std::wstring& path, BionicSuite suite, const std::wstring&
     symbols.push_back({"t08_host_exception", reinterpret_cast<void*>(&HostException)});
     winapk::guest::LoadError error;
     // The guest-ABI helper outlives the fixture and every managed guest callback.
-    std::unique_ptr<winapk::guest::Module> formatBridge;
+    std::unique_ptr<winapk::guest::BionicLibraries> formatBridge;
     if (suite == BionicSuite::Format) {
-        formatBridge = winapk::guest::Load(supportPath, symbols, &error);
+        formatBridge = winapk::guest::BionicLibraries::Load(supportPath, &error);
         if (!formatBridge) {
             std::printf("reject %s format helper %s: %s\n", winapk::guest::CategoryName(error.category),
                         error.where.c_str(), error.reason.c_str());
             return 2;
         }
-        for (const char* name : {"snprintf", "vsnprintf", "__android_log_print", "__android_log_vprint"}) {
-            void* address = formatBridge->Find(name);
-            if (!address) {
-                std::printf("reject GUEST_SYMBOL_UNRESOLVED format helper: missing %s\n", name);
-                return 2;
-            }
-            symbols.push_back({name, address});  // Guest → guest address, not a host variadic entry.
-        }
+        // This table also contains the guest-to-guest formatter addresses, never host varargs.
+        symbols.assign(formatBridge->Imports().begin(), formatBridge->Imports().end());
+        symbols.push_back({"t08_host_state", reinterpret_cast<void*>(&HostState)});
     }
     auto module = winapk::guest::Load(path, symbols, &error);
     if (!module) {

@@ -5,13 +5,24 @@
 # native-probe suite/stress and checks T06 refusals; Suite Bionic runs T07 and T08.
 #
 # Name: the file. Source: under tests/windows-arm64/guest-elf. Target: clang --target.
-# Flags: added to Common. From + Mutation: a copy of another fixture with one field patched
+# Common: optional per-fixture replacement of the shared flags. Flags: added to Common.
+# Libraries: NDK link names placed after source/objects. From + Mutation: a controlled defect
 # (build.ps1, Write-ElfMutation). Expect: the error category. Reason: text the refusal contains.
 # Result: expected success/fatal output in the generated manifest. Exit: a runtime fatal's code.
 # Command/Cases: T08 probe command and required positive case count (threads/9 by default).
 @{
     Common   = @('-shared', '-fPIC', '-fno-stack-protector', '-Wall', '-Wextra', '-Werror')
     Fixtures = @(
+        @{ Name = 'libbionic.so'; Id = 'T07'; Source = 'modules/bionic.c'; Target = 'aarch64-linux-android30'
+           Common = @('-shared', '-fPIC', '-Wall', '-Wextra', '-Werror'); Flags = @('-O2'); Libraries = @('log')
+           Command = 'libraries'; Result = 'normal NDK-linked Bionic, LIBC versions and real lifecycle callbacks' }
+        @{ Name = 'neg-bionic-import.so'; Id = 'T07'; Source = 'modules/bionic.c'; Target = 'aarch64-linux-android30'; Soname = 'libbionic.so'
+           Common = @('-shared', '-fPIC', '-Wall', '-Wextra', '-Werror'); Flags = @('-O2', '-DBIONIC_MISSING'); Libraries = @('log')
+           Command = 'libraries'; Result = 'GUEST_SYMBOL_UNRESOLVED fork@LIBC before constructor' }
+        @{ Name = 'neg-bionic-version.so'; Id = 'T07'; From = 'libbionic.so'; Mutation = 'unknown-version'
+           Command = 'libraries'; Result = 'GUEST_ABI_UNSUPPORTED NOPE version before constructor' }
+        @{ Name = 'neg-bionic-chain.so'; Id = 'T07'; From = 'libbionic.so'; Mutation = 'bad-version-chain'
+           Command = 'libraries'; Result = 'ELF_MALFORMED version chain before constructor' }
         @{ Name = 'libformat.so'; Id = 'T08'; Source = 'threads/format.c'; Target = 'aarch64-linux-android30'
            Flags = @('-O2', '-nostdlib', '-fno-builtin'); Command = 'format'; Cases = 5; Result = 'T08 PASS; exact UTF-8 logs' }
         @{ Name = 'libfaults.so'; Id = 'T08'; Source = 'threads/faults.c'; Target = 'aarch64-linux-android30'

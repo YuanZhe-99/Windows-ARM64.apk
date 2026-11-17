@@ -15,7 +15,8 @@ public:
     /// Creates an empty registry with optional modules and an existing Android filesystem root.
     /// Notes: an absent root disables file opens; the supplied root is canonicalized, never created.
     explicit ThreadRuntime(ModuleSet* modules = nullptr, const std::wstring& androidRoot = {});
-    /// Releases the registry; terminates for unjoined workers, active contexts or busy synchronization.
+    /// Finalizes registered guest exit callbacks, then releases registries and private storage.
+    /// Notes: modules outlive teardown; unjoined workers, active contexts or busy synchronization terminate.
     ~ThreadRuntime();
     ThreadRuntime(const ThreadRuntime&) = delete;
     ThreadRuntime& operator=(const ThreadRuntime&) = delete;
@@ -30,6 +31,7 @@ public:
     void* Call(void* (*entry)(void*), void* argument);
 
     /// Reports whether contexts, TLS, keys, workers, allocations, fds and synchronization records are released.
+    /// Notes: process-lifetime exit/atfork registrations may remain until finalization/teardown.
     bool Idle() const;
 
 private:

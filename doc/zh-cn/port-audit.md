@@ -155,7 +155,9 @@ N0 加载器（`runtime/guest/loader`，[native-profiles.md](native-profiles.md)
 P2 的 profile N0 已完成（G2）。P3 现有独立 T08 线程基础（受管理 pthread、errno、key/析构、C 仿真 TLS 与无超时 mutex/condition 同步），
 实现于 `runtime/guest/bionic`，不移植 Darwin shim。T07 在 `runtime/guest/loader` 和 `runtime/guest/bionic`
 新增依赖/构造事务与客体 dl API；T08 现已覆盖私有堆内存/字符串、映射文件/时间和客体 PC 故障诊断。
-小型 Android ABI 辅助库把受限格式化/va_list 完全保留在客体侧，固定字节日志进入宿主。完整 N1 准入仍未完成
+小型 Android ABI 辅助库把受限格式化/va_list 完全保留在客体侧，固定字节日志进入宿主。
+P3 已声明的 C/Bionic 范围现已包含逻辑系统库、经验证的导入版本及真实 CRT 生命周期记录，
+通过普通 NDK 链接的 C 夹具验证。完整 APK/JNI 准入仍属于 P4
 （[native-profiles.md](native-profiles.md)）；之后 P4 把 APK 的库和 `System.load` 转到加载器。P1 尚未完成的是
 应用运行中的 density 变化，以及应用接下来可能需要的宿主 native（`NativeOs`、宿主字体）；界面从 `winapk.Mock` 切换到
 `winapk run` 属于 P7（`PLAN.md` §14）。

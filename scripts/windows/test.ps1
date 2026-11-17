@@ -42,7 +42,7 @@ Host, Java, Native or Bionic.
 #>
 [CmdletBinding()]
 param(
-    [ValidateSet('Host', 'Java', 'Native', 'Bionic', 'Modules', 'Memory', 'Io', 'Faults', 'Format')]
+    [ValidateSet('Host', 'Java', 'Native', 'Bionic', 'Modules', 'Memory', 'Io', 'Faults', 'Format', 'Libraries')]
     [string]$Suite = 'Host'
 )
 Set-StrictMode -Version Latest
@@ -611,7 +611,7 @@ function Test-Bionic([string]$Command = '') {
             }
         } finally { $p.Dispose() }
     }
-    if (-not $Command) { Test-Modules }
+    if (-not $Command) { Test-Modules; Test-Libraries }
 }
 
 <# Runs T07 once as a compact transaction matrix, with manifest checks and a hard deadline. #>
@@ -620,7 +620,7 @@ function Test-Modules {
     $dir = Join-Path $repo 'tests\fixtures\elf'
     $built = (Get-Content (Join-Path $dir 'fixtures.json') -Raw | ConvertFrom-Json).fixtures
     $table = Import-PowerShellDataFile (Join-Path $repo 'tests\windows-arm64\guest-elf\fixtures.psd1')
-    foreach ($f in $table.Fixtures | Where-Object Id -EQ 'T07') {
+    foreach ($f in $table.Fixtures | Where-Object { $_.Id -eq 'T07' -and -not $_.ContainsKey('Command') }) {
         $record = $built | Where-Object name -EQ $f.Name
         $file = Join-Path $dir $f.Name
         $hash = if (Test-Path $file) { (Get-FileHash $file -Algorithm SHA256).Hash.ToLower() } else { 'missing' }
@@ -647,7 +647,50 @@ function Test-Modules {
     } finally { $p.Dispose() }
 }
 
-switch ($Suite) { 'Host' { Test-Host } 'Java' { Test-Java } 'Native' { Test-Native } 'Bionic' { Test-Bionic } 'Modules' { Test-Modules } 'Memory' { Test-Bionic -Command memory } 'Io' { Test-Bionic -Command io } 'Faults' { Test-Bionic -Command faults } 'Format' { Test-Bionic -Command format } }
+<# Runs one normally linked NDK fixture and compact refusal variants, never loading system ELF files. #>
+function Test-Libraries {
+    $dir = Join-Path $repo 'tests\fixtures\elf'
+    $built = (Get-Content (Join-Path $dir 'fixtures.json') -Raw | ConvertFrom-Json).fixtures
+    $table = Import-PowerShellDataFile (Join-Path $repo 'tests\windows-arm64\guest-elf\fixtures.psd1')
+    $cases = Join-Path $out 'test-data\n1-libraries'
+    $names = @{ 'libbionic.so' = 'good'; 'neg-bionic-import.so' = 'missing'; 'neg-bionic-version.so' = 'version'; 'neg-bionic-chain.so' = 'chain' }
+    foreach ($f in $table.Fixtures | Where-Object { $_.ContainsKey('Command') -and $_.Command -eq 'libraries' }) {
+        $file = Join-Path $dir $f.Name
+        $record = $built | Where-Object name -EQ $f.Name
+        $hash = (Get-FileHash $file -Algorithm SHA256).Hash.ToLower()
+        Check "T07.n1.$($f.Name).hash" ($null -ne $record -and $record.sha256 -eq $hash) $hash
+        if (-not $record -or $record.sha256 -ne $hash) { return }
+        $stage = Join-Path $cases $names[$f.Name]
+        New-Item -ItemType Directory -Force $stage | Out-Null
+        Copy-Item $file (Join-Path $stage 'libbionic.so') -Force
+    }
+    $helper = Join-Path $out 'bin\guest\libwinapk-bionic.so'
+    $helperRecord = Get-Content (Join-Path $out 'bin\guest\bionic.json') -Raw | ConvertFrom-Json
+    $helperHash = (Get-FileHash $helper -Algorithm SHA256).Hash.ToLower()
+    Check 'T07.n1.helper.hash' ($helperHash -eq $helperRecord.sha256) $helperHash
+    if ($helperHash -ne $helperRecord.sha256) { return }
+    $logs = Join-Path $out 'test-data\logs'
+    New-Item -ItemType Directory -Force $logs | Out-Null
+    $stdout = Join-Path $logs 'T07-n1.out'
+    $stderr = Join-Path $logs 'T07-n1.err'
+    $p = Start-Process (Join-Path $out 'bin\native-probe.exe') -ArgumentList @('libraries', "`"$cases`"", "`"$helper`"") -NoNewWindow -PassThru -RedirectStandardOutput $stdout -RedirectStandardError $stderr
+    try {
+        if (-not $p.WaitForExit(30000)) {
+            $p.Kill(); $p.WaitForExit()
+            Check 'T07.n1.deadline' $false 'library matrix exceeded 30 seconds'
+            return
+        }
+        $text = [string](Get-Content $stdout -Raw)
+        $err = [string](Get-Content $stderr -Raw)
+        $checks = [regex]::Matches($text, '(?m)^case (T07\.n1-\S+) (PASS|FAIL)')
+        foreach ($c in $checks) { Check $c.Groups[1].Value ($c.Groups[2].Value -eq 'PASS') $c.Groups[2].Value }
+        $ok = $p.ExitCode -eq 0 -and $checks.Count -eq 6 -and $text -match 'result T07.N1 6/6 PASS' -and
+              $err.Trim() -ceq 'guest-log 4 T07: versioned Bionic'
+        Check 'T07.n1.result' $ok "exit $($p.ExitCode), $($checks.Count) cases$(if (-not $ok) { '; ' + $text + $err })"
+    } finally { $p.Dispose() }
+}
+
+switch ($Suite) { 'Host' { Test-Host } 'Java' { Test-Java } 'Native' { Test-Native } 'Bionic' { Test-Bionic } 'Modules' { Test-Modules } 'Memory' { Test-Bionic -Command memory } 'Io' { Test-Bionic -Command io } 'Faults' { Test-Bionic -Command faults } 'Format' { Test-Bionic -Command format } 'Libraries' { Test-Libraries } }
 if ($script:failed -gt 0) { Write-Host "$script:failed check(s) failed"; exit 1 }
 Write-Host 'all checks passed'
 exit 0

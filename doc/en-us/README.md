@@ -14,7 +14,7 @@ per APK.
 |---|---|
 | [gui.md](gui.md) | The interface: windows, panes and groups, sheets, its files, the runtime contract draft, sample data |
 | [abi-compatibility.md](abi-compatibility.md) | Which calls between host and guest code go directly, which need a thunk, which are unsupported, with evidence |
-| [native-profiles.md](native-profiles.md) | The guest native profiles (N0), P3 thread foundation (T08), loader admission and refusals |
+| [native-profiles.md](native-profiles.md) | N0 and the declared P3 C/Bionic subset (T07/T08), admission, ABI limits and refusals |
 | [port-audit.md](port-audit.md) | P0: what in Mac.apk is tied to macOS and how each part is handled on Windows |
 | [decisions.md](decisions.md) | Architecture decisions (ADRs) |
 | [upstream.md](upstream.md) | Upstream contracts and quirks: Mac.apk, Windows ARM64 ABI, Android NDK, MyGo |
@@ -39,12 +39,14 @@ loading an APK's libraries in `winapk run`). The independent T08 thread foundati
 managed pthreads, errno, keys/destructors, explicitly emulated C TLS and untimed mutex/condition
 synchronization. T07 adds transactional dependency graphs, constructors and guest dl APIs;
 T08 also covers private-heap allocation, byte/strings and mapped regular-file/time APIs.
-neither enables full N1 or APK native loading. Front-end integration is deferred while the backend progresses.
+P3's declared C/Bionic admission now also passes a normally linked NDK C fixture with logical
+system libraries, versions and real CRT lifecycle callbacks. Full N1/JNI and APK native loading
+remain P4/G3 work. Front-end integration is deferred while the backend progresses.
 
 ## Upstream versions
 
 Go, MyGo and Mac.apk are not pinned: they always follow their latest version. The table shows the
-latest version at the last check (2026-11-16); everything else is locked in `build-lock.json`,
+latest version at the last check (2026-11-17); everything else is locked in `build-lock.json`,
 which also records what the last build used of the three.
 
 | Component | Policy | Latest at last check |

@@ -46,6 +46,7 @@ The runtime's commands are in the next section.
 .\scripts\windows\test.ps1 -Suite Io
 .\scripts\windows\test.ps1 -Suite Faults
 .\scripts\windows\test.ps1 -Suite Format
+.\scripts\windows\test.ps1 -Suite Libraries
 .\build\windows-arm64\bin\native-probe.exe suite .\tests\fixtures\elf\libn0abi.so
 .\build\windows-arm64\bin\native-probe.exe sync .\tests\fixtures\elf\libsync.so
 .\build\windows-arm64\bin\winapk.exe doctor --json
@@ -122,6 +123,16 @@ load/unload cycles; no duplicate fault stress suite is added.
 record its source, exact NDK arguments and hash in `bin/guest/bionic.json`. The suite checks that
 hash as well as the fixture's, five cases and exact UTF-8 log bytes. The helper is product code,
 not a system libc or generated test fixture; no raw host variadic export is used.
+
+`-Suite Libraries` selects T07's N1 system-library/version/CRT matrix (also in `Bionic`).
+Its positive library uses the NDK driver's normal shared-library link, including CRT start files
+and libc/libdl/liblog dependencies: no `-nostdlib`, `-nostartfiles`, `-femulated-tls` or disabled
+stack protector. This verifies that recorded command and source, not all Android Studio/CMake
+configurations or arbitrary NDK output. Three small refusal variants cover an unsupported fork
+import, a valid but unknown version name/hash, and a malformed version chain, before constructors.
+The single process also checks logical lookup scopes, real finalization and pinned callbacks at
+shutdown. `fixtures.json` records the exact normal-link flags; copies staged under ignored
+`test-data/n1-libraries` keep each variant's original SONAME without modifying source fixtures.
 
 `winapk run` keeps each app's data under `%LOCALAPPDATA%\Windows-ARM64.apk\Apps` (`--data-dir`
 moves it): `android\` is the Android root the app sees (`data\data\<package>`, `sdcard`),

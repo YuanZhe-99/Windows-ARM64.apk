@@ -7,7 +7,7 @@
 | Profile | 状态 |
 |---|---|
 | N0，可审计的 leaf ELF | 已实现；G2 在本机通过（[platform-notes.md](platform-notes.md)） |
-| N1，受限的 C/JNI ELF（依赖、导入、构造函数、JNI） | 独立 P3 Bionic 功能组（T08）和模块事务（T07）；完整 profile 准入及 JNI 未完成，G3 NOT_RUN |
+| N1，受限的 C/JNI ELF（依赖、导入、构造函数、JNI） | 已声明的 P3 C/Bionic 准入通过 T07/T08，含一个普通 NDK 链接的 C 夹具；APK/JNI 集成未完成，G3 NOT_RUN |
 | N2，图形样例 | 未开始（P5、P6） |
 
 ## N0
@@ -70,10 +70,12 @@
 - 调用方必须保持所有模块映射，直到上下文与回调结束。运行时销毁时仍有未 join 的 worker、从未管理线程调用有状态 shim、
   emutls 描述符损坏或编译器 TLS resolver 分配失败时，探测进程带诊断终止，绝不伪造 TLS 地址。
   不允许异常经客体代码展开。下述客体 PC 故障边界终止执行，绝不尝试恢复。
-  `pthread_exit`、detach/取消仍不支持。完整原生 profile 准入尚未完成；APK/JNI 集成属于 P4。
+  `pthread_exit`、detach/取消仍不支持。已声明的 C/Bionic 子集独立于 APK/JNI 准入（P4）。
   这些探测本身绝不表示 G3 通过。
 
 P3 同步子集通过独立的 `native-probe sync`（T08）测试：
+
+Windows 同步只是实现组件，不是通用 Linux futex 实现。
 
 - Android LP64 mutex/condition 存储为 40/48 字节，按 4 字节对齐。shim 只在其中写入私有代际标记；
   所有者、递归次数、等待者与宿主条件变量均保留在运行时的地址表中。将存活标记复制到另一个地址、使用旧代际或已销毁
@@ -174,7 +176,7 @@ T08 io 合并读写/seek/stat、open/追加标志、映射/错误拒绝与时钟
 这不开放 APK 原生准入，也不表示 G3 完成。
 
 - 名称限于指定库目录下可移植的 `.so` 基名，绝不使用搜索路径、Windows DLL 名称或任意宿主导出。
-  声明的 SONAME 必须等于请求名称。本子集明确拒绝依赖环、带版本的符号及客体 ELF TLS。
+  声明的 SONAME 必须等于请求名称。本子集明确拒绝依赖环、带版本的客体导出及客体 ELF TLS。
 - 准备所有新映像和依赖，筛查指令、立即解析导入、应用重定位及保护，最后验证全部初始化入口，
   然后才运行任何客体代码。失败会回滚所有新映像，已提交映像保持不变。
 - 定义绑定到自身映像；未定义导入先按广度优先搜索直接依赖，再搜索显式审计的宿主导入。
@@ -183,7 +185,7 @@ T08 io 合并读写/seek/stat、open/追加标志、映射/错误拒绝与时钟
   调用方须在打开依赖图前进入受管理客体上下文。允许初始化线程查询和重复打开；
   初始化期间其他线程竞争打开会明确失败，既不暴露半初始化状态，也不跨客体回调阻塞等待。
 - 不透明的 64 位句柄维护显式打开引用。Close 减少引用，依赖图保持映射，直到所有客体执行结束后销毁 ModuleSet。
-  不调用 finalizer 或 JNI_OnUnload；这是已声明的进程级生命周期策略，并非完整动态卸载。
+  不调用 ELF DT_FINI/DT_FINI_ARRAY 或 JNI_OnUnload；这是已声明的进程级生命周期策略，并非完整动态卸载。
   初始化不会调用 JNI_OnLoad。
 - `ThreadRuntime` 可接收该命名空间，将客体 `dlopen`、`dlsym`、`dlclose`、`dlerror` 绑定到它。
   只支持 RTLD_NOW|RTLD_LOCAL 和显式句柄；lazy/global/default 范围明确失败。
@@ -191,6 +193,34 @@ T08 io 合并读写/seek/stat、open/追加标志、映射/错误拒绝与时钟
 
 T07 使用一对正例依赖库和少量拒绝样例，断言初始化顺序/值、客体 dl API/错误读取清除、查询范围、重复打开/关闭、未解析弱导入、
 依赖环/名称拒绝、无效构造入口，以及失败事务绝不运行构造函数。
+
+### N1 系统库准入
+
+运行时命名空间可提供显式的逻辑 `libc.so`、`libdl.so`、`liblog.so` 记录，
+仅由经审计 shim 和客体格式化辅助库实现。它们不是 Windows DLL 或 Android 系统库，
+绝不在宿主搜索，也不能被 APK 中的副本替换。客体句柄及查询范围同样适用；映射映像计数不包含逻辑记录。
+
+版本化导入读取并验证 `DT_VERNEED`/`DT_VERSYM`、字符串、索引、哈希和链式记录范围。
+版本化导入只绑定到具名、可达逻辑提供方及其声明版本（已实现 libc/libdl 子集为 `LIBC`）。
+未知版本、缺失提供方及带版本的客体导出在任何构造运行前失败。
+原有 N0 准入不变；这不是通用 GNU 符号版本抢占。
+
+普通 NDK 链接输出还导入 CRT 生命周期函数。`__cxa_atexit` 记录最多 256 个客体回调及参数、DSO 身份；
+`__cxa_finalize` 在调用前移除记录，按逆序执行，支持 DSO 选择、重入和仅一次语义。
+剩余回调在运行时销毁时的新受管理上下文中执行，先于映射及私有堆释放。
+销毁阶段不能创建新 worker；自行重新注册的无限退出循环明确失败。
+这不执行 ELF finalizer 数组、`JNI_OnUnload`，也不允许跨域 C++ 展开。
+
+`__register_atfork` 保留最多 128 份注册，并在 DSO finalization 时移除其记录。
+不发生 fork，因此不调用 prepare/parent/child hook；`fork` 本身仍是缺失导入，在入口前拒绝。
+注册使用真实的有界存储，不是返回成功的空桩。
+
+T07 N1 运行一个普通链接的 API-30 NDK C 夹具及缺失 fork、未知版本、损坏版本链变体。
+六项语义覆盖构造前拒绝、正常导入、提供方范围、显式生命周期、关闭/保留映射，以及新上下文中的退出清理。
+构造函数保留一份注册时检查退出注册上限及精确的另外 255 次回调；
+最后一个回调分配/释放客体内存，并确认销毁阶段拒绝创建 worker。
+只证明该源码及记录的链接，不证明任意 NDK/CMake 构建或客体 C++。
+客体内部 throw/catch 需要扩展 profile 的 ADR 及单独 libc++/unwind/TLS 验证；Windows SEH 不提供这项支持。
 
 ## P3 客体故障边界（T08）
 
@@ -252,6 +282,7 @@ NativeProbe` 把它们构建到 `tests/fixtures/elf`（生成产物，从不提�
 | T08 faults | `threads/faults.c`：宿主异常链、客体访问违规与 trap | API 30、`-O2 -nostdlib`，公共选项与 T05 相同；`T08_GUEST_FAULT` / `T08_GUEST_TRAP` 要求模块/偏移诊断及退出码 3 |
 | T08 format | `threads/format.c`：整数/客体 V 格式化、范围/拒绝及 UTF-8 字节日志 | API 30、`-O2 -nostdlib -fno-builtin`，公共选项与 T05 相同；映射独立构建的产品格式化辅助库 |
 | T07 模块依赖图 | `modules/dependency.c`、`root.c`、`cycle.c`：正例库对、缺失导入、无效初始化入口、SONAME/依赖环种子 | API 30、`-O2 -nostdlib`，公共选项与 T05 相同；显式链接的夹具依赖及期望值在 `fixtures.psd1` |
+| T07 N1 | `modules/bionic.c`：普通 NDK CRT/libc/libdl/liblog 链接、生命周期及三项准入拒绝 | API 30、`-shared -fPIC -O2 -llog`，没有 `-nostdlib`/`-nostartfiles` 或禁用栈保护；版本变体在隔离暂存目录中保留原 SONAME |
 
 每个夹具都由 NDK 自带的 clang 和链接器构建；除其选项所表明的以外，没有哪个是可以代表普通 NDK 产物的特制构建
 （`PLAN.md` §5.3）。

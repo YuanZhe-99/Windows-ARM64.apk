@@ -230,6 +230,12 @@ void* Module::Find(std::string_view name) const {
 /// One load: the checks and steps of Load, sharing the file, the headers and the image.
 class Loader {
 public:
+    /// Describes one named provider/version requirement independently of mapped ELF metadata.
+    struct Version {
+        std::string library, name;
+    };
+    /// Resolves a symbol with optional provider/version scope; empty scope is unversioned.
+    using Resolver = std::function<void*(std::string_view, std::string_view, std::string_view)>;
     Loader(std::span<const HostSymbol> imports, LoadError* error) : imports_(imports), error_(error) {}
 
     std::unique_ptr<Module> Run(const std::wstring& path) {
@@ -244,7 +250,7 @@ public:
         const std::u8string name = std::filesystem::path(path).filename().u8string();
         mod_->name_.assign(name.begin(), name.end());
         if (!ReadFile(path) || !CheckHeaders() || !PlanPages() || !Map() || !ReadDynamic() ||
-            !CheckSymbols() || !Screen()) {
+            !CheckSymbols() || !CheckVersions() || !Screen()) {
             mod_.reset();  // releases whatever was reserved
             return false;
         }
@@ -252,7 +258,7 @@ public:
     }
 
     /// Resolves relocations, validates initialization, protects pages and registers fault ranges.
-    bool Finish(std::function<void*(std::string_view)> resolver) {
+    bool Finish(Resolver resolver) {
         resolver_ = std::move(resolver);
         if (!Relocate(false) || !Relocate(true) || !Initializers() || !Protect()) return false;
         if (!TrackModule(mod_.get())) return Fail(Category::HostMemory, "fault boundary", "vectored handler registration failed");
@@ -264,6 +270,8 @@ public:
     const Module& Image() const { return *mod_; }
     /// Transfers the fully linked image after Finish succeeds.
     std::unique_ptr<Module> Take() { return std::move(mod_); }
+    /// Returns validated version requirements for namespace admission before linking/constructors.
+    const std::map<uint16_t, Version>& Versions() const { return versions_; }
 
 private:
     bool Fail(Category c, std::string where, std::string reason) {
@@ -486,9 +494,17 @@ private:
                 d[e.tag] = e.val;
                 continue;
             case DT_VERNEED:
-                return Fail(Category::AbiUnsupported, where, "versioned imports (DT_VERNEED) need libraries, not in profile N0");
-            case DT_VERDEF: case DT_VERSYM:
-                if (managed_) return Fail(Category::AbiUnsupported, where, "symbol version tables are not supported in this module profile");
+                if (!managed_) return Fail(Category::AbiUnsupported, where, "versioned imports (DT_VERNEED) need libraries, not in profile N0");
+                d[e.tag] = e.val;
+                continue;
+            case DT_VERDEF:
+                if (managed_) return Fail(Category::AbiUnsupported, where, "versioned guest exports are not supported in this module profile");
+                continue;
+            case DT_VERDEFNUM:
+                if (managed_ && e.val) return Fail(Category::AbiUnsupported, where, "versioned guest exports are not supported in this module profile");
+                continue;
+            case DT_VERSYM: case DT_VERNEEDNUM:
+                if (managed_) d[e.tag] = e.val;
                 continue;
             case DT_RPATH: case DT_RUNPATH:
                 if (managed_) return Fail(Category::AbiUnsupported, where, "library search paths are not supported in this module profile");
@@ -521,8 +537,8 @@ private:
             case DT_PLTGOT: case DT_SYMBOLIC: case DT_DEBUG: case DT_BIND_NOW:
             case DT_RELSZ: case DT_RELENT:
             case DT_ANDROID_RELSZ: case DT_ANDROID_RELASZ: case DT_ANDROID_RELRCOUNT:
-            case DT_RELACOUNT: case DT_RELCOUNT: case DT_FLAGS_1: case DT_VERDEFNUM:
-            case DT_VERNEEDNUM: case DT_AARCH64_BTI_PLT: case DT_AARCH64_PAC_PLT:
+            case DT_RELACOUNT: case DT_RELCOUNT: case DT_FLAGS_1:
+            case DT_AARCH64_BTI_PLT: case DT_AARCH64_PAC_PLT:
                 continue;
             default:
                 return Fail(Category::ElfUnsupported, where, Fmt("dynamic tag %s unknown", Hex(e.tag).c_str()));
@@ -533,6 +549,7 @@ private:
             mod_->soname_ = Str(d[DT_SONAME]);
         }
         init_ = d[DT_INIT];
+        versym_ = d[DT_VERSYM]; verneed_ = d[DT_VERNEED]; versionCount_ = d[DT_VERNEEDNUM];
         fini_ = d[DT_FINI];
         initArray_ = d[DT_INIT_ARRAY]; initSize_ = d[DT_INIT_ARRAYSZ];
         finiArray_ = d[DT_FINI_ARRAY]; finiSize_ = d[DT_FINI_ARRAYSZ];
@@ -602,6 +619,61 @@ private:
         Elf64Sym s;
         std::memcpy(&s, mod_->symtab_ + size_t{i} * sizeof s, sizeof s);
         return s;
+    }
+
+    /// Validates bounded ELF version chains and snapshots each import's provider requirement.
+    bool CheckVersions() {
+        if (!managed_) return true;
+        /// Describes an ELF64 version-need record with guest fixed-width file fields.
+        struct Need { uint16_t version, count; uint32_t file, auxiliary, next; };
+        /// Describes one required symbol version, its ELF hash and forward-chain offset.
+        struct Auxiliary { uint32_t hash; uint16_t flags, index; uint32_t name, next; };
+        static_assert(sizeof(Need) == 16 && sizeof(Auxiliary) == 16);
+        if ((!verneed_ != !versionCount_) || versionCount_ > 256 || (verneed_ && !versym_))
+            return Malformed(dynamic_.p_offset, "invalid version requirement count/table");
+        uint64_t at = verneed_;
+        for (uint64_t i = 0; i < versionCount_; i++) {
+            if (!SegmentOf(at, sizeof(Need))) return Malformed(dynamic_.p_offset, "DT_VERNEED outside the image");
+            Need need;
+            std::memcpy(&need, At(at), sizeof need);
+            if (need.version != 1 || !need.count || need.count > 256 || need.file >= mod_->strsz_ || !Str(need.file)[0] ||
+                need.auxiliary < sizeof(Need) || need.auxiliary > UINT64_MAX - at ||
+                (i + 1 < versionCount_ ? need.next < sizeof(Need) || need.next > UINT64_MAX - at : need.next != 0))
+                return Malformed(dynamic_.p_offset, "malformed DT_VERNEED record");
+            const std::string library = Str(need.file);
+            if (std::find(mod_->needed_.begin(), mod_->needed_.end(), library) == mod_->needed_.end())
+                return Malformed(dynamic_.p_offset, "version provider is not a declared dependency");
+            uint64_t auxiliary = at + need.auxiliary;
+            for (uint32_t n = 0; n < need.count; n++) {
+                if (!SegmentOf(auxiliary, sizeof(Auxiliary))) return Malformed(dynamic_.p_offset, "version auxiliary outside the image");
+                Auxiliary entry;
+                std::memcpy(&entry, At(auxiliary), sizeof entry);
+                const uint16_t index = entry.index & 0x7fff;
+                if (entry.name >= mod_->strsz_ || !Str(entry.name)[0] || index < 2 || entry.flags & ~2 ||
+                    entry.hash != SysvHash(Str(entry.name)) ||
+                    (n + 1 < need.count ? entry.next < sizeof(Auxiliary) || entry.next > UINT64_MAX - auxiliary : entry.next != 0) ||
+                    !versions_.emplace(index, Version{library, Str(entry.name)}).second)
+                    return Malformed(dynamic_.p_offset, "malformed or duplicate version auxiliary");
+                auxiliary += entry.next;
+            }
+            at += need.next;
+        }
+        if (!versym_) return true;
+        if (!SegmentOf(versym_, uint64_t{mod_->nsyms_} * 2))
+            return Malformed(dynamic_.p_offset, "DT_VERSYM outside the symbol table's image");
+        symbolVersions_.resize(mod_->nsyms_);
+        for (uint32_t i = 0; i < mod_->nsyms_; i++) {
+            uint16_t index;
+            std::memcpy(&index, At(versym_ + uint64_t{i} * 2), 2);
+            index &= 0x7fff;
+            if (index <= 1) continue;
+            if (Sym(i).st_shndx != SHN_UNDEF)
+                return Fail(Category::AbiUnsupported, "symbol " + std::string(Str(Sym(i).st_name)), "versioned guest exports are not supported");
+            const auto version = versions_.find(index);
+            if (version == versions_.end()) return Malformed(dynamic_.p_offset, "DT_VERSYM refers to an unknown version index");
+            symbolVersions_[i] = &version->second;
+        }
+        return true;
     }
 
     // Every symbol the module defines: inside the image, and of a kind N0 admits.
@@ -742,12 +814,15 @@ private:
                         sv = s.st_value;
                     } else if (s.st_shndx != SHN_UNDEF) {
                         sv = s.st_value + mod_->bias_;  // the module's own definition wins
-                    } else if (void* h = Import(Str(s.st_name))) {
+                    } else if (void* h = Import(Str(s.st_name), symi)) {
                         sv = reinterpret_cast<uint64_t>(h);
                     } else if ((s.st_info >> 4) != macapk::translator::STB_WEAK) {
                         if (missingWhere.empty()) missingWhere = where;
-                        if (std::find(missing.begin(), missing.end(), Str(s.st_name)) == missing.end()) {
-                            missing.push_back(Str(s.st_name));
+                        std::string label = Str(s.st_name);
+                        if (!symbolVersions_.empty() && symbolVersions_[symi])
+                            label += "@" + symbolVersions_[symi]->name + " from " + symbolVersions_[symi]->library;
+                        if (std::find(missing.begin(), missing.end(), label) == missing.end()) {
+                            missing.push_back(std::move(label));
                         }
                     }  // an unresolved weak import is 0, as on Android
                     value = sv + r.r_addend;
@@ -788,8 +863,12 @@ private:
         return p && (p->p_flags & PF_W);
     }
 
-    void* Import(const char* name) const {
-        if (resolver_) if (void* address = resolver_(name)) return address;
+    void* Import(const char* name, uint32_t symbol) const {
+        if (!symbolVersions_.empty() && symbolVersions_[symbol]) {
+            const auto& version = *symbolVersions_[symbol];
+            return resolver_ ? resolver_(name, version.library, version.name) : nullptr;
+        }
+        if (resolver_) if (void* address = resolver_(name, {}, {})) return address;
         for (const HostSymbol& h : imports_) if (std::strcmp(h.name, name) == 0) return h.address;
         return nullptr;
     }
@@ -863,7 +942,10 @@ private:
     uint64_t page_ = 4096, lo_ = 0, hi_ = 0;
     bool managed_ = false;
     uint64_t init_ = 0, fini_ = 0, initArray_ = 0, initSize_ = 0, finiArray_ = 0, finiSize_ = 0;
-    std::function<void*(std::string_view)> resolver_;
+    uint64_t versym_ = 0, verneed_ = 0, versionCount_ = 0;
+    std::map<uint16_t, Version> versions_;
+    std::vector<const Version*> symbolVersions_;
+    Resolver resolver_;
 };
 
 /// Retains one graph node independently of explicit open references until process teardown.
@@ -873,10 +955,19 @@ struct LibraryRecord {
     std::unique_ptr<Loader> preparation;
     std::unique_ptr<Module> module;
     std::vector<LibraryRecord*> dependencies;
+    std::vector<HostSymbol> symbols;
+    std::string version;
+    bool builtin = false;
     bool initializing = false, initialized = false;
 
     /// Returns the image in either transactional preparation or committed state.
     const Module& Image() const { return preparation ? preparation->Image() : *module; }
+    /// Returns only this image/provider's declared export, without searching a host DLL.
+    void* Export(std::string_view symbol) const {
+        if (!builtin) return Image().Find(symbol);
+        for (const auto& entry : symbols) if (symbol == entry.name) return entry.address;
+        return nullptr;
+    }
 };
 
 /// Implements one bounded library namespace and its initialization transaction.
@@ -905,13 +996,15 @@ struct ModuleSet::Impl {
     }
 
     /// Looks up an export in self then breadth-first dependency order; no host export fallback.
-    static void* Lookup(const LibraryRecord& root, std::string_view symbol) {
+    static void* Lookup(const LibraryRecord& root, std::string_view symbol,
+                        std::string_view library = {}, std::string_view version = {}) {
         std::vector<const LibraryRecord*> queue{&root};
         std::set<const LibraryRecord*> seen;
         for (size_t i = 0; i < queue.size(); i++) {
             const auto* record = queue[i];
             if (!seen.insert(record).second) continue;
-            if (void* result = record->Image().Find(symbol)) return result;
+            if (library.empty() || (record->builtin && record->name == library && record->version == version))
+                if (void* result = record->Export(symbol)) return result;
             for (const auto* dependency : record->dependencies) queue.push_back(dependency);
         }
         return nullptr;
@@ -992,7 +1085,16 @@ struct ModuleSet::Impl {
         LibraryRecord* root = prepare(name);
         if (!root) return 0;
         for (auto* record : order) {
-            if (!record->preparation->Finish([record](std::string_view symbol) { return Lookup(*record, symbol); })) {
+            for (const auto& [index, required] : record->preparation->Versions()) {
+                (void)index;
+                const auto provider = records.find(required.library);
+                if (provider == records.end() || !provider->second->builtin || provider->second->version != required.name)
+                    return Error(error, Category::AbiUnsupported, record->name,
+                                 "unsupported symbol version " + required.name + " from " + required.library);
+            }
+            if (!record->preparation->Finish([record](std::string_view symbol, std::string_view library, std::string_view version) {
+                    return Lookup(*record, symbol, library, version);
+                })) {
                 error->where = "module " + record->name + " " + error->where;
                 return 0;
             }
@@ -1027,9 +1129,19 @@ struct ModuleSet::Impl {
     }
 };
 
-ModuleSet::ModuleSet(std::wstring directory, std::span<const HostSymbol> imports) : impl_(std::make_unique<Impl>()) {
+ModuleSet::ModuleSet(std::wstring directory, std::span<const HostSymbol> imports,
+                     std::span<const BuiltinLibrary> libraries) : impl_(std::make_unique<Impl>()) {
     impl_->directory = std::move(directory);
     impl_->imports.assign(imports.begin(), imports.end());
+    for (const auto& library : libraries) {
+        auto record = std::make_unique<LibraryRecord>();
+        record->name = library.name;
+        record->handle = impl_->nextHandle++;
+        record->symbols = library.symbols;
+        record->version = library.version;
+        record->builtin = record->initialized = true;
+        impl_->records.emplace(record->name, std::move(record));
+    }
 }
 
 ModuleSet::~ModuleSet() = default;
@@ -1067,7 +1179,8 @@ void* ModuleSet::Find(uint64_t handle, std::string_view symbol) const {
 
 size_t ModuleSet::Mapped() const {
     std::lock_guard lock(impl_->mutex);
-    return impl_->records.size();
+    return std::count_if(impl_->records.begin(), impl_->records.end(),
+                         [](const auto& entry) { return !entry.second->builtin; });
 }
 
 std::unique_ptr<Module> Load(const std::wstring& path, std::span<const HostSymbol> imports, LoadError* error) {
