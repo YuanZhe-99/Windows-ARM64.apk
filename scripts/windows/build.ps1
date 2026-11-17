@@ -10,8 +10,8 @@ com/macapk) and macapk-loader.jar (com/macapk), the bundled fonts, the
 java.base and jdk.unsupported patch modules, the net_spi resolver provider and
 bcprov. Component Host builds the native host (winapk.exe, native-probe.exe) and its
 Java probe with CMake, Ninja and clang-cl from Visual Studio, for ARM64. Component
-NativeProbe builds native-probe.exe alone and the guest ELF fixtures (T05, T06) with
-the NDK.
+NativeProbe builds native-probe.exe, the guest formatting helper and ELF fixtures (T05–T08)
+with the NDK.
 
 Output goes to build/windows-arm64/ (lib/ and bin/). Nothing outside the
 repository is changed, and nothing is installed.
@@ -403,6 +403,32 @@ function Build-ElfFixtures {
         ConvertTo-Json -Depth 4 | Set-Content (Join-Path $dir 'fixtures.json') -Encoding utf8NoBOM
 }
 
+<# Builds the audited Android-ABI formatting helper, not a Windows DLL or a system libc. #>
+function Build-GuestBionic {
+    $clang = Find-AndroidNdk
+    $lock = Get-Content (Join-Path $repo 'build-lock.json') -Raw | ConvertFrom-Json
+    $directory = Join-Path $out 'bin\guest'
+    New-Item -ItemType Directory -Force $directory | Out-Null
+    $library = Join-Path $directory 'libwinapk-bionic.so'
+    $source = 'macapk/runtime/guest/bionic/format.c'
+    $arguments = @('--target=aarch64-linux-android30', '-shared', '-fPIC', '-fno-stack-protector',
+                   '-O2', '-nostdlib', '-fno-builtin', '-Wall', '-Wextra', '-Werror',
+                   '-Wl,-soname,libwinapk-bionic.so', '-o', $library, (Join-Path $repo $source))
+    Invoke-Checked $clang $arguments
+    $bytes = [IO.File]::ReadAllBytes($library)
+    if ($bytes[0] -ne 0x7f -or $bytes[4] -ne 2 -or [BitConverter]::ToUInt16($bytes, 18) -ne 183) {
+        throw 'guest formatting helper is not ELF64 AArch64'
+    }
+    $record = [ordered]@{
+        source = $source; ndk = $lock.guest.androidNdk.version
+        compiler = (& $clang --version | Select-Object -First 1)
+        arguments = $arguments
+        sha256 = (Get-FileHash $library -Algorithm SHA256).Hash.ToLower()
+    }
+    $record | ConvertTo-Json -Depth 4 | Set-Content (Join-Path $directory 'bionic.json') -Encoding utf8NoBOM
+    Write-Step "libwinapk-bionic.so: ELF64 AArch64, $($record.sha256.Substring(0, 16))"
+}
+
 <# Builds winapk.exe, native-probe.exe and the Java probe into $out\bin (all targets, or only $Target). #>
 function Build-Host([string]$Target = '') {
     $vs = Find-VisualStudio
@@ -449,6 +475,6 @@ switch ($Component) {
     'FrameworkRes' { Build-FrameworkRes }
     'Fixtures' { Build-Fixtures }
     'Host' { Build-Host }
-    'NativeProbe' { Build-Host 'native-probe'; Build-ElfFixtures }
-    'All' { Build-Java; Build-FrameworkRes; Build-Fixtures; Build-Host; Build-ElfFixtures }
+    'NativeProbe' { Build-Host 'native-probe'; Build-GuestBionic; Build-ElfFixtures }
+    'All' { Build-Java; Build-FrameworkRes; Build-Fixtures; Build-Host; Build-GuestBionic; Build-ElfFixtures }
 }

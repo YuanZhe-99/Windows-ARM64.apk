@@ -71,6 +71,7 @@ and Latin words only where it helps readability.
 | spurious wakeup | 伪唤醒 |
 | process-private | 进程私有 |
 | reparse point | 重解析点 |
+| guest ABI helper | 客体 ABI 辅助库 |
 
 ## 6. Review checklist
 

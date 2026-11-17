@@ -30,6 +30,7 @@ constexpr int kBusy = 16, kPermission = 1, kNoMemory = 12;
 constexpr int kNoEntry = 2, kIo = 5, kBadFd = 9, kAccess = 13, kFault = 14, kExists = 17;
 constexpr int kNotDirectory = 20, kIsDirectory = 21, kTooManyFiles = 24, kNoSpace = 28;
 constexpr int kReadOnly = 30, kNameTooLong = 36, kEncoding = 84;
+constexpr int kOverflow = 75;
 constexpr size_t kKeys = 128;
 using GuestThread = int64_t;  // Android pthread_t is long, not Windows long.
 using GuestKey = int32_t;
@@ -348,6 +349,15 @@ char* StringDuplicate(const char* string) {
 
 /// Returns a POSIX-style failure after storing a Linux errno in this managed context.
 int32_t IoError(int32_t error) { Context().error = error; return -1; }
+
+/// Writes and flushes one bounded byte log with a fixed signature, never a guest format/va_list.
+int32_t AndroidLogWrite(int32_t priority, const char* tag, const char* message) {
+    if (priority < 2 || priority > 7 || !tag || !message) return IoError(kInvalid);
+    if (strnlen(tag, 128) == 128 || strnlen(message, 4096) == 4096) return IoError(kOverflow);
+    if (std::fprintf(stderr, "guest-log %d %s: %s\n", priority, tag, message) < 0 || std::fflush(stderr))
+        return IoError(kIo);
+    return 1;
+}
 
 /// Converts Windows file errors explicitly; unclassified host I/O failures become EIO.
 int32_t WindowsIoError(DWORD error) {
@@ -1137,6 +1147,7 @@ std::span<const HostSymbol> ThreadRuntime::Imports() {
         {"strrchr", reinterpret_cast<void*>(&StringReverseFind)},
         {"strstr", reinterpret_cast<void*>(&StringSubstring)},
         {"strdup", reinterpret_cast<void*>(&StringDuplicate)},
+        {"__android_log_write", reinterpret_cast<void*>(&AndroidLogWrite)},
         {"open", reinterpret_cast<void*>(&FileOpen)},
         {"open64", reinterpret_cast<void*>(&FileOpen)},
         {"__open_2", reinterpret_cast<void*>(&FileOpenChecked)},

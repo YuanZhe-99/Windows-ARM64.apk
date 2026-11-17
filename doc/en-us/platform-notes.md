@@ -64,9 +64,9 @@ Verified on Windows 11 ARM64 (2026-11-16): build 26300.9974, Snapdragon Compute 
 | On real ARM64 | PASS | the machine above; `native-probe.exe` and `capstone.dll` ARM64 |
 | `abi-compatibility.md` | PASS | [abi-compatibility.md](abi-compatibility.md): direct, thunk and unsupported signatures with their cases |
 
-## P3 thread, synchronization and module checks
+## P3 Bionic and module checks
 
-`test.ps1 -Suite Bionic`, 2026-11-16: 83/83 checks PASS on the Windows ARM64 machine above (T08: 66, T07: 17), not G3;
+`test.ps1 -Suite Bionic`, 2026-11-16: 92/92 checks PASS on the Windows ARM64 machine above (T08: 75, T07: 17), not G3;
 the thread fixture is built with NDK r30, API 30, `-O2 -nostdlib -femulated-tls -fno-stack-protector`;
 the separate sync fixture uses `-O2 -nostdlib -fno-stack-protector` and no TLS.
 Its hash and exact flags are in `tests/fixtures/elf/fixtures.json`
@@ -81,6 +81,8 @@ T08 io adds eight checks from one `-O2 -nostdlib -fno-builtin` build, with four 
 host-state, hash/summary and a host-side mapping/sentinel check.
 T08 faults adds eight checks from three builds of one source: the host SEH chain survives,
 while guest access violation and trap processes terminate with their module/virtual address.
+T08 format adds nine checks: helper/fixture hashes, four semantic cases and host-state, summary
+and exact log bytes. The product helper is an NDK-built, screened AArch64 ELF, not a PE DLL.
 
 | Item (`PLAN.md` §10) | Result | Evidence |
 |---|---|---|
@@ -99,11 +101,13 @@ while guest access violation and trap processes terminate with their module/virt
 | Files and errno (T08 io) | PASS | Unicode/space root and filename; bytes `410042FF5A`, EOF and zero-length I/O; seek above 8 GiB and back without file growth; 128-byte stat with sentinels; create/exclusive/append/read-only/write-only/fortified-open behavior; converted ENOENT/EEXIST/EINVAL/EBADF; unsupported flags/modes and invalid UTF-8/device/traversal/stream/junction paths refused; outside sentinel unchanged, fd table empty |
 | Time (T08 io) | PASS | realtime Unix epoch within two seconds of the host, 100-ns to normalized nanosecond units; monotonic interval at least the requested 2 ms; zero sleep, untouched successful remainder, invalid times and unsupported clocks/durations; four host-state callbacks without violations. Suspend and guest signals NOT_RUN/not supported |
 | Guest-PC fault boundary (T08 faults) | PASS | host-raised access violation reaches its host SEH handler, guest errno/x18/sp unchanged; guest access violation at `neg-guest-fault.so` vaddr `0x42d0` (Windows `0xc0000005`) and trap at `neg-guest-trap.so` vaddr `0x42b4` (`0xc000001d`) each produce `GUEST_EXECUTION_FAULT` then exit 3; no resume/unwind; N0's 2000 cycles still have +0 heap allocations/private regions/handles |
+| Restricted formatting/logging (T08 format) | PASS | LP64 minima/maxima and integer arguments spilling to the stack; flags/width/precision, guest va_copy and V variants; would-have-written counts, sentinel-preserving truncation and embedded NUL; `%n`, float/wide/positional formats and limits refused with errno; exact literal-percent/UTF-8 records through fixed host log entry; four host-state callbacks without violations. Floating-point varargs and general stdio are not supported |
 | APK native and JNI integration | NOT_RUN | T09 not implemented; `winapk run` native loading remains disabled |
 
 The same change set ran `check-requirements.ps1`, `build.ps1 -Component All` and
 `test.ps1 -Suite Host` (22 PASS), `-Suite Java` (43 PASS), `-Suite Native` (58 PASS).
 Go vet/tests (including `CGO_ENABLED=0`), MyGo vet/i18n and the documentation mirror check pass.
+The formatter increment's complete output is saved under `build/windows-arm64/test-data/logs/P3-format-*.log`.
 All built host PE/DLL files are ARM64; positive AArch64 guest fixture architecture is checked
 by the build script. No new gate is claimed, no version bump, and no plan deviation.
 

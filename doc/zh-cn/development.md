@@ -38,6 +38,7 @@ go run ./tools/checkdocs           # doc/en-us and doc/zh-cn mirror each other
 .\scripts\windows\test.ps1 -Suite Memory
 .\scripts\windows\test.ps1 -Suite Io
 .\scripts\windows\test.ps1 -Suite Faults
+.\scripts\windows\test.ps1 -Suite Format
 .\build\windows-arm64\bin\native-probe.exe suite .\tests\fixtures\elf\libn0abi.so
 .\build\windows-arm64\bin\native-probe.exe sync .\tests\fixtures\elf\libsync.so
 .\build\windows-arm64\bin\winapk.exe doctor --json
@@ -92,6 +93,12 @@ clang-cl 把 `winapk.exe`、`winapk-bridge.dll`、`native-probe.exe` 和 `winapk
 以及两个单独终止的客体进程（访问违规与 trap）。每份终止诊断必须包含模块与客体虚拟地址，
 退出码为 3，不能伪造成功结果。
 N0 的 `Native` 回归也在已有加载/卸载循环中覆盖新的可执行范围注册表，不另加重复故障压力套件。
+
+`-Suite Format` 选择有限的 T08 格式化/日志矩阵（也在 `Bionic` 中）。
+`NativeProbe` 与 `All` 把 Android ABI 辅助库构建到 `bin/guest/libwinapk-bionic.so`，
+在 `bin/guest/bionic.json` 记录其源码、完整 NDK 参数及哈希。
+套件核对辅助库和夹具哈希、五项用例及精确 UTF-8 日志字节。
+辅助库是产品代码，不是系统 libc 或生成的测试夹具；不直接使用宿主可变参数导出。
 
 `winapk run` 把每个应用的数据放在 `%LOCALAPPDATA%\Windows-ARM64.apk\Apps` 下（`--data-dir` 可改）：`android\`
 是应用看到的 Android 根目录（`data\data\<package>`、`sdcard`），`code\<package>\` 是转换后的代码及缓存戳，

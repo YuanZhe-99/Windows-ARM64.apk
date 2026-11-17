@@ -64,9 +64,9 @@
 | 在真实 ARM64 上 | PASS | 上述机器；`native-probe.exe` 和 `capstone.dll` 为 ARM64 |
 | `abi-compatibility.md` | PASS | [abi-compatibility.md](abi-compatibility.md)：直通、需 thunk 和不支持的签名及其用例 |
 
-## P3 线程、同步与模块检查
+## P3 Bionic 与模块检查
 
-`test.ps1 -Suite Bionic`，2026-11-16，在上述 Windows ARM64 机器上 83/83 项检查 PASS（T08：66，T07：17），不是 G3；
+`test.ps1 -Suite Bionic`，2026-11-16，在上述 Windows ARM64 机器上 92/92 项检查 PASS（T08：75，T07：17），不是 G3；
 线程夹具用 NDK r30、API 30、`-O2 -nostdlib -femulated-tls -fno-stack-protector` 构建；
 独立同步夹具使用 `-O2 -nostdlib -fno-stack-protector`，没有 TLS。
 哈希与完整选项在 `tests/fixtures/elf/fixtures.json`（生成产物，不提交）；
@@ -80,6 +80,8 @@ T08 io 用一个 `-O2 -nostdlib -fno-builtin` 构建新增八项检查，含四�
 宿主状态、哈希/汇总及一次宿主侧映射/哨兵检查。
 T08 faults 用同一源码的三个构建新增八项检查：宿主 SEH 链正常处理，
 客体访问违规与 trap 进程带模块/虚拟地址诊断终止。
+T08 format 新增九项检查：辅助库/夹具哈希、四项语义及宿主状态、汇总和精确日志字节。
+产品辅助库是 NDK 构建、经过筛查的 AArch64 ELF，不是 PE DLL。
 
 | 条目（`PLAN.md` §10） | 结果 | 证据 |
 |---|---|---|
@@ -98,11 +100,13 @@ T08 faults 用同一源码的三个构建新增八项检查：宿主 SEH 链正�
 | 文件与 errno（T08 io） | PASS | Unicode/空格根目录与文件名；字节 `410042FF5A`、EOF 及零长度 I/O；seek 超过 8 GiB 后返回而不增大文件；128 字节 stat 带哨兵；create/exclusive/append/只读/只写/fortified-open 行为；转换后的 ENOENT/EEXIST/EINVAL/EBADF；拒绝不支持的标志/模式及无效 UTF-8/设备/逃逸/数据流/junction 路径；外部哨兵未变，fd 表清空 |
 | 时间（T08 io） | PASS | realtime Unix epoch 与宿主相差两秒以内，100 ns 转为规范纳秒单位；monotonic 间隔不少于请求的 2 ms；零时长 sleep、成功时 remainder 不变、无效时间和不支持的时钟/时长；四次宿主状态回调无违规。挂起与客体信号 NOT_RUN/不支持 |
 | 客体 PC 故障边界（T08 faults） | PASS | 宿主发起的访问违规到达宿主 SEH 处理器，客体 errno/x18/sp 不变；`neg-guest-fault.so` 虚拟地址 `0x42d0` 的访问违规（Windows `0xc0000005`）与 `neg-guest-trap.so` 虚拟地址 `0x42b4` 的 trap（`0xc000001d`）均输出 `GUEST_EXECUTION_FAULT` 后退出 3；不恢复/展开；N0 的 2000 轮循环仍保持堆分配/私有区域/句柄增量 +0 |
+| 受限格式化/日志（T08 format） | PASS | LP64 最小/最大值及溢出到栈的整数参数；标志/宽度/精度、客体 va_copy 与 V 变体；本应写入长度、保留哨兵的截断及内嵌 NUL；带 errno 拒绝 `%n`、浮点/宽文本/位置格式及超限；经固定宿主日志入口输出精确的字面百分号/UTF-8 记录；四次宿主状态回调无违规。不支持浮点变参和通用 stdio |
 | APK 原生库与 JNI 集成 | NOT_RUN | T09 尚未实现；`winapk run` 的原生库加载仍关闭 |
 
 同一变更集还运行了 `check-requirements.ps1`、`build.ps1 -Component All`、
 `test.ps1 -Suite Host`（22 项 PASS）、`-Suite Java`（43 项 PASS）与 `-Suite Native`（58 项 PASS）。
 Go vet/测试（含 `CGO_ENABLED=0`）、MyGo vet/i18n 与文档镜像检查均通过。
+格式化增量的完整输出保存在 `build/windows-arm64/test-data/logs/P3-format-*.log`。
 构建的宿主 PE/DLL 全为 ARM64；构建脚本检查正例 AArch64 客体夹具的架构。
 不宣称完成新关卡，不升级版本，无计划偏离。
 

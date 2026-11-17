@@ -46,7 +46,7 @@ int HostException() {
 
 }  // namespace
 
-int ProbeBionic(const std::wstring& path, BionicSuite suite, const std::wstring& androidRoot) {
+int ProbeBionic(const std::wstring& path, BionicSuite suite, const std::wstring& supportPath) {
     using winapk::guest::ThreadRuntime;
     auto imports = ThreadRuntime::Imports();
     std::vector<winapk::guest::HostSymbol> symbols(imports.begin(), imports.end());
@@ -54,6 +54,24 @@ int ProbeBionic(const std::wstring& path, BionicSuite suite, const std::wstring&
     symbols.push_back({"t08_time_check", reinterpret_cast<void*>(&TimeCheck)});
     symbols.push_back({"t08_host_exception", reinterpret_cast<void*>(&HostException)});
     winapk::guest::LoadError error;
+    // The guest-ABI helper outlives the fixture and every managed guest callback.
+    std::unique_ptr<winapk::guest::Module> formatBridge;
+    if (suite == BionicSuite::Format) {
+        formatBridge = winapk::guest::Load(supportPath, symbols, &error);
+        if (!formatBridge) {
+            std::printf("reject %s format helper %s: %s\n", winapk::guest::CategoryName(error.category),
+                        error.where.c_str(), error.reason.c_str());
+            return 2;
+        }
+        for (const char* name : {"snprintf", "vsnprintf", "__android_log_print", "__android_log_vprint"}) {
+            void* address = formatBridge->Find(name);
+            if (!address) {
+                std::printf("reject GUEST_SYMBOL_UNRESOLVED format helper: missing %s\n", name);
+                return 2;
+            }
+            symbols.push_back({name, address});  // Guest → guest address, not a host variadic entry.
+        }
+    }
     auto module = winapk::guest::Load(path, symbols, &error);
     if (!module) {
         const auto name = std::filesystem::path(path).filename().u8string();
@@ -68,13 +86,15 @@ int ProbeBionic(const std::wstring& path, BionicSuite suite, const std::wstring&
         return 3;
     }
     // Registry destruction precedes module destruction, including every key callback.
-    ThreadRuntime runtime(nullptr, androidRoot);
+    ThreadRuntime runtime(nullptr, suite == BionicSuite::Io ? supportPath : std::wstring{});
     const char* threadCases[] = {"threads8", "threads32", "destructor-limit", "deleted-keys", "key-exhaustion", "errors", "memset"};
     const char* syncCases[] = {"mutex-contention8", "mutex-kinds", "mutex-lifecycle", "cond-signal", "cond-broadcast", "cond-errors"};
     const char* memoryCases[] = {"memory-allocation", "memory-bytes", "memory-strings", "memory-sharing"};
     const char* ioCases[] = {"io-roundtrip", "io-flags", "io-refusals", "io-clocks"};
     const char* faultCases[] = {"fault-host-chain"};
-    const auto cases = suite == BionicSuite::Faults ? std::span(faultCases) :
+    const char* formatCases[] = {"format-integers", "format-v-list", "format-bounds-refusals", "format-logs"};
+    const auto cases = suite == BionicSuite::Format ? std::span(formatCases) :
+                       suite == BionicSuite::Faults ? std::span(faultCases) :
                        suite == BionicSuite::Io ? std::span(ioCases) :
                        suite == BionicSuite::Memory ? std::span(memoryCases) :
                        suite == BionicSuite::Sync ? std::span(syncCases) : std::span<const char* const>(threadCases);
@@ -108,7 +128,7 @@ int ProbeBionic(const std::wstring& path, BionicSuite suite, const std::wstring&
     }
     const bool host = callbacks > 0 && violations == 0;
     std::printf("case T08.%shost-state %s: %zu callbacks, %zu x18/sp/errno violations\n",
-                suite == BionicSuite::Faults ? "fault-" : suite == BionicSuite::Io ? "io-" :
+                suite == BionicSuite::Format ? "format-" : suite == BionicSuite::Faults ? "fault-" : suite == BionicSuite::Io ? "io-" :
                 suite == BionicSuite::Memory ? "memory-" : sync ? "sync-" : "",
                 host ? "PASS" : "FAIL", callbacks.load(), violations.load());
     failed += !host;

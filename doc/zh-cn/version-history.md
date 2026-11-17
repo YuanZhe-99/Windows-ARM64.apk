@@ -13,3 +13,4 @@
 - 2026-11-16：新增 P3 私有堆分配与字节/字符串包装（T08 内存）；完整 ARM64 回归通过（Host 22、Java 43、Native 58、Bionic 67）。Go 1.27.4、MyGo v0.9.2 与 Mac.apk `3f35611` 已检查、未变；未完成新关卡或发布。
 - 2026-11-16：新增 P3 映射常规文件与时间 API（T08 io）；完整 ARM64 回归通过（Host 22、Java 43、Native 58、Bionic 75）。Go 1.27.4、MyGo v0.9.2 与 Mac.apk `3f35611` 已检查、未变；未完成新关卡或发布。
 - 2026-11-16：新增 P3 可执行范围客体故障诊断（T08 faults）；完整 ARM64 回归通过（Host 22、Java 43、Native 58、Bionic 83）。Go 1.27.4、MyGo v0.9.2 与 Mac.apk `3f35611` 已检查、未变；JVM/客体混合故障仍留在 P4，未完成新关卡或发布。
+- 2026-11-16：新增客体 ABI 受限格式化器及固定宿主字节日志入口（T08 format）；完整 ARM64 回归通过（Host 22、Java 43、Native 58、Bionic 92）。Go 1.27.4、MyGo v0.9.2 与 Mac.apk `3f35611` 已检查、未变；完整 N1/APK/JNI 准入尚未完成，不发布。

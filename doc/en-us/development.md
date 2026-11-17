@@ -45,6 +45,7 @@ The runtime's commands are in the next section.
 .\scripts\windows\test.ps1 -Suite Memory
 .\scripts\windows\test.ps1 -Suite Io
 .\scripts\windows\test.ps1 -Suite Faults
+.\scripts\windows\test.ps1 -Suite Format
 .\build\windows-arm64\bin\native-probe.exe suite .\tests\fixtures\elf\libn0abi.so
 .\build\windows-arm64\bin\native-probe.exe sync .\tests\fixtures\elf\libsync.so
 .\build\windows-arm64\bin\winapk.exe doctor --json
@@ -115,6 +116,12 @@ separately terminating guest processes (access violation and trap). It requires 
 guest virtual address in each fatal diagnostic, exit 3, and no fabricated successful result.
 The N0 `Native` regression also exercises the new executable-range registry over its existing
 load/unload cycles; no duplicate fault stress suite is added.
+
+`-Suite Format` selects the bounded T08 formatter/log matrix (also in `Bionic`).
+`NativeProbe` and `All` build the Android-ABI helper into `bin/guest/libwinapk-bionic.so` and
+record its source, exact NDK arguments and hash in `bin/guest/bionic.json`. The suite checks that
+hash as well as the fixture's, five cases and exact UTF-8 log bytes. The helper is product code,
+not a system libc or generated test fixture; no raw host variadic export is used.
 
 `winapk run` keeps each app's data under `%LOCALAPPDATA%\Windows-ARM64.apk\Apps` (`--data-dir`
 moves it): `android\` is the Android root the app sees (`data\data\<package>`, `sdcard`),

@@ -42,7 +42,7 @@ Host, Java, Native or Bionic.
 #>
 [CmdletBinding()]
 param(
-    [ValidateSet('Host', 'Java', 'Native', 'Bionic', 'Modules', 'Memory', 'Io', 'Faults')]
+    [ValidateSet('Host', 'Java', 'Native', 'Bionic', 'Modules', 'Memory', 'Io', 'Faults', 'Format')]
     [string]$Suite = 'Host'
 )
 Set-StrictMode -Version Latest
@@ -568,6 +568,14 @@ function Test-Bionic([string]$Command = '') {
             if (-not (Test-Path $junction)) { New-Item -ItemType Junction -Path $junction -Target $ioOutside | Out-Null }
             $arguments += "`"$ioRoot`""
         }
+        if ($probeCommand -eq 'format') {
+            $helper = Join-Path $out 'bin\guest\libwinapk-bionic.so'
+            $helperRecord = Get-Content (Join-Path $out 'bin\guest\bionic.json') -Raw | ConvertFrom-Json
+            $helperHash = (Get-FileHash $helper -Algorithm SHA256).Hash.ToLower()
+            Check 'T08.format.helper.hash' ($helperHash -eq $helperRecord.sha256) $helperHash
+            if ($helperHash -ne $helperRecord.sha256) { continue }
+            $arguments += "`"$helper`""
+        }
         $p = Start-Process $probe -ArgumentList $arguments -PassThru -NoNewWindow -RedirectStandardOutput $stdout -RedirectStandardError $stderr
         try {
             if (-not $p.WaitForExit(60000)) {
@@ -594,6 +602,11 @@ function Test-Bionic([string]$Command = '') {
                     $mapped = "$ioRoot\data\中文 dir\空 格.bin"
                     $bytes = if (Test-Path $mapped) { [Convert]::ToHexString([IO.File]::ReadAllBytes($mapped)) } else { 'missing' }
                     Check 'T08.io.mapping' ($bytes -eq '410042FF5A' -and [IO.File]::ReadAllText("$ioOutside\sentinel.txt") -eq 'untouched') "mapped bytes $bytes; outside sentinel unchanged"
+                }
+                if ($probeCommand -eq 'format') {
+                    $lines = @($err -split '\r?\n' | Where-Object { $_ })
+                    $expected = @('guest-log 4 T08: literal %ld UTF8 中文', 'guest-log 5 T08: n=4294967297 text=中文 %', 'guest-log 3 T08: v=7:ok')
+                    Check 'T08.format.log-bytes' (($lines -join "`n") -ceq ($expected -join "`n")) $err
                 }
             }
         } finally { $p.Dispose() }
@@ -634,7 +647,7 @@ function Test-Modules {
     } finally { $p.Dispose() }
 }
 
-switch ($Suite) { 'Host' { Test-Host } 'Java' { Test-Java } 'Native' { Test-Native } 'Bionic' { Test-Bionic } 'Modules' { Test-Modules } 'Memory' { Test-Bionic -Command memory } 'Io' { Test-Bionic -Command io } 'Faults' { Test-Bionic -Command faults } }
+switch ($Suite) { 'Host' { Test-Host } 'Java' { Test-Java } 'Native' { Test-Native } 'Bionic' { Test-Bionic } 'Modules' { Test-Modules } 'Memory' { Test-Bionic -Command memory } 'Io' { Test-Bionic -Command io } 'Faults' { Test-Bionic -Command faults } 'Format' { Test-Bionic -Command format } }
 if ($script:failed -gt 0) { Write-Host "$script:failed check(s) failed"; exit 1 }
 Write-Host 'all checks passed'
 exit 0

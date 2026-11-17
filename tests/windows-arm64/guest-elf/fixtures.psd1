@@ -12,6 +12,8 @@
 @{
     Common   = @('-shared', '-fPIC', '-fno-stack-protector', '-Wall', '-Wextra', '-Werror')
     Fixtures = @(
+        @{ Name = 'libformat.so'; Id = 'T08'; Source = 'threads/format.c'; Target = 'aarch64-linux-android30'
+           Flags = @('-O2', '-nostdlib', '-fno-builtin'); Command = 'format'; Cases = 5; Result = 'T08 PASS; exact UTF-8 logs' }
         @{ Name = 'libfaults.so'; Id = 'T08'; Source = 'threads/faults.c'; Target = 'aarch64-linux-android30'
            Flags = @('-O2', '-nostdlib'); Command = 'faults'; Cases = 2; Result = 'T08 PASS' }
         @{ Name = 'neg-guest-fault.so'; Id = 'T08'; Source = 'threads/faults.c'; Target = 'aarch64-linux-android30'

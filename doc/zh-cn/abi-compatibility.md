@@ -33,8 +33,9 @@ Native`）；下文的用例名即其本身的名称。2026-11-04 在 [platform-
 | 跨边界传递的函数指针 | 按上一行的规则直通 | 直通 | `callback.pointer` |
 | 重入：客体 → 宿主 → 客体，五层 | 直通 | 直通 | `callback.reenter` |
 | 客体的可变参数函数 | 通过由提升后参数类型组成的固定宿主原型直通 | — | `va.fixed-prototype` |
-| 宿主的可变参数函数（`printf`、`__android_log_print`） | — | 需要一个读取客体参数、再调用类型明确的宿主函数的 thunk；不在 N0 中 | 尚无（P3） |
-| `va_list` | 绝不 | 绝不 | — |
+| 宿主的可变参数函数（`printf` 等） | — | 绝不把客体变参导入直接绑定到它 | 不共享宿主 va_list |
+| 受限客体格式化/日志变参 | — | Android ABI 辅助库执行客体 `...`/V 调用；只有固定 errno/字节/日志签名进入宿主 | T08 `format`：整数寄存器/栈溢出参数、LP64、客体 va_copy、截断、拒绝及精确 UTF-8 日志 |
+| 跨 ABI 域的 `va_list` | 绝不 | 绝不 | T08 format 把它保持在客体辅助库中 |
 | 通过导入共享的数据（客体经 GLOB_DAT 读写的宿主变量） | — | 两侧布局相同的类型可直通 | `import.call` |
 | `stat`、`timespec` | 显式 128/16 字节客体布局及转换，绝不使用宿主 CRT 对象 | 同左 | T08 `io`：NDK 布局断言、stat 哨兵/值、墙钟 epoch/单位及 monotonic 期限 |
 | 其他不同布局（`sockaddr` 等） | 不支持 | 不支持 | — |

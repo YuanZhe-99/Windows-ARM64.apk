@@ -7,7 +7,7 @@
 | Profile | 状态 |
 |---|---|
 | N0，可审计的 leaf ELF | 已实现；G2 在本机通过（[platform-notes.md](platform-notes.md)） |
-| N1，受限的 C/JNI ELF（依赖、导入、构造函数、JNI） | P3 线程/同步基础（T08）和模块事务（T07）；其余 Bionic 功能组与 JNI 未完成，G3 NOT_RUN |
+| N1，受限的 C/JNI ELF（依赖、导入、构造函数、JNI） | 独立 P3 Bionic 功能组（T08）和模块事务（T07）；完整 profile 准入及 JNI 未完成，G3 NOT_RUN |
 | N2，图形样例 | 未开始（P5、P6） |
 
 ## N0
@@ -70,7 +70,8 @@
 - 调用方必须保持所有模块映射，直到上下文与回调结束。运行时销毁时仍有未 join 的 worker、从未管理线程调用有状态 shim、
   emutls 描述符损坏或编译器 TLS resolver 分配失败时，探测进程带诊断终止，绝不伪造 TLS 地址。
   不允许异常经客体代码展开。下述客体 PC 故障边界终止执行，绝不尝试恢复。
-  `pthread_exit`、detach/取消、格式化日志 shim 和完整原生 profile 集成仍是 P3 后续工作；JNI 属于 P4。
+  `pthread_exit`、detach/取消仍不支持。完整原生 profile 准入尚未完成；APK/JNI 集成属于 P4。
+  这些探测本身绝不表示 G3 通过。
 
 P3 同步子集通过独立的 `native-probe sync`（T08）测试：
 
@@ -114,7 +115,32 @@ T08 检查损坏描述符与仍有未 join worker 时销毁运行时导致的终
   普通 C 缓冲区/终止要求仍适用；这不是内存安全沙箱。`strdup` 使用同一私有堆。
 
 T08 内存把分配/溢出/重新分配、字节重叠/范围、字符串/UTF-8 和跨线程分配/释放合并在一个小正例夹具中；
-无效释放与重复释放使用同一源码、在独立终止探测中检查。不据此宣称支持 stdio、格式化变参或日志 API。
+无效释放与重复释放使用同一源码、在独立终止探测中检查。内存子集不表示支持 stdio、格式化变参或日志 API；
+下述独立格式化辅助库有更窄的已声明 API。
+
+## P3 受限格式化与日志（T08）
+
+`libwinapk-bionic.so` 是本项目构建的小型 Android AArch64 辅助库，不是系统 libc 或宿主 PE 库。
+NDK 从 `runtime/guest/bionic/format.c` 构建它，仍经同一筛查加载器映射。
+其中 `snprintf`、`vsnprintf`、`__android_log_print`、`__android_log_vprint` 在客体 ABI 中执行，
+所以编译器生成的参数处理和 va_list 完全留在该域。只有固定签名的 errno/字节/日志导入跨入宿主。
+辅助库保持映射，直到所有依赖模块、客体线程及回调结束。
+
+- 格式化支持 `%%`、`d/i/u/x/X/p/s/c`；适用整数的 `hh/h/l/ll/z` 长度；
+  `-`、`+`、空格、`0`、`#`、宽度/精度及 `*`。客体 long 与 size 类型保持 64 位。
+  指针文本为 `0x` 后接十六进制数字；字符串字节原样保留，精度按字节计，不进行区域设置相关格式化。
+- 容量非零时输出以零终止；如 snprintf 一样截断并返回完整的本应写入长度。
+  仅在容量为零时允许空输出指针。支持的调用保持客体 errno；
+  不支持的转换/长度组合（包括浮点、宽文本、`%n` 和位置参数）返回 -1/`ENOTSUP`，
+  有容量时输出空字符串。宽度/精度及格式文本上限为 4096，总结果上限 1 MiB。
+  超限使用 `EOVERFLOW`，绝不伪造零结果。
+- 固定 `__android_log_write` 通过宿主写出诊断记录，不把格式或 va_list 交给宿主格式化器。
+  接受优先级 2–7、最多 127 字节标签及最多 4095 字节消息。
+  格式化日志超限会拒绝，不静默截断。完整写入并刷新记录后返回 1；
+  无效输入、溢出或宿主 I/O 失败返回 -1 及相应客体 errno。不模拟 Android 日志守护进程或 stdio 对象。
+
+T08 format 测试寄存器/栈整数参数、客体 va_copy/V 调用、范围/截断、明确不支持的转换及字面/UTF-8 日志字节。
+它不证明浮点变参或普通 NDK libc 准入；完整原生 profile/APK 集成仍属于 P4。
 
 ## P3 文件与时间（T08）
 
@@ -224,6 +250,7 @@ NativeProbe` 把它们构建到 `tests/fixtures/elf`（生成产物，从不提�
 | T08 内存 | `threads/memory.c`：分配/字节/字符串/线程共享用例、无效和重复释放 | API 30、`-O2 -nostdlib -fno-builtin`，公共选项与 T05 相同；`T08_MEMORY_INVALID`、`T08_MEMORY_DOUBLE` 以退出码 3 终止 |
 | T08 io | `threads/io.c`：映射常规文件、显式 stat/时间布局、标志/错误及有限 sleep | API 30、`-O2 -nostdlib -fno-builtin`，公共选项与 T05 相同；四项语义及宿主状态检查 |
 | T08 faults | `threads/faults.c`：宿主异常链、客体访问违规与 trap | API 30、`-O2 -nostdlib`，公共选项与 T05 相同；`T08_GUEST_FAULT` / `T08_GUEST_TRAP` 要求模块/偏移诊断及退出码 3 |
+| T08 format | `threads/format.c`：整数/客体 V 格式化、范围/拒绝及 UTF-8 字节日志 | API 30、`-O2 -nostdlib -fno-builtin`，公共选项与 T05 相同；映射独立构建的产品格式化辅助库 |
 | T07 模块依赖图 | `modules/dependency.c`、`root.c`、`cycle.c`：正例库对、缺失导入、无效初始化入口、SONAME/依赖环种子 | API 30、`-O2 -nostdlib`，公共选项与 T05 相同；显式链接的夹具依赖及期望值在 `fixtures.psd1` |
 
 每个夹具都由 NDK 自带的 clang 和链接器构建；除其选项所表明的以外，没有哪个是可以代表普通 NDK 产物的特制构建

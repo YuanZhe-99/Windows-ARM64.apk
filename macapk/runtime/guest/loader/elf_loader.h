@@ -40,9 +40,9 @@ struct LoadError {
     std::string reason;  ///< one line, for the person reading the log
 };
 
-/// A host function or variable that a guest import of the same name binds to.
-/// Notes: the address is used as is; its signature must be one abi-compatibility.md
-/// lists as direct for every guest that imports it.
+/// An explicitly supplied function or variable that a guest import of the same name binds to.
+/// Notes: host addresses require a proven direct signature (abi-compatibility.md). A guest-ABI
+/// helper address remains a guest-to-guest call; never bind a host variadic function in its place.
 struct HostSymbol {
     const char* name;
     void* address;

@@ -305,19 +305,13 @@ P2 与 G2（独立 `native-probe.exe` 上的 profile N0、ABI 正例 T05、提�
 
 ## 10. P3 — Bionic、线程、TLS 与客体模块语义
 
-进度（2026-11-16）：已实现并真机验证独立 T08 线程基础（每线程 errno、默认 joinable pthread、TLS keys 析构与显式
-`-femulated-tls` 的 C TLS），并补上 mutex/condition 进程私有无超时同步子集（T08 `sync`，含类型、竞争、
-等待/唤醒、对象生命周期与错误断言）。长期边界见 `doc/en-us/native-profiles.md`。它沿用 N0 加载检查、以特制无依赖
-ELF 验证，不表示 N1 或 G3 已通过。T07 事务式依赖加载、构造顺序、引用/保留映射、guest dl API 与失败回滚已实现，
-完整回归通过 Host 22、Java 43、Native 58、Bionic 56 项；
-其余 Bionic 功能组、客体故障边界与 P4 JNI 仍待实现。
-内存/字节与常用字符串子集已实现：私有堆、归属/溢出检查、失败时保留的 realloc、UTF-8 原样复制，
-T08 `memory` 定向 11 项通过；完整回归 Host 22、Java 43、Native 58、Bionic 67 项通过。
-仍不开放完整 N1。文件/时间子集已实现并通过 T08 `io` 定向 8 项：独立 fd 表、显式 stat/timespec、
-中文/空格路径、seek/追加/错误转换及有限 sleep；完整回归 Host 22、Java 43、Native 58、Bionic 75 项通过。
-客体故障边界已通过 T08 `faults` 定向 8 项：宿主异常链未被吞掉，客体访问违规/trap 带模块/偏移诊断退出 3；
-完整回归 Host 22、Java 43、Native 58、Bionic 83 项通过，JVM/客体混合验证留在 P4。
-受限格式化日志与完整原生 profile 集成继续推进。
+进度（2026-11-16）：已真机验证独立 T08 线程/errno/keys/显式 C 仿真 TLS、进程私有 mutex/condition、
+私有堆/字节/字符串、映射文件/时间、客体 PC 故障诊断，以及客体 ABI 辅助 ELF 中的受限整数格式化/日志。
+T07 已覆盖事务式依赖加载、构造顺序、引用/保留映射、guest dl API 与失败回滚。
+长期支持范围、拒绝与夹具见 `doc/en-us/native-profiles.md`，结果见 `doc/en-us/platform-notes.md`。
+最新完整回归 Host 22、Java 43、Native 58、Bionic 92 项通过；不增加重复压力套件。
+这些特制夹具不表示普通 NDK 输出、完整 N1 或 G3 已通过。完整 profile 准入（含系统库依赖/版本化导入）、
+P4 JNI/APK 接入及 JVM/客体混合故障验证仍待完成。
 前端暂缓，按用户决定优先后端；不改变 §6 的运行时依赖顺序。
 
 ### 10.1 按样例需求实现的第一批功能

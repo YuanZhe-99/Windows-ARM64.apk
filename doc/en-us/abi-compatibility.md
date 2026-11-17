@@ -35,8 +35,9 @@ Native`); the case names below are its own. Verified 2026-11-04 on the machine o
 | Function pointers handed across | direct, by the rule above | direct | `callback.pointer` |
 | Reentry: guest → host → guest, five levels | direct | direct | `callback.reenter` |
 | A guest variadic function | direct, through a fixed host prototype of the promoted argument types | — | `va.fixed-prototype` |
-| A host variadic function (`printf`, `__android_log_print`) | — | needs a thunk that reads the guest's arguments and calls a typed host function; not in N0 | none yet (P3) |
-| `va_list` | never | never | — |
+| A host variadic function (`printf`, etc.) | — | never bind a guest variadic import directly to it | no host va_list is shared |
+| Restricted guest formatter/log varargs | — | Android-ABI helper executes guest `...`/V calls; only fixed errno/bytes/log signatures enter the host | T08 `format`: integer register/stack spill, LP64, guest va_copy, truncation, refusals and exact UTF-8 logs |
+| `va_list` across ABI domains | never | never | T08 format keeps it inside the guest helper |
 | Data shared through an import (a host variable a guest GLOB_DAT reads and writes) | — | direct, for a type of the same layout on both sides | `import.call` |
 | `stat`, `timespec` | explicit 128/16-byte guest layouts and conversion, never host CRT objects | the same | T08 `io`: NDK layout assertions, stat sentinels/values, wall-clock epoch/units and monotonic deadline |
 | Other differing layouts (`sockaddr`, etc.) | unsupported | unsupported | — |

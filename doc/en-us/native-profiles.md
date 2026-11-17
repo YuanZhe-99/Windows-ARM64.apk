@@ -8,7 +8,7 @@ Guest native code is off by default and runs only within a declared, tested prof
 | Profile | State |
 |---|---|
 | N0, an auditable leaf ELF | implemented; G2 passes on this PC ([platform-notes.md](platform-notes.md)) |
-| N1, a restricted C/JNI ELF (dependencies, imports, constructors, JNI) | P3 thread/sync foundation (T08) and module transactions (T07); remaining Bionic groups and JNI incomplete, G3 NOT_RUN |
+| N1, a restricted C/JNI ELF (dependencies, imports, constructors, JNI) | separate P3 Bionic groups (T08) and module transactions (T07); complete profile admission and JNI incomplete, G3 NOT_RUN |
 | N2, graphics samples | not started (P5, P6) |
 
 ## N0
@@ -84,8 +84,8 @@ ordinary NDK output works. N0's original ABI suite and imports are unchanged.
   descriptor or an allocation failure in the compiler TLS resolver terminates the probe with
   a diagnostic, never a fabricated TLS address. No exception is unwound through guest code.
   The guest-PC fault boundary below terminates rather than recovers execution.
-  `pthread_exit`, detach/cancellation, formatted log shims and full native-profile integration
-  remain P3 work; JNI remains P4.
+  `pthread_exit` and detach/cancellation remain unsupported. Complete native-profile admission
+  remains unfinished; APK/JNI integration is P4. These probes alone never establish G3.
 
 The P3 synchronization subset is exercised separately by `native-probe sync` (T08):
 
@@ -143,7 +143,36 @@ Its audited imports are `malloc`, `calloc`, `realloc`, `free`; `memcpy`, `memmov
 T08 memory combines allocation/overflow/reallocation, byte overlap/bounds, string/UTF-8 and
 cross-thread allocation/free checks in one small positive fixture; an invalid free and a double
 free use the same source in separate terminating probes. No stdio, formatted varargs or log API
-is implied by this subset.
+is implied by the memory subset; the separate formatting helper below has a narrower declared API.
+
+## P3 restricted formatting and logging (T08)
+
+`libwinapk-bionic.so` is a small, project-built Android AArch64 helper, not a system libc or a
+host PE library. The NDK builds it from `runtime/guest/bionic/format.c`; the same screened loader
+maps it. Its `snprintf`, `vsnprintf`, `__android_log_print` and `__android_log_vprint` execute in
+the guest ABI, so compiler-generated argument handling and va_list stay entirely in that domain.
+Only fixed-signature errno/byte/log imports cross into the host. The helper stays mapped until
+all dependent modules, guest threads and callbacks have ended.
+
+- Formatting supports `%%`, `d/i/u/x/X/p/s/c`; integer `hh/h/l/ll/z` lengths where appropriate;
+  `-`, `+`, space, `0`, `#`, width/precision and `*`. Guest long and size types remain 64-bit.
+  Pointer text is `0x` followed by hexadecimal digits; strings are unchanged bytes, with precision
+  measured in bytes. This is not a locale-sensitive formatter.
+- Output is terminated when capacity is nonzero, truncated with a full would-have-written return
+  count like snprintf. A null output is valid only with zero capacity. Supported calls preserve
+  guest errno; unsupported conversion/length combinations (including floats, wide text, `%n` and
+  positional arguments) return -1/`ENOTSUP`, with an empty output when capacity permits.
+  Width/precision and format text are bounded at 4096; total result at 1 MiB. Limit failures use
+  `EOVERFLOW`, never a fabricated zero result.
+- Fixed `__android_log_write` writes a diagnostic record through the host, without passing a
+  format or va_list to the host formatter. It accepts priorities 2–7, tags up to 127 bytes and
+  messages up to 4095 bytes. Formatted logs refuse overflow rather than silently truncating.
+  A completed/flushed record returns 1; invalid input, overflow or host I/O failure returns -1
+  with the appropriate guest errno. There is no Android log daemon or stdio object emulation.
+
+T08 format tests register/stack integer arguments, guest va_copy/V calls, bounds/truncation,
+explicit unsupported conversions and literal/UTF-8 log bytes. It does not prove floating-point
+varargs or ordinary NDK libc admission; full native-profile/APK integration remains P4.
 
 ## P3 files and time (T08)
 
@@ -272,6 +301,7 @@ and expected refusal; `build.ps1 -Component NativeProbe` builds them into `tests
 | T08 memory | `threads/memory.c`: allocation/byte/string/thread-sharing cases, invalid and double free | API 30, `-O2 -nostdlib -fno-builtin`, common flags as T05; `T08_MEMORY_INVALID`, `T08_MEMORY_DOUBLE` terminate with exit 3 |
 | T08 io | `threads/io.c`: mapped regular files, explicit stat/time layouts, flags/errors and bounded sleep | API 30, `-O2 -nostdlib -fno-builtin`, common flags as T05; four semantic cases and host-state check |
 | T08 faults | `threads/faults.c`: host exception chain, guest access violation and trap | API 30, `-O2 -nostdlib`, common flags as T05; `T08_GUEST_FAULT` / `T08_GUEST_TRAP` require a module/offset diagnostic and exit 3 |
+| T08 format | `threads/format.c`: integer/guest-V formatting, bounds/refusals and UTF-8 byte logs | API 30, `-O2 -nostdlib -fno-builtin`, common flags as T05; maps the separately built product formatting helper |
 | T07 module graph | `modules/dependency.c`, `root.c`, `cycle.c`: positive pair, missing import, invalid initializer, SONAME/cycle seed | API 30, `-O2 -nostdlib`, common flags as T05; explicit linked fixture dependencies and expected values in `fixtures.psd1` |
 
 Every fixture is built by the NDK's own clang and linker; none is a special build that would stand
