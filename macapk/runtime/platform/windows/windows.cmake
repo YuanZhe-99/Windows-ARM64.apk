@@ -48,12 +48,20 @@ add_library(winapk-bridge SHARED
   ${_win}/src/bridge/bridge.cpp
   ${_win}/src/bridge/log.cpp
   ${_win}/src/bridge/window.cpp
+  ${_win}/src/bridge/guest.cpp
+  ${CMAKE_CURRENT_LIST_DIR}/../../guest/jni/bridge.cpp
+  ${CMAKE_CURRENT_LIST_DIR}/../../guest/jni/entries.cpp
+  ${CMAKE_CURRENT_LIST_DIR}/../../guest/bionic/libraries.cpp
+  ${CMAKE_CURRENT_LIST_DIR}/../../guest/bionic/threads.cpp
+  ${CMAKE_CURRENT_LIST_DIR}/../../guest/loader/faults.cpp
+  ${CMAKE_CURRENT_LIST_DIR}/../../guest/loader/elf_loader.cpp
   # upstream's NativeSqlite, unchanged but for its Windows Unicode helpers (ADR-0002)
   ${CMAKE_CURRENT_LIST_DIR}/../../src/native_sqlite.cpp)
 target_include_directories(winapk-bridge PRIVATE "${JAVA_HOME}/include" "${JAVA_HOME}/include/win32")
+target_include_directories(winapk-bridge PRIVATE "${CMAKE_CURRENT_LIST_DIR}/../../translator/include")
 target_compile_definitions(winapk-bridge PRIVATE UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX _CRT_SECURE_NO_WARNINGS)
 target_compile_options(winapk-bridge PRIVATE /W4 /EHsc -Wno-missing-field-initializers)
-target_link_libraries(winapk-bridge PRIVATE unofficial::sqlite3::sqlite3 user32 gdi32 shcore)
+target_link_libraries(winapk-bridge PRIVATE unofficial::sqlite3::sqlite3 user32 gdi32 shcore capstone::capstone mincore)
 
 # The standalone guest ELF experiment (PLAN.md §9.1): the N0 loader and its ABI suite, without
 # the JVM or a window. Same compiler flags and mitigations as winapk.exe, the process guest code

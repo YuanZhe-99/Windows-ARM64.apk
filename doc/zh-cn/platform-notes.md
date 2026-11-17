@@ -2,7 +2,7 @@
 
 | 平台 | 状态 |
 |---|---|
-| Windows 11 ARM64 | G0 通过；G1 的检查在本机通过（T02、T03）：`winapk run` 在 Win32 窗口中运行纯 Java APK 的真实 DEX，支持触摸、按键和输入的 Unicode 文字、滚动、改变尺寸、最小化与恢复、返回、保存的状态和 SQLite，路径可含 Unicode 字符；Kotlin 夹具 T04 也能运行。G2 同样通过：`native-probe.exe` 加载 N0 客体 ELF 库，在其上运行 ABI 测试集 T05，并拒绝格式错误和超出 profile 的库（T06）；`winapk run` 尚不加载 APK 的库。界面仍对接示例数据（`winapk.Mock`）。 |
+| Windows 11 ARM64 | G0–G2 在本机通过：Java/Kotlin APK、输入/生命周期/存储/SQLite 及独立 N0 ELF/ABI 检查。首批显式 `--native=restricted` APK 路径通过 hello-jni Activity 返回值及加载边界检查；完整 G3 仍为 NOT_RUN。界面仍使用示例数据（`winapk.Mock`）。 |
 | Windows 11 x64 | 不是目标平台；只可承载构建工具和解析测试。 |
 | macOS（Apple Silicon） | 上游 Mac.apk 的平台；已引入为 `macapk/`，当前在 `3f35611`；尚未在此运行 macOS 构建或 smoke（`NOT_RUN`）。 |
 
@@ -50,7 +50,7 @@
 | G1.6 Kotlin 夹具 | PASS | T04（`hello-kotlin`，kotlin-stdlib 2.4.0）：`result=top=the:3,brown:1,dog:1 squares=140 copy=Count(word=fox, n=2)`、`onResume`、退出码 0。仅限此夹具：不推定其他 Kotlin 或 Compose 应用兼容 |
 | SQLite（T03） | PASS | `upper('café 中文')` 为 `CAFÉ 中文`，`LIKE 'CAFÉ%'` 匹配，`COLLATE LOCALIZED` 排序为 `apple|Banana|café 中文`；查询不存在的表抛出 `SQLiteException` |
 | T02 呈现器 | PASS | Android 视图就是客户区（400×800 px）；客户区像素等于主题的 `windowBackground` #EFEDF1 |
-| 负例 | PASS | 不是 APK 的文件：退出码 65，`INSTALL_FAILED_INVALID_APK`；`--native=restricted`：退出码 64，`GUEST_NATIVE_NOT_IMPLEMENTED`；正常运行不记录 `UI_THREAD_BLOCKED` |
+| 负例 | PASS | 不是 APK 的文件：退出码 65，`INSTALL_FAILED_INVALID_APK`；未知原生模式：退出码 64，`GUEST_ABI_UNSUPPORTED`；正常运行不记录 `UI_THREAD_BLOCKED` |
 
 ## G2 检查
 
@@ -136,7 +136,7 @@ Go vet/测试（含 `CGO_ENABLED=0`）、MyGo vet/i18n 与文档镜像检查均�
 | 显式 JNI 库生命周期 | PASS | 普通 NDK CRT/libc/libdl 链接；依赖/根库/hook trace 为 `2 1 3`，重复加载根库不变；无 hook 根库仅追加构造 `1`，不调用依赖 hook `9`；错误版本及 pending IllegalStateException 仅运行一次并返回失败，重试不重跑；拒绝数据型 JNI_OnLoad；错误版本 hook 注册的方法可在 hook 内调用，但失败后调用会明确终止 |
 | JNI 导出查询 | PASS | short name 优先于冲突的 long name；int/long 重载、数组/对象描述符、下划线/中文 UTF-16 转义及 DT_NEEDED 依赖导出经 JVM 返回精确值；显式注册优先；重复绑定不分配重复入口；JVM 专属 `1bad` 即使有匹配导出也抛出 UnsatisfiedLinkError |
 | 故障及误用边界 | PASS | 不支持的槽 217 及跨线程 JNIEnv：带明确类别退出 3；客体 trap/访问违规：已注册模块/偏移及退出 3；热 Java 空指针/除零异常仍由 JVM 所有并正常完成；主线程/worker 只读检查 x18/sp |
-| APK 调用点集成 | NOT_RUN | DEX/ClassLoader 的 System.loadLibrary/load 重定向、APK 提取及 Activity/G3 验收未集成；winapk run 原生准入仍关闭 |
+| 首批 APK 调用点集成 | PASS | `ApkJni` 六项检查：off/restricted 启动启用 CheckJNI、真实 Activity 返回值 43、跨 System/Runtime 加载的显式注册及仅一次 hook、后定义类导出、缺失/目录外拒绝及 DEX 前 ZIP 路径穿越拒绝；两次启动退出码均为 0。完整 Activity/G3 矩阵仍未完成 |
 
 回归同时通过 requirements、Host 23、Native 58、Bionic 104、Java 43；
 Go 格式/vet/测试（含禁用 CGO）、MyGo vet/i18n 及文档镜像通过。
@@ -148,6 +148,10 @@ Go 格式/vet/测试（含禁用 CGO）、MyGo vet/i18n 及文档镜像通过。
 显式加载增量的完整 requirements/build All 及 Host 23、Java 43、Native 58、Bionic 104、Jni 24
 回归在 `P4-load-*.log`。六个库变体使用普通 NDK 共享库链接，
 不使用核心探测的 `-nostdlib`/仿真 TLS 参数；不推定任意 APK 兼容。
+首批 APK 增量的 requirements/build All 及完整回归在 `P4-apk-*.log`：
+Host 23、Java 43、Native 58、Bionic 104、Jni 24、ApkJni 6 PASS。ApkJni 4.77 秒、Jni 0.96 秒
+（单次测量）。APK 夹具使用普通 NDK API 30；此前 API-24 紧凑 RX 元数据布局被拒绝，
+不从可执行字节扫描中豁免。不因此完成新关卡/层或发布；G3 及完整层 B 仍为 NOT_RUN。
 首次混合 trap 实验失败：JVM 在末尾客体处理器运行前退出 1。
 修复安装严格限定客体 PC 的首位处理器，绝不替换 HotSpot 处理器，
 每个非客体 PC 仍走原有链。保留的 T09 用例保护这条边界。
@@ -159,7 +163,7 @@ Go 格式/vet/测试（含禁用 CGO）、MyGo vet/i18n 及文档镜像通过。
   `winapk.guestNative` 检查，以及 `runtime/src/native_sqlite.cpp` 的 `_WIN32` Unicode 辅助函数；其余都是 `runtime/platform/windows` 和 `runtime/guest` 下的新代码。Windows 实现了 `NativeCocoa` 和其他宿主
   native 中的哪些、哪些仍未绑定，见 [port-audit.md](port-audit.md)。
 - 界面还没有启动 `winapk run`；它仍使用 `winapk.Mock`。
-- 客体原生：profile N0、`native-probe.exe` 中的独立 P3 T07/T08 子集，以及 `jni-probe.exe` 中的 P4 JNI 基础；`winapk run` 不加载任何 APK 库（P4）。客体 PC 故障边界诊断识别出的客体执行故障，不处理宿主导入、JIT/JVM 故障、范围外分支目标或栈溢出。T09 覆盖已声明的混合 JVM 边界，不证明任意 JVM/客体失败。以 `winapk.exe` 的编译选项构建，关闭 Control Flow Guard；启用 CFG 的构建为 NOT_RUN（[abi-compatibility.md](abi-compatibility.md)）。
+- 客体原生：独立 N0/P3 与 P4 T09 探测，加上首批受限 APK Activity 增量。完整 G3/N1 仍未完成。客体 PC 边界诊断识别出的客体故障，不处理宿主导入、JIT/JVM 故障、范围外分支或栈溢出。T09 仅证明所声明的混合 JVM 用例。关闭 Control Flow Guard；启用 CFG 的构建为 NOT_RUN（[abi-compatibility.md](abi-compatibility.md)）。
 - 这台电脑没有厂商 Vulkan 驱动：Vulkan 是基于 Direct3D 12 的 Mesa Dozen（[decisions.md](decisions.md)）。
 - `CMakeLists.txt`、`AppClassLoader` 与 `native_sqlite.cpp` 改动后的 macOS 构建和 smoke：NOT_RUN（这里没有 Mac）；该分支只在 `WIN32` 下返回，Java 检查在未设置 `winapk.guestNative` 时不起作用，`_WIN32` 之外的 CoreFoundation 辅助函数没有改变。
 - DPI：应用的 density 在启动时固定。把窗口移到另一缩放的显示器，或在运行中改变缩放，窗口会调整尺寸以保持其点数（`WM_DPICHANGED`），但应用保持最初的 density：NOT_RUN，也尚未作为 Android 的配置变更处理。

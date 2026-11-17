@@ -2,6 +2,7 @@
 
 ## 0.1.0 (in progress)
 
+- 2026-11-17: connected restricted APK library extraction, guest-only DEX redirects and app-class export binding to the Windows host bridge. The API-30 hello-jni Activity passes six compact checks (4.77 s); full ARM64 requirements/build All, Host 23, Java 43, Native 58, Bionic 104 and Jni 24 pass. API-24 compact RX metadata remains refused; the full APK/G3 matrix is unfinished. Go 1.27.4, MyGo v0.9.2 and merged Mac.apk `3f35611` checked, unchanged; version 0.1.0 unreleased.
 - 2026-11-17: added explicit root-only/once-only JNI_OnLoad, cached failures and failed-hook native-entry guards; short/long/Unicode/descriptor export lookup, registration precedence and ambiguous-escape refusal pass in the existing T09 groups. Requirements/build All, Host 23, Java 43, Native 58, Bionic 104 and Jni 24 pass; final targeted Jni run 1.73 s. Go 1.27.4, MyGo v0.9.2 and Mac.apk `3f35611` checked, unchanged; APK integration and G3 remain unfinished, version 0.1.0 unreleased.
 - Repository scaffold: working conventions (`AGENTS.md`), the plan (`PLAN.md`), mirrored
   documentation, the documentation mirror check and the Go module.

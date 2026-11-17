@@ -1,6 +1,6 @@
 // run.cpp -- `winapk run`: runs one APK's Java code in this process (PLAN.md §8, G1).
 //
-//   winapk run <apk> [--native=off] [--data-dir <dir>] [--java-home <dir>] [--size <w>x<h>]
+//   winapk run <apk> [--native=off|restricted] [--data-dir <dir>] [--java-home <dir>] [--size <w>x<h>]
 //
 // Steps, each logged as "[winapk] stage …": inspect the APK (no code runs), convert its DEX
 // to classes.jar with com.macapk.dex in a child `winapk dex` (cached by content), create the JVM here
@@ -25,8 +25,10 @@
 #include <shlobj.h>
 
 #include <cmath>
+#include <algorithm>
 #include <cstdio>
 #include <fstream>
+#include <set>
 #include <sstream>
 #include <vector>
 
@@ -129,6 +131,52 @@ bool WriteAtomic(const std::wstring& path, const std::string& text) {
         if (!(o << text)) return false;
     }
     return MoveFileExW(tmp.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH);
+}
+
+/// Extracts a bounded ARM64 APK library set by content identity, never by arbitrary ZIP paths.
+/// Returns: a stable category on unsafe names, ABI-only mismatch, corrupt input or write failure.
+std::string StageLibraries(const RunArgs& a, const ApkInfo& apk, const std::wstring& appDir,
+                           std::wstring& directory, std::string& admitted) {
+    directory = appDir + L"\\.macapk-native-" + Wide(Sha256File(a.apk));
+    std::vector<ZipEntry> entries;
+    if (auto error = ReadZip(a.apk, entries); !error.empty()) return "INSTALL_FAILED_INVALID_APK: " + error;
+    std::vector<ZipEntry> libraries;
+    std::set<std::string> names;
+    uint64_t total = 0;
+    constexpr std::string_view prefix = "lib/arm64-v8a/";
+    for (const auto& entry : entries) {
+        if (!entry.name.starts_with(prefix) || entry.name.ends_with('/')) continue;
+        const std::string name = entry.name.substr(prefix.size());
+        if (name.empty() || name.size() > 128 || !name.ends_with(".so") || name.find("..") != std::string::npos)
+            return "GUEST_ABI_UNSUPPORTED: portable ARM64 .so basename required";
+        std::string folded = name;
+        for (char& c : folded) {
+            if (!((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
+                  (c >= '0' && c <= '9') || c == '_' || c == '+' || c == '.' || c == '-'))
+                return "GUEST_ABI_UNSUPPORTED: portable ARM64 .so basename required";
+            if (c >= 'A' && c <= 'Z') c += 'a' - 'A';
+        }
+        if (!names.insert(folded).second ||
+            std::find(apk.unsafeNames.begin(), apk.unsafeNames.end(), entry.name) != apk.unsafeNames.end())
+            return "INSTALL_FAILED_INVALID_APK: unsafe or colliding ARM64 library entry";
+        if (entry.size > (64ull << 20) || (total += entry.size) > (256ull << 20) || libraries.size() == 128)
+            return "GUEST_ABI_UNSUPPORTED: APK library size/count limit";
+        libraries.push_back(entry);
+    }
+    if (!apk.nativeLibs.empty() && libraries.empty())
+        return "GUEST_ABI_UNSUPPORTED: APK has no arm64-v8a libraries";
+    const int rc = SHCreateDirectoryExW(nullptr, directory.c_str(), nullptr);
+    if (rc != ERROR_SUCCESS && rc != ERROR_ALREADY_EXISTS) return "IO_ERROR: cannot create APK library directory";
+    for (const auto& entry : libraries) {
+        std::vector<uint8_t> bytes;
+        if (auto error = ReadEntry(a.apk, entry, bytes); !error.empty()) return "INSTALL_FAILED_INVALID_APK: " + error;
+        if (!WriteAtomic(directory + L"\\" + Wide(entry.name.substr(prefix.size())),
+                         std::string(bytes.begin(), bytes.end())))
+            return "IO_ERROR: cannot write APK library";
+        admitted += entry.name.substr(prefix.size()) + "\n";
+    }
+    Log("stage guest-libraries (" + std::to_string(libraries.size()) + " ARM64 candidates; screened on load)");
+    return {};
 }
 
 std::string ReadText(const std::wstring& path) {
@@ -271,6 +319,7 @@ int ConvertDex(const std::wstring& apk, const std::wstring& out, const std::wstr
     // java.exe's options for the converter before: the throughput collector, the framework
     // as the converter's type universe (ClassHierarchyOracle).
     JNIEnv* env = CreateJvm(Wide(jvm.home), {"-XX:+UseParallelGC",
+        "-Ddex2jvm.redirectNativeLoad=com/macapk/loader/GuestNativeLoader",
         "-Djava.class.path=" + L + "\\android-framework.jar;" + L + "\\macapk-loader.jar;" + L + "\\bcprov-jdk18on-1.79.jar"}, &vm, err);
     if (!env) { Log("DEPENDENCY_MISSING: " + err); return 69; }
     jclass main = env->FindClass("com/macapk/dex/Main");
@@ -289,8 +338,8 @@ int ConvertDex(const std::wstring& apk, const std::wstring& out, const std::wstr
 }
 
 int Run(const RunArgs& a) {
-    if (a.native != L"off") {
-        Log("GUEST_NATIVE_NOT_IMPLEMENTED: --native=" + Utf8(a.native) + " needs the guest ELF loader (P2); only --native=off runs");
+    if (a.native != L"off" && a.native != L"restricted") {
+        Log("GUEST_ABI_UNSUPPORTED: --native must be off or restricted");
         return 64;
     }
     Log("stage inspect " + Utf8(a.apk));
@@ -305,7 +354,7 @@ int Run(const RunArgs& a) {
     }
     Log("package " + apk.packageName + " " + apk.versionName + " (" + std::to_string(apk.versionCode) + "), " +
         std::to_string(apk.dexCount) + " DEX, minSdk " + std::to_string(apk.minSdk) + ", targetSdk " + std::to_string(apk.targetSdk));
-    if (!apk.nativeLibs.empty()) {
+    if (a.native == L"off" && !apk.nativeLibs.empty()) {
         std::string abis;
         for (const auto& x : apk.nativeAbis) abis += (abis.empty() ? "" : ", ") + x;
         Log("guest native is off: the APK's " + std::to_string(apk.nativeLibs.size()) + " native libraries (" + abis +
@@ -338,6 +387,20 @@ int Run(const RunArgs& a) {
 
     const BuildId id{Sha256File(lib + L"\\macapk-loader.jar"), Sha256File(lib + L"\\android-framework.jar")};
     bool hasCode = false;
+    std::wstring guestLibraries;
+    std::string admitted;
+    if (a.native == L"restricted") {
+        for (const auto& name : {L"libwinapk-bionic.so", L"libwinapk-jni.so"}) {
+            if (!Exists(bin + L"\\guest\\" + name)) {
+                Log("DEPENDENCY_MISSING: guest JNI/Bionic helper");
+                return 69;
+            }
+        }
+        if (auto error = StageLibraries(a, apk, appDir, guestLibraries, admitted); !error.empty()) {
+            Log(error);
+            return error.starts_with("IO_ERROR") ? 74 : 65;
+        }
+    }
     if (int rc = StageCode(a, jvm, id, appDir, hasCode)) return rc;
 
     // The bridge sets the app's size before Java asks for it.
@@ -345,6 +408,12 @@ int Run(const RunArgs& a) {
     auto reg = bridge ? reinterpret_cast<jboolean (*)(JNIEnv*)>(GetProcAddress(bridge, "winapk_bridge_register")) : nullptr;
     auto setSize = bridge ? reinterpret_cast<void (*)(int, int)>(GetProcAddress(bridge, "winapk_bridge_set_phone_size")) : nullptr;
     if (!reg || !setSize) { Log("DEPENDENCY_MISSING: winapk-bridge.dll is missing its entry points"); return 69; }
+    if (a.native == L"restricted") {
+        auto configure = reinterpret_cast<void (*)(const wchar_t*, const wchar_t*, const wchar_t*, const char*)>(
+            GetProcAddress(bridge, "winapk_bridge_configure_guest"));
+        if (!configure) { Log("DEPENDENCY_MISSING: guest configuration entry"); return 69; }
+        configure(guestLibraries.c_str(), (bin + L"\\guest").c_str(), android.c_str(), admitted.c_str());
+    }
     int w = 0, h = 0;
     PhoneSize(a, w, h);
     setSize(w, h);
@@ -375,7 +444,9 @@ int Run(const RunArgs& a) {
         std::string("-Dmacapk.runtime.version=") + WINAPK_VERSION,
         "-Dmacapk.display.density=" + std::to_string(densityDpi),
         "-Dmacapk.bundle.apk=" + Utf8(a.apk),
-        "-Dwinapk.guestNative=off",  // AppClassLoader.findLibrary refuses APK libraries
+        "-Ddex2jvm.redirectNativeLoad=com/macapk/loader/GuestNativeLoader",
+        "-Dwinapk.guestNative=" + Utf8(a.native),
+        "-Dwinapk.guestLibraryDir=" + Utf8(guestLibraries),
     };
     std::string err;
     JavaVM* vm = nullptr;

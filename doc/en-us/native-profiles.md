@@ -1,9 +1,9 @@
 # Native profiles
 
 Guest native code is off by default and runs only within a declared, tested profile
-(`PLAN.md` §5.2). The loader is `macapk/runtime/guest/loader/elf_loader.cpp`; so far only
-`native-probe.exe` uses it. `winapk run --native=restricted` still answers
-`GUEST_NATIVE_NOT_IMPLEMENTED`, and an APK's libraries are not loaded (P4).
+(`PLAN.md` §5.2). The loader is `macapk/runtime/guest/loader/elf_loader.cpp`, used by the
+standalone probes and the explicit `winapk run --native=restricted` APK path.
+That path passes the first hello-jni Activity checks, not the full G3 matrix.
 
 | Profile | State |
 |---|---|
@@ -262,8 +262,29 @@ JNI escape failure (an unescaped `0`–`3` at the start or after a mapped slash)
 method unresolved even if a matching ELF export exists; explicit registration remains valid.
 Successful explicit registrations take precedence over export-name binding.
 
-This is still standalone T09, not APK admission: APK/ClassLoader call-site integration remains
-subsequent work. No G3 claim follows from these library contracts alone.
+These standalone T09 library contracts also back the initial APK integration below.
+Neither standalone results nor its first Activity increment prove the full G3 matrix.
+
+### Initial APK integration
+
+The P4 integration uses `winapk run --native=restricted`, with `off` still the default.
+Admission is one extracted ARM64 library directory per APK content identity,
+portable `.so` basenames only, bounded ZIP reads/CRC validation and no search outside that
+directory. `System.load` accepts only an absolute path to an admitted file in that directory;
+app-generated libraries and additional ClassLoaders are not admitted in this subset.
+DEX call-site redirection covers System/Runtime load/loadLibrary and Android library naming;
+host/JDK calls are unchanged. Classes defined by the app loader are offered for export binding
+after a successful explicit load and when subsequently defined. Unredirected JVM library loads
+fail explicitly rather than handing ELF to Windows. macOS facade/exposure paths are skipped
+on Windows. The host bridge owns one namespace and JNI bridge until process termination;
+neither JNI_OnUnload nor ELF finalizers run at JVM shutdown, and no destructor reenters a dead
+JVM. Export reflection can resolve referenced Java types; a missing type is an explicit failure,
+not a claim to support arbitrary APK classes.
+These constraints and the first Activity checks are not a full G3 result.
+The APK fixture uses the ordinary NDK API-30 link, as the standalone library family does.
+An API-24 compact RX segment containing headers/metadata was refused when conservative
+whole-executable-segment scanning decoded metadata as an `x18` instruction. The loader is not
+relaxed to trust section headers or skip executable bytes; this layout remains unsupported.
 
 ## P3 module transactions (T07)
 

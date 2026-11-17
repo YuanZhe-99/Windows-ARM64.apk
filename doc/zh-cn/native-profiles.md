@@ -1,8 +1,8 @@
 # 原生执行 profile
 
 客体原生代码默认关闭，只在已声明、已测试的 profile 内运行（`PLAN.md` §5.2）。加载器是
-`macapk/runtime/guest/loader/elf_loader.cpp`；目前只有 `native-probe.exe` 使用它。`winapk run --native=restricted`
-仍然返回 `GUEST_NATIVE_NOT_IMPLEMENTED`，APK 中的库不会被加载（P4）。
+`macapk/runtime/guest/loader/elf_loader.cpp`；独立探测与显式 `winapk run --native=restricted`
+APK 路径使用它。该路径通过首批 hello-jni Activity 检查，不是完整 G3 矩阵。
 
 | Profile | 状态 |
 |---|---|
@@ -213,8 +213,25 @@ hook 中的注册可在 hook 的所属线程初始化期间调用，但 hook 失
 JNI 转义失败（开头或映射的斜杠后出现未经转义的 `0`–`3`）时，即使 ELF 存在匹配导出，
 方法也保持未解析；显式注册仍有效。
 
-这仍是独立 T09，不是 APK 准入：APK/ClassLoader 调用点集成仍是后续工作。
-单独这些库契约通过不证明 G3。
+这些独立 T09 库契约也用于下述首批 APK 集成。
+独立结果及首批 Activity 增量都不证明完整 G3 矩阵。
+
+### 首批 APK 集成
+
+P4 集成使用 `winapk run --native=restricted`，默认仍为 `off`。
+准入每个 APK 内容标识对应的一个 ARM64 库提取目录，仅允许可移植 `.so` 基名，
+限制 ZIP 读取大小并校验 CRC，不在该目录以外搜索。
+`System.load` 仅接受该目录内已准入文件的绝对路径；此子集不准入应用生成的库及额外 ClassLoader。
+DEX 调用点重定向覆盖 System/Runtime load/loadLibrary 及 Android 库命名；
+宿主/JDK 调用不变。应用加载器定义的类在显式加载成功后及后续定义时参与导出绑定。
+未经重定向的 JVM 库加载明确失败，不将 ELF 交给 Windows；Windows 跳过 macOS facade/暴露路径。
+宿主桥持有一个命名空间及 JNI 桥直到进程终止；
+JVM 关闭时不运行 JNI_OnUnload 或 ELF finalizer，不让析构重入已结束的 JVM。
+导出反射可能解析引用的 Java 类型；缺失类型明确失败，不推定任意 APK 类兼容。
+这些约束及首批 Activity 检查不是完整 G3 结果。
+APK 夹具与独立库家族一样使用普通 NDK API-30 链接。
+API-24 的紧凑 RX 段包含头/元数据，保守的完整可执行段扫描将元数据解码为 `x18` 指令时拒绝。
+不放宽加载器去信任节表或跳过可执行字节；此布局仍不受支持。
 
 ## P3 模块事务（T07）
 

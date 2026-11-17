@@ -38,7 +38,8 @@ P3 已声明的 C/Bionic 准入现已通过普通 NDK 链接的 C 夹具，包�
 完整 N1/JNI 及 APK 原生库加载仍属于 P4/G3。
 独立的真实 JVM `jni-probe.exe` 已通过 T09 双向 JNI 调用，包含显式注册的静态 PE 入口、
 引用/异常、嵌套回调及 worker 附着。独立 JNI_OnLoad 和 short/long/Unicode 导出绑定也已通过；
-APK 加载调用点集成及其 Activity/G3 验收仍未完成。
+首批 APK 调用点集成通过 hello-jni 真实 Activity 返回值、重复 System/Runtime 加载、
+仅一次 hook、后加载类绑定及加载边界拒绝。完整 Activity/G3 矩阵仍未完成。
 优先推进后端，暂缓前端集成。
 
 ## 上游版本

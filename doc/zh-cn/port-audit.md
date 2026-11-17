@@ -123,9 +123,9 @@ Mac.apk 后重新执行下面的搜索并更新各表。
 | `NativeCocoa` 的窗口、呈现、输入（57 个 native 中的 29 个） | 在 `window.cpp` 中绑定（ADR-0002）：`init`、`runLoop`、尺寸和缩放、窗口和视图、渲染器、`presentBitmap`、触摸注册、方向和宽高比上限、`setSecureContent`（`WDA_EXCLUDEFROMCAPTURE`）、任务移到后台/前台、数据和库目录、`exitProcess`。窗口状态与上游一致：最小化的窗口以 2 Hz 绘制（上游对隐藏窗口的节流），恢复窗口时调用 `ActivityHost.macapkTaskToFront`（上游取消隐藏时的钩子），记录焦点变化，按下途中失去焦点或鼠标捕获时释放捕获并发送 `ACTION_CANCEL`。文字：没有映射按键送达的字符（输入法提交、死键组合、未映射的按键）以 KEYCODE_UNKNOWN 加该字符交给 `dispatchKey`，每个 UTF-16 码元一对 DOWN/UP，即上游处理组合文字的方式。未绑定，在被调用处以 `UnsatisfiedLinkError` 失败的：AOSP 窗口策略会话（`activityWindowTransition`、`windowOverrideOrientation`、`applyWindowOrientationFor`、`setTopActivityConfigChanges`）、URL 和 scheme 处理、IOSurface 环（`presentFrame`）、GL surface 和覆盖层、`hostFontFile`、`setSystemFontsDir`、`setSystemProperty`、翻译覆盖层、触控板和退出手势调试 |
 | `NativeSqlite`（26 个 native） | 已绑定：就是上游的 `native_sqlite.cpp`，编入 `winapk-bridge.dll`，链接 SQLite 3.54.1，带有每个 Android 连接都有的 Unicode `upper`/`lower`/`LIKE` 和 LOCALIZED、UNICODE、PHONEBOOK 排序规则。保留的上游特性：它按 modified UTF-8 转换字符串，所以 SQL 文本或列中 BMP 之外的字符与设备上不同（macOS 亦然） |
 | Boot 会用到的其他宿主 native（`NativeOs.setenv`、`GamepadBridge`、Monet 壁纸） | 未绑定；Boot 逐一记录日志并继续 |
-| `AppClassLoader.findLibrary` 退回 stub | guest native 关闭时改为 `GUEST_NATIVE_DISABLED`（G1.5） |
+| `AppClassLoader.findLibrary` 退回 stub | off 返回 `GUEST_NATIVE_DISABLED`；restricted 拒绝未经重定向的 JVM 加载。仅客体 DEX 调用重定向至 `GuestNativeLoader`；宿主/JDK 调用及 macOS 原有重定向目标不变 |
 | `ClassFileRewriter` 把 `/proc/meminfo` 别名为 `/tmp/mcmeminf` | Windows 上没有这个文件夹：读取 `/proc/meminfo` 的应用什么也得不到（`Boot` 会记录）；需要同样长度的 Windows 路径或另一种重定向 |
-| 应用自己调用的 `System.load(absolutePath)` | 会到达 JVM，JVM 会把 ELF 交给 `LoadLibrary`；必须转到客体加载器（P4）——未完成 |
+| 应用自己调用的 `System.load(absolutePath)` | Windows DEX 将其（以及 Runtime.load、System/Runtime.loadLibrary 和 mapLibraryName）重定向到进程私有客体命名空间；准入 APK 目录以外的绝对路径失败。AppClassLoader 为既有/后加载类提供 JNI 导出绑定；Windows 跳过 macOS facade 创建 |
 | `dir_naming.h`（`8b45e48` 新增：从应用文件夹名中去掉版本号里的点） | 不需要：`winapk run` 只用包名命名该文件夹 |
 
 ## 客体 ELF 加载器（P2）

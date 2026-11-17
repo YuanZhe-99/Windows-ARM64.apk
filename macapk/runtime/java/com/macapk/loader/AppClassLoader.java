@@ -724,9 +724,15 @@ public final class AppClassLoader extends dalvik.system.PathClassLoader {
         return false;
     }
 
+    /** Defines an app class and offers it for optional Windows guest native export binding. */
     @Override
     protected Class<?> findClass(String name)
             throws ClassNotFoundException {
+        return GuestNativeLoader.defined(findAppClass(name));
+    }
+
+    /** Defines an app class through the upstream pipeline before optional Windows export binding. */
+    private Class<?> findAppClass(String name) throws ClassNotFoundException {
         // First slash->dot normalization (engines like axmol pass JNI
         // form). Compute both spellings up front so the bytecode-
         // rewriter pass below sees a consistent class name.
@@ -881,7 +887,7 @@ public final class AppClassLoader extends dalvik.system.PathClassLoader {
         Class<?> defined = defineClass(binaryName, r.bytes, 0, r.bytes.length);
         maybePopulateRClassFields(defined, binaryName);
         wirePairipRegistry(defined, r.bytes, binaryName);
-        return defined;
+        return GuestNativeLoader.defined(defined);
     }
 
     // Pure pass-through, matching java.lang.ClassLoader's own shape
@@ -1281,6 +1287,8 @@ public final class AppClassLoader extends dalvik.system.PathClassLoader {
             throw new UnsatisfiedLinkError("GUEST_NATIVE_DISABLED: lib" + libname
                 + ".so is Android native code, and running it is off (Windows-ARM64.apk --native=off)");
         }
+        if (GuestNativeLoader.restricted())
+            throw new UnsatisfiedLinkError("GUEST_ABI_UNSUPPORTED: unredirected JVM library load");
         // v1.0.152: on the first findLibrary call, pre-translate every
         // other .so in the APK's lib/<abi>/ dir so downstream dlopen()
         // calls from within native code can find them. Unity's libmain.so
@@ -1525,6 +1533,7 @@ public final class AppClassLoader extends dalvik.system.PathClassLoader {
      * bootstrap set loadable so libsuperpack-jni can run at all.
      */
     public void prepareDirectDlopenLibs(File soDir) {
+        if (System.getProperty("winapk.guestNative") != null) return; // Windows never makes Mach-O facades.
         if (soDir == null || !soDir.isDirectory()) return;
         if (translatorBin == null || !translatorBin.canExecute()) return;
         File[] sos = soDir.listFiles(
@@ -1647,6 +1656,7 @@ public final class AppClassLoader extends dalvik.system.PathClassLoader {
     }
 
     public void prepareDirectDlopenSuperpack(File soDir) {
+        if (System.getProperty("winapk.guestNative") != null) return; // App-generated images are not admitted.
         if (soDir == null || !soDir.isDirectory()) return;
         if (translatorBin == null || !translatorBin.canExecute()) return;
         // Self-gating: only a SoLoader app that has run its superpack extraction
@@ -1919,6 +1929,8 @@ public final class AppClassLoader extends dalvik.system.PathClassLoader {
      *  other path loads as it always did. Throws UnsatisfiedLinkError as
      *  System.load does. */
     public void macapkLoadNative(String path) {
+        if (System.getProperty("winapk.guestNative") != null)
+            throw new UnsatisfiedLinkError("GUEST_ABI_UNSUPPORTED: use the Windows guest loading path");
         if (path == null) throw new NullPointerException("path");
         File f = new File(path);
         String n = f.getName();

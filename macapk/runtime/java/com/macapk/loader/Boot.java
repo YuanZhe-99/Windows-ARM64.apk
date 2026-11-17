@@ -781,6 +781,8 @@ public final class Boot {
      *  non-null, as before (the pre-1588 apktool-tree fallback was deleted
      *  at v1.0.1590). */
     private static File resolveNativeLibraryDir(String apkPath, String appDir) {
+        if (GuestNativeLoader.restricted())
+            return new File(System.getProperty("winapk.guestLibraryDir"));
         File installed = InstalledSplits.nativeLibDir(apkPath);
         if (installed != null) return installed;
         return new File(appDir, "lib_native");

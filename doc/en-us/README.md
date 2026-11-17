@@ -44,7 +44,9 @@ system libraries, versions and real CRT lifecycle callbacks. Full N1/JNI and APK
 remain P4/G3 work. The separate real-JVM `jni-probe.exe` passes T09's JNI calls in both directions,
 including explicitly registered static PE entries, references/exceptions, nested callbacks and
 worker attachment. Standalone JNI_OnLoad and short/long/Unicode export binding also pass;
-APK loading call-site integration and its Activity/G3 acceptance remain unfinished.
+The initial APK call-site integration passes hello-jni's real Activity value, repeated
+System/Runtime loads, once-only hook, late-class binding and loading-boundary refusals.
+The complete Activity/G3 matrix remains unfinished.
 Front-end integration is deferred while the backend progresses.
 
 ## Upstream versions

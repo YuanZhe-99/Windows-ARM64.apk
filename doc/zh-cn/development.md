@@ -41,11 +41,13 @@ go run ./tools/checkdocs           # doc/en-us and doc/zh-cn mirror each other
 .\scripts\windows\test.ps1 -Suite Format
 .\scripts\windows\test.ps1 -Suite Libraries
 .\scripts\windows\test.ps1 -Suite Jni
+.\scripts\windows\test.ps1 -Suite ApkJni
 .\build\windows-arm64\bin\native-probe.exe suite .\tests\fixtures\elf\libn0abi.so
 .\build\windows-arm64\bin\native-probe.exe sync .\tests\fixtures\elf\libsync.so
 .\build\windows-arm64\bin\winapk.exe doctor --json
 .\build\windows-arm64\bin\winapk.exe inspect .\tests\fixtures\hello-java.apk --json
 .\build\windows-arm64\bin\winapk.exe run .\tests\fixtures\hello-java.apk --native=off
+.\build\windows-arm64\bin\winapk.exe run .\tests\fixtures\hello-jni.apk --native=restricted
 .\build\windows-arm64\bin\winapk.exe dex .\tests\fixtures\hello-java.apk .\build\classes.jar
 ```
 
@@ -125,6 +127,8 @@ JNI 辅助库和核心夹具使用 `-O2 -nostdlib -fno-builtin -fno-stack-protec
 核心夹具另用 `-femulated-tls` 测试已声明的 TLS model。独立库家族使用普通 NDK API-30
 共享库链接、CRT 及 libc/libdl 依赖，不带这些特殊参数。只证明这些配方，不证明任意 NDK APK 加载。
 独立的 `native-probe` 仍不含 JVM。
+APK JNI 夹具也按 manifest 的 API 30 基线普通链接。原生 APK 夹具编译现在从 manifest 读取 API，
+不再对全部夹具固定假设 API 24。
 日志及 JVM 错误文件保存在被忽略的 `test-data/logs/T09-*` 和 `hs_err_pid*.log`。
 native 组注册六个固定签名方法，拒绝数据地址、非 native Java 方法、超额槽位保留及其他类加载器。
 随后 JVM 直接调用 PE 适配入口，不使用宿主控制的客体测试入口。销毁检查真实注销。
@@ -133,6 +137,13 @@ native 组注册六个固定签名方法，拒绝数据地址、非 native Java 
 JVM 专属 `1bad` 声明即使有匹配导出也保持未解析，符合 JNI 歧义转义规则。
 拒绝错误版本、pending exception、数据型 hook 及重复失败加载。
 独立终止 hook 用例证明无效版本 hook 不能留下可用的 native 绑定。
+
+`-Suite ApkJni` 是首批产品路径增量，不是完整 G3 矩阵：两个 Activity 启动（off/restricted）
+加一个 ZIP 路径穿越拒绝，共六项检查。Activity 断言真实 native 结果 43、显式注册、
+跨 System/Runtime load/loadLibrary 的仅一次 hook、Android 命名、加载后才定义的类、
+缺失库及准入目录以外的路径。两次启动均启用 CheckJNI，必须正常关闭。
+畸形条目在 DEX 转换或 boot 之前拒绝。夹具源码/构建参数及哈希仍记录于 `hello-jni.json`；
+不增加大范围应用扫描或重复压力循环。
 
 `winapk run` 把每个应用的数据放在 `%LOCALAPPDATA%\Windows-ARM64.apk\Apps` 下（`--data-dir` 可改）：`android\`
 是应用看到的 Android 根目录（`data\data\<package>`、`sdcard`），`code\<package>\` 是转换后的代码及缓存戳，

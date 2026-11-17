@@ -275,9 +275,11 @@ function Build-Fixtures {
         $libs = @()
         if (Test-Path $jni) {
             $clang = Find-AndroidNdk
+            [xml]$manifest = Get-Content (Join-Path $dir.FullName 'AndroidManifest.xml') -Raw
+            $api = $manifest.manifest.'uses-sdk'.GetAttribute('minSdkVersion', 'http://schemas.android.com/apk/res/android')
             foreach ($c in Get-ChildItem $jni -Filter *.c) {
                 $so = Join-Path $work "lib$($c.BaseName).so"
-                Invoke-Checked $clang @('--target=aarch64-linux-android24', '-shared', '-fPIC', '-O2', '-Wl,-z,max-page-size=16384', '-o', $so, $c.FullName)
+                Invoke-Checked $clang @("--target=aarch64-linux-android$api", '-shared', '-fPIC', '-O2', '-Wl,-z,max-page-size=16384', '-o', $so, $c.FullName)
                 # PLAN.md §7: every built ELF is checked to be ELF64 for AArch64 (e_machine 183).
                 $b = [IO.File]::ReadAllBytes($so)
                 if (-not ($b[0] -eq 0x7F -and $b[1] -eq 0x45 -and $b[4] -eq 2 -and [BitConverter]::ToUInt16($b, 18) -eq 183)) { throw "$so is not an ELF64 AArch64 library" }
@@ -311,7 +313,7 @@ function Build-Fixtures {
         }
         if ($libs) {
             $info.ndk = $lock.guest.androidNdk.version
-            $info.clang = '--target=aarch64-linux-android24 -shared -fPIC -O2 -Wl,-z,max-page-size=16384'
+            $info.clang = "--target=aarch64-linux-android$api -shared -fPIC -O2 -Wl,-z,max-page-size=16384"
             $info.libs = [ordered]@{}
             foreach ($so in $libs) { $info.libs["lib/arm64-v8a/$([IO.Path]::GetFileName($so))"] = (Get-FileHash $so -Algorithm SHA256).Hash.ToLower() }
         }

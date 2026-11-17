@@ -61,6 +61,7 @@ extern "C" __declspec(dllexport) jboolean winapk_bridge_register(JNIEnv* env) {
     using namespace winapk::bridge;
     bool ok = RegisterLog(env);
     ok = RegisterWindow(env) && ok;
+    ok = RegisterGuest(env) && ok;
     macapk::sqlite::RegisterNativeSqliteMethods(env);  // logs its own result, as upstream
     return ok ? JNI_TRUE : JNI_FALSE;
 }

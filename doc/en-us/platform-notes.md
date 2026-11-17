@@ -2,7 +2,7 @@
 
 | Platform | Status |
 |---|---|
-| Windows 11 ARM64 | G0 passes; G1's checks pass on this PC (T02, T03): `winapk run` runs a pure-Java APK's real DEX in a Win32 window with touch, keys and typed Unicode text, scrolling, resizing, minimising and restoring, Back, saved state and SQLite, from Unicode paths; the Kotlin fixture T04 runs too. G2 passes as well: `native-probe.exe` loads N0 guest ELF libraries, runs the ABI suite T05 on them and refuses the malformed and out-of-profile ones (T06); `winapk run` does not load an APK's libraries yet. The interface still runs against sample data (`winapk.Mock`). |
+| Windows 11 ARM64 | G0–G2 pass on this PC: Java/Kotlin APKs, input/lifecycle/storage/SQLite and standalone N0 ELF/ABI checks. The initial explicit `--native=restricted` APK path passes hello-jni's Activity value and loading-boundary checks; full G3 remains NOT_RUN. The interface still uses sample data (`winapk.Mock`). |
 | Windows 11 x64 | Not a target; may host build tools and parsing tests only. |
 | macOS (Apple Silicon) | Upstream Mac.apk's platform; imported as `macapk/`, now at `3f35611`; no macOS build or smoke run here yet (`NOT_RUN`). |
 
@@ -50,7 +50,7 @@ Verified on Windows 11 ARM64 (2026-11-16): build 26300.9974, Snapdragon Compute 
 | G1.6 Kotlin fixture | PASS | T04 (`hello-kotlin`, kotlin-stdlib 2.4.0): `result=top=the:3,brown:1,dog:1 squares=140 copy=Count(word=fox, n=2)`, `onResume`, exit 0. This fixture only: no claim for other Kotlin or Compose apps |
 | SQLite (T03) | PASS | `upper('café 中文')` is `CAFÉ 中文`, `LIKE 'CAFÉ%'` matches, `COLLATE LOCALIZED` orders `apple|Banana|café 中文`; a query of a missing table throws `SQLiteException` |
 | T02 presenter | PASS | the Android view is the client area (400×800 px); the client pixel equals the theme's `windowBackground` #EFEDF1 |
-| Negative cases | PASS | a file that is not an APK: exit 65, `INSTALL_FAILED_INVALID_APK`; `--native=restricted`: exit 64, `GUEST_NATIVE_NOT_IMPLEMENTED`; a normal run logs no `UI_THREAD_BLOCKED` |
+| Negative cases | PASS | a file that is not an APK: exit 65, `INSTALL_FAILED_INVALID_APK`; an unknown native mode: exit 64, `GUEST_ABI_UNSUPPORTED`; a normal run logs no `UI_THREAD_BLOCKED` |
 
 ## G2 checks
 
@@ -138,7 +138,7 @@ machine (one run, not a performance guarantee). This is not G3.
 | Explicit JNI library lifecycle | PASS | normal NDK CRT/libc/libdl links; dependency/root/hook trace `2 1 3`, repeated root load unchanged, root without a hook appends only constructor `1` and never calls dependency hook `9`; bad version and pending IllegalStateException return failure once, retries do not rerun; data-valued JNI_OnLoad refused; a method registered during the bad-version hook works inside that hook but terminates explicitly if invoked after its failure |
 | JNI export lookup | PASS | short name wins over a conflicting long name; int/long overloads, array/object descriptors, underscore/Chinese UTF-16 escaping and a DT_NEEDED dependency export return exact values through the JVM; explicit registration wins; repeated binding allocates no duplicate entries; JVM-only `1bad` throws UnsatisfiedLinkError despite a matching export |
 | Fault and misuse boundary | PASS | unsupported slot 217 and cross-thread JNIEnv: exit 3 with explicit category; guest trap/access violation: registered module/offset and exit 3; hot Java null-pointer/division exceptions remain JVM-owned and complete normally; x18/sp checked read-only on main/workers |
-| APK call-site integration | NOT_RUN | DEX/ClassLoader System.loadLibrary/load redirection, APK extraction and Activity/G3 acceptance not integrated; winapk run native admission remains off |
+| Initial APK call-site integration | PASS | `ApkJni` six checks: off/restricted launches with CheckJNI, real Activity value 43, explicit registration and once-only hook across System/Runtime loads, late-defined class export, missing/outside-directory refusal and pre-DEX ZIP traversal refusal; both launches exit 0. Full Activity/G3 matrix remains unfinished |
 
 The regression also passes requirements, Host 23, Native 58, Bionic 104 and Java 43;
 Go formatting/vet/tests (including CGO-disabled), MyGo vet/i18n and docs mirror pass.
@@ -151,6 +151,11 @@ save/restore records; this is not a guest-unwinding or CFG-enabled test.
 The explicit-load increment's complete requirements/build All and Host 23, Java 43, Native 58,
 Bionic 104, Jni 24 regression is in `P4-load-*.log`. Its six library variants use normal NDK
 shared-library links, not the core probe's `-nostdlib`/emulated-TLS flags; no arbitrary APK claim.
+The initial APK increment's requirements/build All and full regression are in `P4-apk-*.log`:
+Host 23, Java 43, Native 58, Bionic 104, Jni 24 and ApkJni 6 PASS. ApkJni took 4.77 s and Jni
+0.96 s (single measurements). The APK fixture uses ordinary NDK API 30; the earlier API-24
+compact RX metadata layout was refused rather than exempted from executable-byte scanning.
+No new gate/layer completion or release follows; G3 and complete layer B remain NOT_RUN.
 The first mixed trap experiment failed: the JVM exited 1 before the tail guest handler ran.
 The repair installs a strictly guest-PC-scoped first handler, never replaces HotSpot's handlers
 and leaves every non-guest PC in its original chain. The retained T09 cases guard that boundary.
@@ -164,7 +169,7 @@ No new gate, version bump or plan deviation; CFG-enabled and macOS runs remain N
   `runtime/platform/windows` and `runtime/guest`. What of `NativeCocoa` and the other host natives Windows implements,
   and what stays unbound, is in [port-audit.md](port-audit.md).
 - The interface does not launch `winapk run` yet; it still uses `winapk.Mock`.
-- Guest native: profile N0, separate P3 T07/T08 subsets in `native-probe.exe`, and P4 JNI foundation in `jni-probe.exe`; `winapk run` loads no APK library (P4). The guest-PC fault boundary diagnoses recognized guest execution faults, not host imports, JIT/JVM faults, out-of-range branch targets or stack overflow. T09 covers the stated mixed-JVM boundary, not arbitrary JVM/guest failures. Built with `winapk.exe`'s flags, Control Flow Guard off; a CFG build is NOT_RUN ([abi-compatibility.md](abi-compatibility.md)).
+- Guest native: standalone N0/P3 and P4 T09 probes plus the first restricted APK Activity increment. Full G3/N1 remains unfinished. The guest-PC boundary diagnoses recognized guest faults, not host imports, JIT/JVM faults, out-of-range branches or stack overflow. T09 proves the stated mixed-JVM cases only. Control Flow Guard is off; a CFG build is NOT_RUN ([abi-compatibility.md](abi-compatibility.md)).
 - This PC has no vendor Vulkan driver: Vulkan is Mesa Dozen on Direct3D 12 ([decisions.md](decisions.md)).
 - macOS build and smoke after the `CMakeLists.txt`, `AppClassLoader` and `native_sqlite.cpp` changes: NOT_RUN (no Mac here); the branch returns only under `WIN32`, the Java check is inert unless `winapk.guestNative` is set, and the CoreFoundation helpers are unchanged outside `_WIN32`.
 - DPI: the app's density is fixed when it starts. Moving its window to a display of another scale, or changing the scale while it runs, resizes the window to keep its size in points (`WM_DPICHANGED`) but the app keeps its first density: NOT_RUN, and not yet handled as Android's configuration change.

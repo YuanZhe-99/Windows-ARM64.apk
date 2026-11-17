@@ -38,11 +38,11 @@ and hardware TLS/syscall/register access remain refused. Each probe has a
 60-second deadline. Build first: build.ps1 -Component NativeProbe.
 
 .PARAMETER Suite
-Host, Java, Native, Bionic, Jni, or a targeted Bionic subset.
+Host, Java, Native, Bionic, Jni, ApkJni, or a targeted Bionic subset.
 #>
 [CmdletBinding()]
 param(
-    [ValidateSet('Host', 'Java', 'Native', 'Bionic', 'Modules', 'Memory', 'Io', 'Faults', 'Format', 'Libraries', 'Jni')]
+    [ValidateSet('Host', 'Java', 'Native', 'Bionic', 'Modules', 'Memory', 'Io', 'Faults', 'Format', 'Libraries', 'Jni', 'ApkJni')]
     [string]$Suite = 'Host'
 )
 Set-StrictMode -Version Latest
@@ -179,8 +179,8 @@ public static class WinApkTestWin {
 "@
 
 <# Starts winapk run on an APK at $script:appSize (points) with its log in $Log; returns the process. #>
-function Start-App([string]$Apk, [string]$Data, [string]$Log) {
-    Start-Process -FilePath $winapk -ArgumentList @('run', "`"$Apk`"", '--data-dir', "`"$Data`"", '--size', $script:appSize) `
+function Start-App([string]$Apk, [string]$Data, [string]$Log, [string]$Native = 'off') {
+    Start-Process -FilePath $winapk -ArgumentList @('run', "`"$Apk`"", '--data-dir', "`"$Data`"", '--size', $script:appSize, "--native=$Native") `
         -RedirectStandardError $Log -RedirectStandardOutput "$Log.out" -PassThru -NoNewWindow
 }
 
@@ -439,9 +439,9 @@ function Test-Java {
     & $winapk run (Join-Path $repo 'README.md') --data-dir $data 2> (Join-Path $logs 'neg-not-apk.log')
     $neg = Get-Content (Join-Path $logs 'neg-not-apk.log') -Raw
     Check 'T03.neg.not-apk' ($LASTEXITCODE -eq 65 -and $neg -match 'INSTALL_FAILED_INVALID_APK') "exit $LASTEXITCODE"
-    & $winapk run $apk --native=restricted --data-dir $data 2> (Join-Path $logs 'neg-native.log')
+    & $winapk run $apk --native=unknown --data-dir $data 2> (Join-Path $logs 'neg-native.log')
     $neg = Get-Content (Join-Path $logs 'neg-native.log') -Raw
-    Check 'T03.neg.native-mode' ($LASTEXITCODE -eq 64 -and $neg -match 'GUEST_NATIVE_NOT_IMPLEMENTED') "exit $LASTEXITCODE"
+    Check 'T03.neg.native-mode' ($LASTEXITCODE -eq 64 -and $neg -match 'GUEST_ABI_UNSUPPORTED') "exit $LASTEXITCODE"
 
     # G1.5: guest native off, an APK library load fails clearly (never a stub, never LoadLibrary).
     $jniApk = Join-Path $repo 'tests\fixtures\hello-jni.apk'
@@ -746,7 +746,50 @@ function Test-Jni {
     }
 }
 
-switch ($Suite) { 'Host' { Test-Host } 'Java' { Test-Java } 'Native' { Test-Native } 'Bionic' { Test-Bionic } 'Modules' { Test-Modules } 'Memory' { Test-Bionic -Command memory } 'Io' { Test-Bionic -Command io } 'Faults' { Test-Bionic -Command faults } 'Format' { Test-Bionic -Command format } 'Libraries' { Test-Libraries } 'Jni' { Test-Jni } }
+<# Checks the actual APK loading path and Activity values; this small increment is not full G3. #>
+function Test-ApkJni {
+    $script:appSize = '360x720'
+    $logs = Join-Path $out 'test-data\logs'
+    New-Item -ItemType Directory -Force $logs | Out-Null
+    $data = Join-Path $out 'test-data\apk-jni'
+    $apk = Join-Path $repo 'tests\fixtures\hello-jni.apk'
+    $record = Get-Content (Join-Path $repo 'tests\fixtures\hello-jni.json') -Raw | ConvertFrom-Json
+    Check 'T09.apk.hash' ($record.apkSha256 -eq (Get-FileHash $apk -Algorithm SHA256).Hash.ToLower()) 'APK source/build record'
+    foreach ($mode in 'off', 'restricted') {
+        $log = Join-Path $logs "T09-apk-$mode.log"
+        $oldOptions = $env:JAVA_TOOL_OPTIONS
+        try {
+            $env:JAVA_TOOL_OPTIONS = "$oldOptions -Xcheck:jni"
+            $p = Start-App $apk $data $log $mode
+        } finally { $env:JAVA_TOOL_OPTIONS = $oldOptions }
+        $h = Find-AppWindow $p.Id 'Hello JNI' 15
+        $result = Wait-Log $log 'JNI: native\.(value|error)=(.*)' 10
+        $ok = $result -and $(if ($mode -eq 'off') {
+            $result.Groups[1].Value -eq 'error' -and $result.Groups[2].Value.StartsWith('GUEST_NATIVE_DISABLED:')
+        } else { $result.Groups[1].Value -eq 'value' -and $result.Groups[2].Value.Trim() -eq '43 checks=PASS' })
+        $ok = $ok -and (Read-Log $log) -notmatch 'WARNING in native method|FATAL ERROR in native method'
+        Check "T09.apk.$mode" $ok "$(if ($result) { $result.Value })"
+        if ($h -ne [IntPtr]::Zero) { $code = Close-App $h $p }
+        else { if (-not $p.HasExited) { $p.Kill() }; $code = $null }
+        Check "T09.apk.$mode.exit" ($code -eq 0) "exit $code"
+    }
+    # Mutate only one APK ZIP entry: reject traversal before DEX conversion or any guest execution.
+    $bad = Join-Path $data 'unsafe-library.apk'
+    Copy-Item $apk $bad -Force
+    Add-Type -AssemblyName System.IO.Compression, System.IO.Compression.FileSystem
+    $zip = [IO.Compression.ZipFile]::Open($bad, 'Update')
+    try {
+        $entry = $zip.CreateEntry('lib/arm64-v8a/../escape.so')
+        $stream = $entry.Open()
+        try { $stream.WriteByte(0) } finally { $stream.Dispose() }
+    } finally { $zip.Dispose() }
+    $log = Join-Path $logs 'T09-apk-unsafe.log'
+    & $winapk run $bad --native=restricted --data-dir $data 2> $log
+    $text = Get-Content $log -Raw
+    Check 'T09.apk.unsafe-entry' ($LASTEXITCODE -eq 65 -and $text -match 'GUEST_ABI_UNSUPPORTED: portable ARM64' -and $text -notmatch 'stage boot|converting DEX') "exit $LASTEXITCODE; no DEX or guest execution"
+}
+
+switch ($Suite) { 'Host' { Test-Host } 'Java' { Test-Java } 'Native' { Test-Native } 'Bionic' { Test-Bionic } 'Modules' { Test-Modules } 'Memory' { Test-Bionic -Command memory } 'Io' { Test-Bionic -Command io } 'Faults' { Test-Bionic -Command faults } 'Format' { Test-Bionic -Command format } 'Libraries' { Test-Libraries } 'Jni' { Test-Jni } 'ApkJni' { Test-ApkJni } }
 if ($script:failed -gt 0) { Write-Host "$script:failed check(s) failed"; exit 1 }
 Write-Host 'all checks passed'
 exit 0

@@ -31,6 +31,9 @@ bool RegisterLog(JNIEnv* env);
 /// Registers NativeCocoa's window, presentation and input natives (window.cpp).
 bool RegisterWindow(JNIEnv* env);
 
+/// Registers the host-controlled Windows guest ELF/JNI loading service (guest.cpp).
+bool RegisterGuest(JNIEnv* env);
+
 }  // namespace winapk::bridge
 
 /// Registers every Windows host native on the JVM `env` belongs to: NativeLog, NativeCocoa

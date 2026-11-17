@@ -341,6 +341,12 @@ T09 增为 14 项；数据入口、非 native 方法、槽位超额及其他 Cla
 T09 共 24 项（同进程新增两个语义组及一个必要的失败 hook 入口终止进程），普通 NDK 链接库家族也已覆盖。
 完整回归 requirements/build All、Host 23、Java 43、Native 58、Bionic 104、Jni 24 通过；
 剩余为 DEX/ClassLoader 调用点、APK 库提取/CLI restricted 及 hello-jni Activity 的完整 G3。
+后续首批产品路径增量已接通 GuestNativeLoader、受控 APK ARM64 库提取与 CLI restricted（默认仍关闭）。
+ApkJni 六项、两个 Activity 进程及一个 ZIP 拒绝共 4.77 秒：真实返回值 43、显式注册/导出、
+System/Runtime load/loadLibrary/Android 命名、仅一次 hook、后定义类及缺失/目录外/条目越界拒绝均通过。
+两次启动启用 CheckJNI；完整 requirements/build All、Host 23、Java 43、Native 58、Bionic 104、
+Jni 24、ApkJni 6 通过。APK 夹具使用普通 NDK API-30 链接；API-24 紧凑 RX 元数据布局仍被保守扫描拒绝。
+完整 G3 仍需把双向值/异常、依赖/错误版本及 worker/嵌套回调放进 APK Activity 验收，不以独立 T09 代替。
 
 ### 11.1 不能省略的加载适配
 

@@ -48,11 +48,13 @@ The runtime's commands are in the next section.
 .\scripts\windows\test.ps1 -Suite Format
 .\scripts\windows\test.ps1 -Suite Libraries
 .\scripts\windows\test.ps1 -Suite Jni
+.\scripts\windows\test.ps1 -Suite ApkJni
 .\build\windows-arm64\bin\native-probe.exe suite .\tests\fixtures\elf\libn0abi.so
 .\build\windows-arm64\bin\native-probe.exe sync .\tests\fixtures\elf\libsync.so
 .\build\windows-arm64\bin\winapk.exe doctor --json
 .\build\windows-arm64\bin\winapk.exe inspect .\tests\fixtures\hello-java.apk --json
 .\build\windows-arm64\bin\winapk.exe run .\tests\fixtures\hello-java.apk --native=off
+.\build\windows-arm64\bin\winapk.exe run .\tests\fixtures\hello-jni.apk --native=restricted
 .\build\windows-arm64\bin\winapk.exe dex .\tests\fixtures\hello-java.apk .\build\classes.jar
 ```
 
@@ -151,6 +153,8 @@ The JNI helper and core fixture use `-O2 -nostdlib -fno-builtin -fno-stack-prote
 the core fixture also uses `-femulated-tls` to test the declared TLS model. The separate
 library family uses normal NDK API-30 shared-library links, CRT and libc/libdl dependencies
 without those special flags. This proves those recipes, not arbitrary NDK APK loading.
+The APK JNI fixture also links normally at its manifest's API 30 baseline. Native APK fixture
+compilation now takes its API from the manifest rather than assuming API 24 for all fixtures.
 The separate `native-probe` remains
 JVM-free. Logs and JVM error files stay under ignored `test-data/logs/T09-*` and `hs_err_pid*.log`.
 The native group registers six fixed-signature methods and rejects a data address, a non-native
@@ -163,6 +167,14 @@ and explicit-registration precedence. A JVM-only `1bad` declaration remains unre
 a matching export, as required by JNI's ambiguous-escape rule.
 Wrong versions, pending exceptions, data-valued hooks and repeated failed loads are refused.
 The separate fatal hook case proves that an invalid-version hook cannot leave a usable native binding.
+
+`-Suite ApkJni` is the initial product-path increment, not the complete G3 matrix: two Activity
+launches (off/restricted) plus one ZIP traversal refusal, six checks total. The Activity asserts
+the actual native result 43, explicit registration, once-only hook across System/Runtime
+load/loadLibrary, Android naming, a class defined after loading, a missing library and a path
+outside the admitted directory. Both launches run with CheckJNI and must close normally.
+The malformed entry is refused before DEX conversion or boot. Fixture source/build parameters
+and hashes remain in `hello-jni.json`; no broad app sweep or duplicate pressure loop is added.
 
 `winapk run` keeps each app's data under `%LOCALAPPDATA%\Windows-ARM64.apk\Apps` (`--data-dir`
 moves it): `android\` is the Android root the app sees (`data\data\<package>`, `sdcard`),

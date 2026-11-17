@@ -2,12 +2,12 @@ package com.macapk.dex;
 
 /**
  * The converter's one table of app call sites that can be redirected to a
- * host-supplied class. Both families are OPT-IN and OFF by default.
+ * host-supplied class. These families are OPT-IN and OFF by default.
  *
  * A re-point swaps the method reference of an invoke for a static on the
  * configured class, with the receiver (if any) prepended to the descriptor. The
  * operand stack the DEX proto describes is untouched, so frames, registers and
- * the move-result that follows are unaffected. Two families live here:
+ * the move-result that follows are unaffected. Three families live here:
  *
  * 1. sun.misc.Unsafe accessors -> Options.unsafeRedirect, same name, receiver
  *    prepended (see {@link UnsafeRepoint} for the table and for why code that
@@ -34,6 +34,10 @@ package com.macapk.dex;
  *      System.mapLibraryName(String) [invoke-static]  -> mapLibraryName(String)String
  *      System.load(String)           [invoke-static]  -> load(String)V
  *      Runtime.load(String)          [invoke-virtual] -> runtimeLoad(Runtime,String)V
+ *      System.loadLibrary(String)    [invoke-static]  -> loadLibrary(String)V
+ *      Runtime.loadLibrary(String)   [invoke-virtual] -> runtimeLoadLibrary(Runtime,String)V
+ *    The loadLibrary routes apply only to the Windows GuestNativeLoader target;
+ *    existing macOS/custom redirect targets retain their original three-call contract.
  *    WHY. On a device mapLibraryName answers "lib" + name + ".so" and load()
  *    takes the path of such a file. A library loader that bypasses
  *    System.loadLibrary (Facebook's SoLoader is the common one) asks
@@ -41,7 +45,7 @@ package com.macapk.dex;
  *    (including ones it fills itself by unpacking an archive at run time) and
  *    calls load() with the path it found. A host JVM answers mapLibraryName in
  *    its own platform's naming, so the lookup misses the very files the app just
- *    wrote. Routing the three calls to the host lets it answer with Android's
+ *    wrote. Routing these calls to the host lets it answer with Android's
  *    name and handle load() of such a file itself.
  *
  * Only the input dex is ever routed: the converter never sees framework or
@@ -74,8 +78,12 @@ public final class GuestRepoint {
             }
             String nativeTarget = Options.nativeLoadRedirect;
             if (nativeTarget != null && "java/lang/Runtime".equals(owner)
-                    && "load".equals(name) && "(Ljava/lang/String;)V".equals(desc))
-                return new Target(nativeTarget, "runtimeLoad", "(Ljava/lang/Runtime;Ljava/lang/String;)V");
+                    && "(Ljava/lang/String;)V".equals(desc)) {
+                if ("load".equals(name))
+                    return new Target(nativeTarget, "runtimeLoad", "(Ljava/lang/Runtime;Ljava/lang/String;)V");
+                if ("loadLibrary".equals(name) && "com/macapk/loader/GuestNativeLoader".equals(nativeTarget))
+                    return new Target(nativeTarget, "runtimeLoadLibrary", "(Ljava/lang/Runtime;Ljava/lang/String;)V");
+            }
             if (exitTarget == null) return null;
             if ("java/lang/Runtime".equals(owner) && "(I)V".equals(desc)) {
                 if ("exit".equals(name)) return new Target(exitTarget, "runtimeExit", "(Ljava/lang/Runtime;I)V");
@@ -89,6 +97,9 @@ public final class GuestRepoint {
                 return new Target(nativeLoad, "mapLibraryName", desc);
             if ("load".equals(name) && "(Ljava/lang/String;)V".equals(desc))
                 return new Target(nativeLoad, "load", desc);
+            if ("loadLibrary".equals(name) && "(Ljava/lang/String;)V".equals(desc)
+                    && "com/macapk/loader/GuestNativeLoader".equals(nativeLoad))
+                return new Target(nativeLoad, "loadLibrary", desc);
         }
         if (isStatic && exitTarget != null) {
             if ("java/lang/System".equals(owner) && "exit".equals(name) && "(I)V".equals(desc))
