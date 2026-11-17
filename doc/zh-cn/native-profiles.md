@@ -69,8 +69,8 @@
   resolver 必须是绑定到本 shim 的未定义导入，不能是客体库内嵌的另一份 compiler-rt。
 - 调用方必须保持所有模块映射，直到上下文与回调结束。运行时销毁时仍有未 join 的 worker、从未管理线程调用有状态 shim、
   emutls 描述符损坏或编译器 TLS resolver 分配失败时，探测进程带诊断终止，绝不伪造 TLS 地址。
-  不允许异常经客体代码展开。客体故障范围处理、`pthread_exit`、detach/取消、文件/时间/日志 shim
-  和完整原生 profile 集成仍是 P3 后续工作；JNI 属于 P4。
+  不允许异常经客体代码展开。客体故障范围处理、`pthread_exit`、detach/取消、
+  格式化日志 shim 和完整原生 profile 集成仍是 P3 后续工作；JNI 属于 P4。
 
 P3 同步子集通过独立的 `native-probe sync`（T08）测试：
 
@@ -115,6 +115,32 @@ T08 检查损坏描述符与仍有未 join worker 时销毁运行时导致的终
 
 T08 内存把分配/溢出/重新分配、字节重叠/范围、字符串/UTF-8 和跨线程分配/释放合并在一个小正例夹具中；
 无效释放与重复释放使用同一源码、在独立终止探测中检查。不据此宣称支持 stdio、格式化变参或日志 API。
+
+## P3 文件与时间（T08）
+
+独立 `native-probe io` 子集由调用方传入宿主 Android 根目录；
+不改变进程工作目录，也不暴露宿主描述符。APK 集成仍属于 P4。
+
+- 客体绝对路径 `/data/...` 与 `/sdcard/...` 映射到该根目录下。拒绝相对/Windows 路径、
+  路径逃逸、保留设备名、备用数据流、损坏的 UTF-8、结尾点/空格及重解析点路径组件。
+  目录由宿主准备，open 不创建目录。宿主不得并发替换目录树。
+  这是受限路径映射，不是抗竞态隔离、安全沙箱或 POSIX 文件系统。
+- `open`/`open64` 接受只读、只写或读写，及 `O_CREAT`、`O_EXCL`、`O_TRUNC`、
+  `O_APPEND`、`O_CLOEXEC`、`O_LARGEFILE`。创建模式仅支持 `0600`；
+  不支持的模式、标志和目录/设备打开明确失败。可选整数模式仅在创建时通过固定三寄存器签名读取，绝不共享 va_list。
+- `read`、`write`、`close`、`lseek`/`lseek64`、`fstat`/`fstat64` 使用运行时所有、从 3 开始的 fd 表，
+  非继承 Windows 句柄保持私有。未实现标准流、dup、管道、套接字、目录枚举、权限或任意 Linux 文件语义。
+  操作按运行时串行；读写可能返回短计数。追加写入使用文件当前末尾，不受 seek 位置影响。
+- `fstat` 写入显式的 128 字节 Android AArch64 布局：宿主文件标识、大小、链接数、分配块数和访问/写入/更改时间；
+  常规文件模式及合成的客体所有者权限，uid/gid 为零，首选 I/O 大小 4096 字节。绝不暴露宿主 stat 对象。
+  API 错误返回 -1 及转换后的 Linux errno；成功操作保持客体 errno。
+- `clock_gettime` 支持 realtime（Unix epoch，精确 Windows 墙钟）与 monotonic
+  （精确 unbiased interrupt time，不计挂起）。Timespec 为两个有符号 64 位字段。
+  其他时钟失败；`nanosleep` 支持最多 60 秒的相对时长，向上取整至 100 ns 并等待到 monotonic 期限。
+  不投递客体信号/取消，不伪造 EINTR，成功时不改动 remainder。
+
+T08 io 合并读写/seek/stat、open/追加标志、映射/错误拒绝与时钟/sleep 检查。
+宿主侧检查确认 Unicode 映射文件，以及拒绝 junction 路径时没有截断映射根目录之外的文件。
 
 ## P3 模块事务（T07）
 
@@ -179,6 +205,7 @@ NativeProbe` 把它们构建到 `tests/fixtures/elf`（生成产物，从不提�
 | T08 `libsync.so` | `threads/sync.c`：六个 mutex/condition 用例、压力测试与宿主状态检查 | API 30、`-O2 -nostdlib`，公共选项与 T05 相同；断言 NDK 头文件布局 |
 | T08 同步负例文件 | 同一源码：缺失 `pthread_cond_timedwait`（加载时拒绝），仍持有 mutex 时销毁运行时（诊断，退出码 3） | `T08_SYNC_MISSING`、`T08_SYNC_OWNED`；完整配方/结果在 `fixtures.psd1` |
 | T08 内存 | `threads/memory.c`：分配/字节/字符串/线程共享用例、无效和重复释放 | API 30、`-O2 -nostdlib -fno-builtin`，公共选项与 T05 相同；`T08_MEMORY_INVALID`、`T08_MEMORY_DOUBLE` 以退出码 3 终止 |
+| T08 io | `threads/io.c`：映射常规文件、显式 stat/时间布局、标志/错误及有限 sleep | API 30、`-O2 -nostdlib -fno-builtin`，公共选项与 T05 相同；四项语义及宿主状态检查 |
 | T07 模块依赖图 | `modules/dependency.c`、`root.c`、`cycle.c`：正例库对、缺失导入、无效初始化入口、SONAME/依赖环种子 | API 30、`-O2 -nostdlib`，公共选项与 T05 相同；显式链接的夹具依赖及期望值在 `fixtures.psd1` |
 
 每个夹具都由 NDK 自带的 clang 和链接器构建；除其选项所表明的以外，没有哪个是可以代表普通 NDK 产物的特制构建

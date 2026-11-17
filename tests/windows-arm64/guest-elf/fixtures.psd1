@@ -1,5 +1,5 @@
 # The guest ELF fixtures (PLAN.md §9.3, §10, §16): T05's N0 ABI suite, T06's refused ELF files,
-# T07 module graphs and T08 threads/sync/memory. scripts/windows/build.ps1 -Component NativeProbe builds each
+# T07 module graphs and T08 Bionic groups. scripts/windows/build.ps1 -Component NativeProbe builds each
 # entry with the NDK of build-lock.json into tests/fixtures/elf/ (generated, never committed) and
 # records its hash in tests/fixtures/elf/fixtures.json; test.ps1 -Suite Native runs T05 with
 # native-probe suite/stress and checks T06 refusals; Suite Bionic runs T07 and T08.
@@ -12,6 +12,8 @@
 @{
     Common   = @('-shared', '-fPIC', '-fno-stack-protector', '-Wall', '-Wextra', '-Werror')
     Fixtures = @(
+        @{ Name = 'libio.so'; Id = 'T08'; Source = 'threads/io.c'; Target = 'aarch64-linux-android30'
+           Flags = @('-O2', '-nostdlib', '-fno-builtin'); Command = 'io'; Cases = 5; Result = 'T08 PASS' }
         @{ Name = 'libmemory.so'; Id = 'T08'; Source = 'threads/memory.c'; Target = 'aarch64-linux-android30'
            Flags = @('-O2', '-nostdlib', '-fno-builtin'); Command = 'memory'; Cases = 5; Result = 'T08 PASS' }
         @{ Name = 'neg-memory-invalid.so'; Id = 'T08'; Source = 'threads/memory.c'; Target = 'aarch64-linux-android30'

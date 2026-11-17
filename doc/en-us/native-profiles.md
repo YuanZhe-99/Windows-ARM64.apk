@@ -83,7 +83,7 @@ ordinary NDK output works. N0's original ABI suite and imports are unchanged.
   An unjoined worker at runtime destruction, an unmanaged stateful shim entry, a malformed emutls
   descriptor or an allocation failure in the compiler TLS resolver terminates the probe with
   a diagnostic, never a fabricated TLS address. No exception is unwound through guest code.
-  Guest fault-range handling, `pthread_exit`, detach/cancellation, file/time/log
+  Guest fault-range handling, `pthread_exit`, detach/cancellation, formatted log
   shims and full native-profile integration remain P3 work; JNI remains P4.
 
 The P3 synchronization subset is exercised separately by `native-probe sync` (T08):
@@ -143,6 +143,39 @@ T08 memory combines allocation/overflow/reallocation, byte overlap/bounds, strin
 cross-thread allocation/free checks in one small positive fixture; an invalid free and a double
 free use the same source in separate terminating probes. No stdio, formatted varargs or log API
 is implied by this subset.
+
+## P3 files and time (T08)
+
+The independent `native-probe io` subset receives a host Android root from its caller; it does
+not change the process working directory or expose host descriptors. APK integration remains P4.
+
+- Guest absolute `/data/...` and `/sdcard/...` map below that root. Relative/Windows paths,
+  traversal, reserved device names, alternate streams, malformed UTF-8, trailing dots/spaces and
+  reparse-point components are refused. Directories are prepared by the host, not created by open.
+  The host must not replace the directory tree concurrently. This restricted path mapping is not
+  race-resistant isolation, a security sandbox or a POSIX filesystem.
+- `open`/`open64` accept read-only, write-only or read/write with `O_CREAT`, `O_EXCL`, `O_TRUNC`,
+  `O_APPEND`, `O_CLOEXEC`, `O_LARGEFILE`. Creation supports mode `0600` only; unsupported modes,
+  flags and directory/device opens fail explicitly. The optional integer mode is read only for
+  creation through a fixed three-register signature, never a shared va_list.
+- `read`, `write`, `close`, `lseek`/`lseek64`, `fstat`/`fstat64` use a runtime-owned fd table
+  starting at 3, with non-inheritable Windows handles kept private. Standard streams, dup, pipes,
+  sockets, directory iteration, permissions and arbitrary Linux file semantics are not implemented.
+  Operations serialize per runtime; reads/writes may return a short count. Append writes target
+  the file's current end, independently of the seek position.
+- `fstat` writes an explicit 128-byte Android AArch64 layout: host file identity, size, link
+  count, allocation blocks and access/write/change times; regular-file mode with synthetic guest
+  owner permissions, uid/gid zero, 4096-byte preferred I/O size. It never exposes a host stat object.
+  API errors return -1 and a converted Linux errno; successful operations preserve guest errno.
+- `clock_gettime` supports realtime (Unix epoch, precise Windows wall clock) and monotonic
+  (precise unbiased interrupt time, excluding suspend). Timespec is two signed 64-bit fields.
+  Other clocks fail; `nanosleep` supports relative durations up to 60 seconds, rounding up to
+  100 ns and waiting until the monotonic deadline. No guest signals/cancellation are delivered;
+  no EINTR is synthesized, and the remainder is untouched on success.
+
+T08 io combines roundtrip/seek/stat, open/append flags, mapping/error refusals and clock/sleep
+checks. A host-side check confirms the Unicode-mapped file and that a refused junction path
+did not truncate a file outside the mapped root.
 
 ## P3 module transactions (T07)
 
@@ -217,6 +250,7 @@ and expected refusal; `build.ps1 -Component NativeProbe` builds them into `tests
 | T08 `libsync.so` | `threads/sync.c`: six mutex/condition cases, stress and host-state checks | API 30, `-O2 -nostdlib`, common flags as T05; NDK header layout assertions |
 | T08 sync negative files | same source: missing `pthread_cond_timedwait` (load refusal), owned-mutex teardown (diagnostic, exit 3) | `T08_SYNC_MISSING`, `T08_SYNC_OWNED`; exact recipes/results in `fixtures.psd1` |
 | T08 memory | `threads/memory.c`: allocation/byte/string/thread-sharing cases, invalid and double free | API 30, `-O2 -nostdlib -fno-builtin`, common flags as T05; `T08_MEMORY_INVALID`, `T08_MEMORY_DOUBLE` terminate with exit 3 |
+| T08 io | `threads/io.c`: mapped regular files, explicit stat/time layouts, flags/errors and bounded sleep | API 30, `-O2 -nostdlib -fno-builtin`, common flags as T05; four semantic cases and host-state check |
 | T07 module graph | `modules/dependency.c`, `root.c`, `cycle.c`: positive pair, missing import, invalid initializer, SONAME/cycle seed | API 30, `-O2 -nostdlib`, common flags as T05; explicit linked fixture dependencies and expected values in `fixtures.psd1` |
 
 Every fixture is built by the NDK's own clang and linker; none is a special build that would stand

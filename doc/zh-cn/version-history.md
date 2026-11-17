@@ -11,3 +11,4 @@
 - 2026-11-16：新增 P3 进程私有 mutex/condition 同步（T08 `sync`）；Go 1.27.4、MyGo v0.9.2 与 Mac.apk `3f35611` 已检查、未变；未完成新关卡或发布。
 - 2026-11-16：新增 P3 事务式模块依赖图与客体 dl API（T07）；完整 ARM64 回归通过（Host 22、Java 43、Native 58、Bionic 56）。Go 1.27.4、MyGo v0.9.2 与 Mac.apk `3f35611` 已检查、未变；G3 仍为 NOT_RUN，不发布。
 - 2026-11-16：新增 P3 私有堆分配与字节/字符串包装（T08 内存）；完整 ARM64 回归通过（Host 22、Java 43、Native 58、Bionic 67）。Go 1.27.4、MyGo v0.9.2 与 Mac.apk `3f35611` 已检查、未变；未完成新关卡或发布。
+- 2026-11-16：新增 P3 映射常规文件与时间 API（T08 io）；完整 ARM64 回归通过（Host 22、Java 43、Native 58、Bionic 75）。Go 1.27.4、MyGo v0.9.2 与 Mac.apk `3f35611` 已检查、未变；未完成新关卡或发布。

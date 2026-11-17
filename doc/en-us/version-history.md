@@ -12,3 +12,4 @@
 - 2026-11-16: added P3 process-private mutex/condition synchronization (T08 `sync`); Go 1.27.4, MyGo v0.9.2 and Mac.apk `3f35611` checked, unchanged; no new gate or release.
 - 2026-11-16: added P3 transactional module graphs and guest dl APIs (T07); full ARM64 regression passes (Host 22, Java 43, Native 58, Bionic 56). Go 1.27.4, MyGo v0.9.2 and Mac.apk `3f35611` checked, unchanged; G3 remains NOT_RUN, no release.
 - 2026-11-16: added P3 private-heap allocation and byte/string wrappers (T08 memory); full ARM64 regression passes (Host 22, Java 43, Native 58, Bionic 67). Go 1.27.4, MyGo v0.9.2 and Mac.apk `3f35611` checked, unchanged; no new gate or release.
+- 2026-11-16: added P3 mapped regular-file and time APIs (T08 io); full ARM64 regression passes (Host 22, Java 43, Native 58, Bionic 75). Go 1.27.4, MyGo v0.9.2 and Mac.apk `3f35611` checked, unchanged; no new gate or release.

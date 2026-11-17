@@ -43,6 +43,7 @@ The runtime's commands are in the next section.
 .\scripts\windows\test.ps1 -Suite Bionic
 .\scripts\windows\test.ps1 -Suite Modules
 .\scripts\windows\test.ps1 -Suite Memory
+.\scripts\windows\test.ps1 -Suite Io
 .\build\windows-arm64\bin\native-probe.exe suite .\tests\fixtures\elf\libn0abi.so
 .\build\windows-arm64\bin\native-probe.exe sync .\tests\fixtures\elf\libsync.so
 .\build\windows-arm64\bin\winapk.exe doctor --json
@@ -102,6 +103,11 @@ the full runtime regression once the capability is stable, not after every edit.
 cases plus a host-state check, and two fatal ownership cases from the same source. It uses
 `-fno-builtin` so the tests call the imported wrappers rather than compiler-folded operations;
 there is no additional long stress loop.
+
+`-Suite Io` selects only T08's `io` command (also in `Bionic`): four file/time semantic cases,
+host-state and manifest checks, plus confirmation of the Unicode-mapped bytes and unchanged
+out-of-root junction target. It prepares only ignored test directories below `build/windows-arm64/test-data`.
+The probe accepts `io <elf> <android-root>`; no host working-directory or environment change is made.
 
 `winapk run` keeps each app's data under `%LOCALAPPDATA%\Windows-ARM64.apk\Apps` (`--data-dir`
 moves it): `android\` is the Android root the app sees (`data\data\<package>`, `sdcard`),

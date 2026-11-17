@@ -42,7 +42,7 @@ Host, Java, Native or Bionic.
 #>
 [CmdletBinding()]
 param(
-    [ValidateSet('Host', 'Java', 'Native', 'Bionic', 'Modules', 'Memory')]
+    [ValidateSet('Host', 'Java', 'Native', 'Bionic', 'Modules', 'Memory', 'Io')]
     [string]$Suite = 'Host'
 )
 Set-StrictMode -Version Latest
@@ -535,7 +535,7 @@ function Test-Native {
 }
 
 <# Runs T08 and its refusal matrix with a deadline so a broken join/barrier cannot hang tests. #>
-function Test-Bionic([switch]$MemoryOnly) {
+function Test-Bionic([string]$Command = '') {
     $probe = Join-Path $out 'bin\native-probe.exe'
     $dir = Join-Path $repo 'tests\fixtures\elf'
     $record = Join-Path $dir 'fixtures.json'
@@ -545,7 +545,7 @@ function Test-Bionic([switch]$MemoryOnly) {
     $logs = Join-Path $out 'test-data\logs'
     New-Item -ItemType Directory -Force $logs | Out-Null
     foreach ($f in $table.Fixtures | Where-Object {
-        if ($MemoryOnly) { $_.ContainsKey('Command') -and $_.Command -eq 'memory' }
+        if ($Command) { $_.ContainsKey('Command') -and $_.Command -eq $Command }
         else { $_.Id -eq 'T08' -or $_.Name -in 'neg-tls.so', 'neg-svc.so', 'neg-tpidr.so', 'neg-x18.so' }
     }) {
         $file = Join-Path $dir $f.Name
@@ -555,8 +555,20 @@ function Test-Bionic([switch]$MemoryOnly) {
         if (-not $rec -or $rec.sha256 -ne $sha) { continue }
         $stdout = Join-Path $logs "T08-$($f.Name).out"
         $stderr = Join-Path $logs "T08-$($f.Name).err"
-        $command = if ($f.ContainsKey('Command')) { $f.Command } else { 'threads' }
-        $p = Start-Process $probe -ArgumentList @($command, "`"$file`"") -PassThru -NoNewWindow -RedirectStandardOutput $stdout -RedirectStandardError $stderr
+        $probeCommand = if ($f.ContainsKey('Command')) { $f.Command } else { 'threads' }
+        $arguments = @($probeCommand, "`"$file`"")
+        if ($probeCommand -eq 'io') {
+            $ioRoot = Join-Path $out 'test-data\客体 文件 root'
+            $ioOutside = Join-Path $out 'test-data\io-outside'
+            foreach ($directory in @("$ioRoot\data\中文 dir", "$ioRoot\sdcard", $ioOutside)) {
+                New-Item -ItemType Directory -Force $directory | Out-Null
+            }
+            [IO.File]::WriteAllText("$ioOutside\sentinel.txt", 'untouched')
+            $junction = "$ioRoot\data\escape"
+            if (-not (Test-Path $junction)) { New-Item -ItemType Junction -Path $junction -Target $ioOutside | Out-Null }
+            $arguments += "`"$ioRoot`""
+        }
+        $p = Start-Process $probe -ArgumentList $arguments -PassThru -NoNewWindow -RedirectStandardOutput $stdout -RedirectStandardError $stderr
         try {
             if (-not $p.WaitForExit(60000)) {
                 $p.Kill()
@@ -576,10 +588,15 @@ function Test-Bionic([switch]$MemoryOnly) {
                 $expectedCases = if ($f.ContainsKey('Cases')) { $f.Cases } else { 9 }
                 $ok = $p.ExitCode -eq 0 -and $cases.Count -eq $expectedCases -and $o -match 'result T08 PASS'
                 Check "T08.$($f.Name).result" $ok "exit $($p.ExitCode), $($cases.Count) cases$(if (-not $ok) { '; ' + $o + $err })"
+                if ($probeCommand -eq 'io') {
+                    $mapped = "$ioRoot\data\中文 dir\空 格.bin"
+                    $bytes = if (Test-Path $mapped) { [Convert]::ToHexString([IO.File]::ReadAllBytes($mapped)) } else { 'missing' }
+                    Check 'T08.io.mapping' ($bytes -eq '410042FF5A' -and [IO.File]::ReadAllText("$ioOutside\sentinel.txt") -eq 'untouched') "mapped bytes $bytes; outside sentinel unchanged"
+                }
             }
         } finally { $p.Dispose() }
     }
-    if (-not $MemoryOnly) { Test-Modules }
+    if (-not $Command) { Test-Modules }
 }
 
 <# Runs T07 once as a compact transaction matrix, with manifest checks and a hard deadline. #>
@@ -615,7 +632,7 @@ function Test-Modules {
     } finally { $p.Dispose() }
 }
 
-switch ($Suite) { 'Host' { Test-Host } 'Java' { Test-Java } 'Native' { Test-Native } 'Bionic' { Test-Bionic } 'Modules' { Test-Modules } 'Memory' { Test-Bionic -MemoryOnly } }
+switch ($Suite) { 'Host' { Test-Host } 'Java' { Test-Java } 'Native' { Test-Native } 'Bionic' { Test-Bionic } 'Modules' { Test-Modules } 'Memory' { Test-Bionic -Command memory } 'Io' { Test-Bionic -Command io } }
 if ($script:failed -gt 0) { Write-Host "$script:failed check(s) failed"; exit 1 }
 Write-Host 'all checks passed'
 exit 0

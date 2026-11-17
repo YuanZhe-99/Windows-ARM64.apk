@@ -66,7 +66,7 @@
 
 ## P3 线程、同步与模块检查
 
-`test.ps1 -Suite Bionic`，2026-11-16，在上述 Windows ARM64 机器上 67/67 项检查 PASS（T08：50，T07：17），不是 G3；
+`test.ps1 -Suite Bionic`，2026-11-16，在上述 Windows ARM64 机器上 75/75 项检查 PASS（T08：58，T07：17），不是 G3；
 线程夹具用 NDK r30、API 30、`-O2 -nostdlib -femulated-tls -fno-stack-protector` 构建；
 独立同步夹具使用 `-O2 -nostdlib -fno-stack-protector`，没有 TLS。
 哈希与完整选项在 `tests/fixtures/elf/fixtures.json`（生成产物，不提交）；
@@ -76,6 +76,8 @@ T07 依赖图使用六个 `-O2 -nostdlib` 库；`-Suite Modules` 独立通过十
 其输出在 `build/windows-arm64/test-data/logs/T07-modules.*`。
 T08 内存用同一源码的三个 `-O2 -nostdlib -fno-builtin` 构建新增 11 项检查；
 正例进程含四项语义及一次宿主状态检查，不另加压力循环。
+T08 io 用一个 `-O2 -nostdlib -fno-builtin` 构建新增八项检查，含四项语义、
+宿主状态、哈希/汇总及一次宿主侧映射/哨兵检查。
 
 | 条目（`PLAN.md` §10） | 结果 | 证据 |
 |---|---|---|
@@ -91,6 +93,8 @@ T08 内存用同一源码的三个 `-O2 -nostdlib -fno-builtin` 构建新增 11 
 | 事务拒绝与回调（T07） | PASS | 缺失导入和无效初始化入口在任何构造执行前回滚全部新映射；拒绝依赖环、基名、SONAME 和缺失文件；既有依赖图不变；同线程构造重入及其他线程竞争时的拒绝，不跨回调持有注册表锁 |
 | 客体 dl API（T07） | PASS | `dlopen` NOW/LOCAL、`dlsym`、`dlclose`、`dlerror` 读取清除；无效标志、缺失导出及已关闭句柄明确失败；运行时上下文清理 |
 | 内存/字节/字符串子集（T08） | PASS | 零大小分配、16 字节对齐、calloc 清零/溢出、realloc 增长/缩小/失败及内容/errno 保留；重叠/范围/无符号字节操作、UTF-8/终止/填充/查询；八线程归属移交；无效和重复释放在调用宿主分配器前退出 3；分配表清空；12 次宿主状态回调无违规 |
+| 文件与 errno（T08 io） | PASS | Unicode/空格根目录与文件名；字节 `410042FF5A`、EOF 及零长度 I/O；seek 超过 8 GiB 后返回而不增大文件；128 字节 stat 带哨兵；create/exclusive/append/只读/只写/fortified-open 行为；转换后的 ENOENT/EEXIST/EINVAL/EBADF；拒绝不支持的标志/模式及无效 UTF-8/设备/逃逸/数据流/junction 路径；外部哨兵未变，fd 表清空 |
+| 时间（T08 io） | PASS | realtime Unix epoch 与宿主相差两秒以内，100 ns 转为规范纳秒单位；monotonic 间隔不少于请求的 2 ms；零时长 sleep、成功时 remainder 不变、无效时间和不支持的时钟/时长；四次宿主状态回调无违规。挂起与客体信号 NOT_RUN/不支持 |
 | APK 原生库与 JNI 集成 | NOT_RUN | T09 尚未实现；`winapk run` 的原生库加载仍关闭 |
 
 同一变更集还运行了 `check-requirements.ps1`、`build.ps1 -Component All`、
@@ -105,7 +109,7 @@ Go vet/测试（含 `CGO_ENABLED=0`）、MyGo vet/i18n 与文档镜像检查均�
   `winapk.guestNative` 检查，以及 `runtime/src/native_sqlite.cpp` 的 `_WIN32` Unicode 辅助函数；其余都是 `runtime/platform/windows` 和 `runtime/guest` 下的新代码。Windows 实现了 `NativeCocoa` 和其他宿主
   native 中的哪些、哪些仍未绑定，见 [port-audit.md](port-audit.md)。
 - 界面还没有启动 `winapk run`；它仍使用 `winapk.Mock`。
-- 客体原生：profile N0 加独立 P3 T08 线程/同步和 T07 模块事务，均只在 `native-probe.exe` 中；`winapk run` 不加载任何 APK 库（P4）。客体代码中的故障尚未被捕获（P3，`PLAN.md` §10.3）：它会结束探测程序。以 `winapk.exe` 的编译选项构建，关闭 Control Flow Guard；启用 CFG 的构建为 NOT_RUN（[abi-compatibility.md](abi-compatibility.md)）。
+- 客体原生：profile N0 加独立 P3 T08 Bionic 子集和 T07 模块事务，均只在 `native-probe.exe` 中；`winapk run` 不加载任何 APK 库（P4）。客体代码中的故障尚未被捕获（P3，`PLAN.md` §10.3）：它会结束探测程序。以 `winapk.exe` 的编译选项构建，关闭 Control Flow Guard；启用 CFG 的构建为 NOT_RUN（[abi-compatibility.md](abi-compatibility.md)）。
 - 这台电脑没有厂商 Vulkan 驱动：Vulkan 是基于 Direct3D 12 的 Mesa Dozen（[decisions.md](decisions.md)）。
 - `CMakeLists.txt`、`AppClassLoader` 与 `native_sqlite.cpp` 改动后的 macOS 构建和 smoke：NOT_RUN（这里没有 Mac）；该分支只在 `WIN32` 下返回，Java 检查在未设置 `winapk.guestNative` 时不起作用，`_WIN32` 之外的 CoreFoundation 辅助函数没有改变。
 - DPI：应用的 density 在启动时固定。把窗口移到另一缩放的显示器，或在运行中改变缩放，窗口会调整尺寸以保持其点数（`WM_DPICHANGED`），但应用保持最初的 density：NOT_RUN，也尚未作为 Android 的配置变更处理。

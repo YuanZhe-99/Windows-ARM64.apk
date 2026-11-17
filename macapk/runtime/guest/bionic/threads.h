@@ -12,14 +12,15 @@ struct ThreadState;
 /// Only default attributes and normal entry-point return are supported. No JNI attachment yet.
 class ThreadRuntime {
 public:
-    /// Creates an empty thread/key registry with an optional caller-owned guest module namespace.
-    explicit ThreadRuntime(ModuleSet* modules = nullptr);
+    /// Creates an empty registry with optional modules and an existing Android filesystem root.
+    /// Notes: an absent root disables file opens; the supplied root is canonicalized, never created.
+    explicit ThreadRuntime(ModuleSet* modules = nullptr, const std::wstring& androidRoot = {});
     /// Releases the registry; terminates for unjoined workers, active contexts or busy synchronization.
     ~ThreadRuntime();
     ThreadRuntime(const ThreadRuntime&) = delete;
     ThreadRuntime& operator=(const ThreadRuntime&) = delete;
 
-    /// Returns audited thread/errno/emutls, memory/string and dl API imports, not arbitrary CRT exports.
+    /// Returns audited thread/errno/emutls, memory/string, file/time and dl imports, not arbitrary CRT exports.
     static std::span<const HostSymbol> Imports();
 
     /// Calls a guest entry with a fresh context, then runs key destructors and frees emulated TLS.
@@ -28,7 +29,7 @@ public:
     /// may unwind into the host. Guest execution faults are not recovered here.
     void* Call(void* (*entry)(void*), void* argument);
 
-    /// Reports whether all contexts, TLS blocks, keys, workers, allocations and synchronization records are released.
+    /// Reports whether contexts, TLS, keys, workers, allocations, fds and synchronization records are released.
     bool Idle() const;
 
 private:

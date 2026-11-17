@@ -13,10 +13,12 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <cwchar>
 #include <limits>
 #include <map>
 #include <mutex>
 #include <new>
+#include <stdexcept>
 #include <vector>
 
 namespace winapk::guest {
@@ -25,6 +27,9 @@ namespace {
 // Linux/Bionic values, deliberately not the host's errno macros.
 constexpr int kAgain = 11, kInvalid = 22, kDeadlock = 35, kNoThread = 3, kNotSupported = 95;
 constexpr int kBusy = 16, kPermission = 1, kNoMemory = 12;
+constexpr int kNoEntry = 2, kIo = 5, kBadFd = 9, kAccess = 13, kFault = 14, kExists = 17;
+constexpr int kNotDirectory = 20, kIsDirectory = 21, kTooManyFiles = 24, kNoSpace = 28;
+constexpr int kReadOnly = 30, kNameTooLong = 36, kEncoding = 84;
 constexpr size_t kKeys = 128;
 using GuestThread = int64_t;  // Android pthread_t is long, not Windows long.
 using GuestKey = int32_t;
@@ -101,6 +106,32 @@ struct ConditionState {
     explicit ConditionState(uint64_t id) : generation(id) {}
 };
 
+/// Owns one non-inheritable regular-file handle, never represented by a guest fd value.
+struct GuestFile {
+    HANDLE handle = INVALID_HANDLE_VALUE;
+    bool readable = false, writable = false, append = false;
+    /// Closes a retained descriptor at runtime teardown after all guest contexts have ended.
+    ~GuestFile() { if (handle != INVALID_HANDLE_VALUE) CloseHandle(handle); }
+};
+
+/// Describes the Android LP64 timespec without using Windows long or CRT time types.
+struct GuestTimespec { int64_t seconds, nanoseconds; };
+static_assert(sizeof(GuestTimespec) == 16);
+
+/// Describes Bionic AArch64 stat explicitly, including padding and guest 64-bit longs.
+struct GuestStat {
+    uint64_t device, inode;
+    uint32_t mode, links, uid, gid;
+    uint64_t rdevice, padding1;
+    int64_t size;
+    int32_t blockSize, padding2;
+    int64_t blocks;
+    GuestTimespec access, modification, change;
+    uint32_t unused4, unused5;
+};
+static_assert(sizeof(GuestStat) == 128 && offsetof(GuestStat, size) == 48 &&
+              offsetof(GuestStat, access) == 72 && offsetof(GuestStat, unused4) == 120);
+
 }  // namespace
 
 /// Holds one runtime's synchronized token tables and exact cleanup counters.
@@ -109,6 +140,9 @@ struct ThreadState {
     HANDLE heap = HeapCreate(0, 0, 0);
     std::mutex mutex;
     std::map<void*, uint64_t> allocations;
+    std::wstring androidRoot;  // Canonical extended-length host path, ending in a backslash.
+    std::map<int32_t, std::unique_ptr<GuestFile>> descriptors;
+    int32_t nextFd = 3;
     std::map<GuestThread, std::unique_ptr<Worker>> workers;
     std::array<Key, kKeys> keys{};
     std::map<void*, std::unique_ptr<MutexState>> mutexes;
@@ -310,6 +344,295 @@ char* StringDuplicate(const char* string) {
     auto* result = static_cast<char*>(Malloc(size));
     if (result) std::memcpy(result, string, static_cast<size_t>(size));
     return result;
+}
+
+/// Returns a POSIX-style failure after storing a Linux errno in this managed context.
+int32_t IoError(int32_t error) { Context().error = error; return -1; }
+
+/// Converts Windows file errors explicitly; unclassified host I/O failures become EIO.
+int32_t WindowsIoError(DWORD error) {
+    switch (error) {
+    case ERROR_FILE_NOT_FOUND: case ERROR_PATH_NOT_FOUND: return IoError(kNoEntry);
+    case ERROR_ACCESS_DENIED: case ERROR_SHARING_VIOLATION: case ERROR_LOCK_VIOLATION: return IoError(kAccess);
+    case ERROR_ALREADY_EXISTS: case ERROR_FILE_EXISTS: return IoError(kExists);
+    case ERROR_INVALID_HANDLE: return IoError(kBadFd);
+    case ERROR_NOACCESS: case ERROR_INVALID_USER_BUFFER: return IoError(kFault);
+    case ERROR_NOT_ENOUGH_MEMORY: case ERROR_OUTOFMEMORY: return IoError(kNoMemory);
+    case ERROR_DISK_FULL: case ERROR_HANDLE_DISK_FULL: return IoError(kNoSpace);
+    case ERROR_WRITE_PROTECT: return IoError(kReadOnly);
+    case ERROR_DIRECTORY: return IoError(kNotDirectory);
+    case ERROR_FILENAME_EXCED_RANGE: return IoError(kNameTooLong);
+    case ERROR_INVALID_PARAMETER: case ERROR_NEGATIVE_SEEK: return IoError(kInvalid);
+    default: return IoError(kIo);
+    }
+}
+
+/// Reads a handle's canonical extended-length path without interpreting a guest pathname.
+bool FinalPath(HANDLE handle, std::wstring& result) {
+    const DWORD size = GetFinalPathNameByHandleW(handle, nullptr, 0, FILE_NAME_NORMALIZED | VOLUME_NAME_DOS);
+    if (!size) return false;
+    result.resize(size);
+    const DWORD length = GetFinalPathNameByHandleW(handle, result.data(), size, FILE_NAME_NORMALIZED | VOLUME_NAME_DOS);
+    if (!length || length >= size) return false;
+    result.resize(length);
+    return true;
+}
+
+/// Refuses DOS device basenames even with extensions, before any Windows file open.
+bool DeviceName(std::wstring_view part) {
+    const auto dot = part.find(L'.');
+    const auto base = part.substr(0, dot);
+    for (const wchar_t* reserved : {L"CON", L"PRN", L"AUX", L"NUL", L"CONIN$", L"CONOUT$", L"CLOCK$"})
+        if (base.size() == std::wcslen(reserved) && !_wcsnicmp(base.data(), reserved, base.size())) return true;
+    if (base.size() == 4 && (!_wcsnicmp(base.data(), L"COM", 3) || !_wcsnicmp(base.data(), L"LPT", 3))) {
+        const wchar_t number = base[3];
+        return (number >= L'1' && number <= L'9') || number == L'\u00b9' || number == L'\u00b2' || number == L'\u00b3';
+    }
+    return false;
+}
+
+/// Maps a strict UTF-8 Android absolute path below the supplied root, refusing reparse components.
+bool FilePath(ThreadState& runtime, const char* name, std::wstring& path) {
+    if (runtime.androidRoot.empty()) { IoError(kNotSupported); return false; }
+    if (!name) { IoError(kFault); return false; }
+    const size_t length = strnlen(name, 4097);
+    if (!length) { IoError(kNoEntry); return false; }
+    if (length > 4096) { IoError(kNameTooLong); return false; }
+    const std::string_view input(name, length);
+    if (!input.starts_with("/data/") && !input.starts_with("/sdcard/")) { IoError(kAccess); return false; }
+    const int count = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, name + 1, static_cast<int>(length - 1), nullptr, 0);
+    if (!count) { IoError(kEncoding); return false; }
+    std::wstring relative(count, L'\0');
+    if (!MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, name + 1, static_cast<int>(length - 1), relative.data(), count)) {
+        IoError(kEncoding);
+        return false;
+    }
+    path = runtime.androidRoot;
+    for (size_t start = 0; start < relative.size();) {
+        const size_t slash = relative.find(L'/', start);
+        const auto part = std::wstring_view(relative).substr(start, slash == std::wstring::npos ? slash : slash - start);
+        if (part.empty() || part == L"." || part == L".." || part.back() == L'.' || part.back() == L' ' || DeviceName(part)) {
+            IoError(kAccess);
+            return false;
+        }
+        for (wchar_t character : part)
+            if (character < 32 || std::wstring_view(L"\\:*?\"<>|").find(character) != std::wstring_view::npos) {
+                IoError(kAccess);
+                return false;
+            }
+        path.append(part);
+        const DWORD attributes = GetFileAttributesW(path.c_str());
+        if (attributes == INVALID_FILE_ATTRIBUTES) {
+            const DWORD error = GetLastError();
+            if (slash != std::wstring::npos || (error != ERROR_FILE_NOT_FOUND && error != ERROR_PATH_NOT_FOUND)) {
+                WindowsIoError(error);
+                return false;
+            }
+        } else {
+            if (attributes & FILE_ATTRIBUTE_REPARSE_POINT) { IoError(kAccess); return false; }
+            if (slash != std::wstring::npos && !(attributes & FILE_ATTRIBUTE_DIRECTORY)) { IoError(kNotDirectory); return false; }
+            if (slash == std::wstring::npos && (attributes & FILE_ATTRIBUTE_DIRECTORY)) { IoError(kIsDirectory); return false; }
+        }
+        if (slash == std::wstring::npos) return true;
+        if (slash + 1 == relative.size()) { IoError(kIsDirectory); return false; }
+        path += L'\\';
+        start = slash + 1;
+    }
+    IoError(kAccess);
+    return false;
+}
+
+/// Opens a regular guest file with an optional integer creation mode in x2, never host varargs.
+int32_t FileOpen(const char* name, int32_t flags, uint32_t mode) {
+    constexpr int32_t create = 00000100, exclusive = 00000200, truncate = 00001000, append = 00002000;
+    constexpr int32_t allowed = 3 | create | exclusive | truncate | append | 00100000 | 02000000;
+    if (flags & ~allowed) return IoError(kNotSupported);
+    const int access = flags & 3;
+    if (access == 3 || ((flags & exclusive) && !(flags & create)) ||
+        (!access && (flags & (truncate | append)))) return IoError(kInvalid);
+    if ((flags & create) && mode != 0600) return IoError(kNotSupported);
+    auto& runtime = Context().runtime;
+    std::lock_guard lock(runtime.mutex);
+    try {
+        if (runtime.descriptors.size() >= 256 || runtime.nextFd == INT32_MAX) return IoError(kTooManyFiles);
+        std::wstring path;
+        if (!FilePath(runtime, name, path)) return -1;
+        auto file = std::make_unique<GuestFile>();
+        file->readable = access != 1;
+        file->writable = access != 0;
+        file->append = (flags & append) != 0;
+        const DWORD disposition = flags & create ? flags & exclusive ? CREATE_NEW : OPEN_ALWAYS : OPEN_EXISTING;
+        file->handle = CreateFileW(path.c_str(), (file->readable ? GENERIC_READ : 0) | (file->writable ? GENERIC_WRITE : 0),
+                                   FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, disposition,
+                                   FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OPEN_REPARSE_POINT, nullptr);
+        if (file->handle == INVALID_HANDLE_VALUE) return WindowsIoError(GetLastError());
+        FILE_ATTRIBUTE_TAG_INFO attributes{};
+        if (!GetFileInformationByHandleEx(file->handle, FileAttributeTagInfo, &attributes, sizeof attributes))
+            return WindowsIoError(GetLastError());
+        std::wstring final;
+        if (!FinalPath(file->handle, final)) return WindowsIoError(GetLastError());
+        if (attributes.FileAttributes & FILE_ATTRIBUTE_REPARSE_POINT ||
+            final.size() <= runtime.androidRoot.size() ||
+            _wcsnicmp(final.c_str(), runtime.androidRoot.c_str(), runtime.androidRoot.size())) return IoError(kAccess);
+        if (attributes.FileAttributes & FILE_ATTRIBUTE_DIRECTORY) return IoError(kIsDirectory);
+        if (GetFileType(file->handle) != FILE_TYPE_DISK) return IoError(kNotSupported);
+        // Reserve the fd record before truncating: an allocation failure must not truncate a file.
+        const int32_t descriptor = runtime.nextFd++;
+        const auto [it, inserted] = runtime.descriptors.emplace(descriptor, std::move(file));
+        (void)inserted;
+        if ((flags & truncate) && !SetEndOfFile(it->second->handle)) {
+            const DWORD error = GetLastError();
+            runtime.descriptors.erase(it);
+            return WindowsIoError(error);
+        }
+        return descriptor;
+    } catch (const std::bad_alloc&) { return IoError(kNoMemory); }
+}
+
+/// Opens a fortified two-argument Bionic call, refusing any flag that would require a mode.
+int32_t FileOpenChecked(const char* name, int32_t flags) {
+    if (flags & 00000100) return IoError(kInvalid);
+    return FileOpen(name, flags, 0);
+}
+
+/// Finds a guest fd only in its runtime-owned table; the caller holds runtime.mutex.
+GuestFile* Descriptor(ThreadState& runtime, int32_t descriptor) {
+    const auto it = runtime.descriptors.find(descriptor);
+    if (it != runtime.descriptors.end()) return it->second.get();
+    IoError(kBadFd);
+    return nullptr;
+}
+
+/// Reads regular-file bytes with guest ssize_t, without treating a host HANDLE as an fd.
+int64_t FileRead(int32_t descriptor, void* buffer, uint64_t size) {
+    auto& runtime = Context().runtime;
+    std::lock_guard lock(runtime.mutex);
+    auto* file = Descriptor(runtime, descriptor);
+    if (!file) return -1;
+    if (!file->readable) return IoError(kBadFd);
+    if (size > INT64_MAX) return IoError(kInvalid);
+    if (size && !buffer) return IoError(kFault);
+    if (!size) return 0;
+    DWORD read = 0;
+    if (!::ReadFile(file->handle, buffer, static_cast<DWORD>(std::min<uint64_t>(size, MAXDWORD)), &read, nullptr))
+        return WindowsIoError(GetLastError());
+    return read;
+}
+
+/// Writes regular-file bytes, targeting EOF atomically for O_APPEND regardless of prior seek.
+int64_t FileWrite(int32_t descriptor, const void* buffer, uint64_t size) {
+    auto& runtime = Context().runtime;
+    std::lock_guard lock(runtime.mutex);
+    auto* file = Descriptor(runtime, descriptor);
+    if (!file) return -1;
+    if (!file->writable) return IoError(kBadFd);
+    if (size > INT64_MAX) return IoError(kInvalid);
+    if (size && !buffer) return IoError(kFault);
+    if (!size) return 0;
+    OVERLAPPED atEnd{};
+    atEnd.Offset = atEnd.OffsetHigh = MAXDWORD;
+    DWORD written = 0;
+    if (!::WriteFile(file->handle, buffer, static_cast<DWORD>(std::min<uint64_t>(size, MAXDWORD)), &written,
+                     file->append ? &atEnd : nullptr)) return WindowsIoError(GetLastError());
+    return written;
+}
+
+/// Closes exactly one guest fd and removes its private handle record.
+int32_t FileClose(int32_t descriptor) {
+    auto& runtime = Context().runtime;
+    std::lock_guard lock(runtime.mutex);
+    auto* file = Descriptor(runtime, descriptor);
+    if (!file) return -1;
+    if (!CloseHandle(file->handle)) return WindowsIoError(GetLastError());
+    file->handle = INVALID_HANDLE_VALUE;
+    runtime.descriptors.erase(descriptor);
+    return 0;
+}
+
+/// Seeks a regular file with guest 64-bit off_t and explicit Android SEEK_* values.
+int64_t FileSeek(int32_t descriptor, int64_t offset, int32_t origin) {
+    if (origin < 0 || origin > 2) return IoError(kInvalid);
+    auto& runtime = Context().runtime;
+    std::lock_guard lock(runtime.mutex);
+    auto* file = Descriptor(runtime, descriptor);
+    if (!file) return -1;
+    LARGE_INTEGER distance{}, position{};
+    distance.QuadPart = offset;
+    if (!SetFilePointerEx(file->handle, distance, &position, static_cast<DWORD>(origin))) return WindowsIoError(GetLastError());
+    return position.QuadPart;
+}
+
+/// Converts Windows 100-ns ticks since 1601 to a normalized Unix-epoch guest timespec.
+GuestTimespec UnixTime(int64_t ticks) {
+    const int64_t unixTicks = ticks - 116444736000000000LL;
+    int64_t seconds = unixTicks / 10000000, fraction = unixTicks % 10000000;
+    if (fraction < 0) { seconds--; fraction += 10000000; }
+    return {seconds, fraction * 100};
+}
+
+/// Fills the exact 128-byte guest stat layout from private Windows file information.
+int32_t FileStat(int32_t descriptor, GuestStat* result) {
+    if (!result) return IoError(kFault);
+    auto& runtime = Context().runtime;
+    std::lock_guard lock(runtime.mutex);
+    auto* file = Descriptor(runtime, descriptor);
+    if (!file) return -1;
+    BY_HANDLE_FILE_INFORMATION identity{};
+    FILE_STANDARD_INFO standard{};
+    FILE_BASIC_INFO basic{};
+    if (!GetFileInformationByHandle(file->handle, &identity) ||
+        !GetFileInformationByHandleEx(file->handle, FileStandardInfo, &standard, sizeof standard) ||
+        !GetFileInformationByHandleEx(file->handle, FileBasicInfo, &basic, sizeof basic))
+        return WindowsIoError(GetLastError());
+    GuestStat stat{};
+    stat.device = identity.dwVolumeSerialNumber;
+    stat.inode = (static_cast<uint64_t>(identity.nFileIndexHigh) << 32) | identity.nFileIndexLow;
+    stat.mode = 0100000 | (basic.FileAttributes & FILE_ATTRIBUTE_READONLY ? 0400 : 0600);
+    stat.links = standard.NumberOfLinks;
+    stat.size = standard.EndOfFile.QuadPart;
+    stat.blockSize = 4096;
+    stat.blocks = standard.AllocationSize.QuadPart / 512;
+    stat.access = UnixTime(basic.LastAccessTime.QuadPart);
+    stat.modification = UnixTime(basic.LastWriteTime.QuadPart);
+    stat.change = UnixTime(basic.ChangeTime.QuadPart);
+    *result = stat;
+    return 0;
+}
+
+/// Returns realtime or monotonic in an explicit guest layout; unsupported clocks never fall back.
+int32_t ClockGetTime(int32_t clock, GuestTimespec* result) {
+    if (!result) return IoError(kFault);
+    if (clock == 0) {
+        FILETIME time{};
+        GetSystemTimePreciseAsFileTime(&time);
+        *result = UnixTime(static_cast<int64_t>((static_cast<uint64_t>(time.dwHighDateTime) << 32) | time.dwLowDateTime));
+    } else if (clock == 1) {
+        ULONGLONG ticks = 0;
+        QueryUnbiasedInterruptTimePrecise(&ticks);
+        *result = {static_cast<int64_t>(ticks / 10000000), static_cast<int64_t>(ticks % 10000000) * 100};
+    } else {
+        return IoError(clock < 0 ? kInvalid : kNotSupported);
+    }
+    return 0;
+}
+
+/// Waits a bounded relative duration without guest signals; never synthesizes an interruption.
+int32_t NanoSleep(const GuestTimespec* duration, GuestTimespec* remainder) {
+    (void)remainder;  // POSIX leaves it untouched on success; this subset delivers no guest signal.
+    if (!duration) return IoError(kFault);
+    const GuestTimespec requested = *duration;
+    if (requested.seconds < 0 || requested.nanoseconds < 0 || requested.nanoseconds >= 1000000000)
+        return IoError(kInvalid);
+    if (requested.seconds > 60 || (requested.seconds == 60 && requested.nanoseconds)) return IoError(kNotSupported);
+    ULONGLONG now = 0;
+    QueryUnbiasedInterruptTimePrecise(&now);
+    const ULONGLONG deadline = now + static_cast<uint64_t>(requested.seconds) * 10000000 +
+                              static_cast<uint64_t>((requested.nanoseconds + 99) / 100);
+    while (now < deadline) {
+        Sleep(static_cast<DWORD>((deadline - now + 9999) / 10000));
+        QueryUnbiasedInterruptTimePrecise(&now);
+    }
+    return 0;
 }
 
 /// Opens an audited guest library with RTLD_NOW|RTLD_LOCAL only; never calls the Windows loader.
@@ -753,9 +1076,19 @@ int ConditionDestroy(void* object) {
 
 }  // namespace
 
-ThreadRuntime::ThreadRuntime(ModuleSet* modules) : state_(std::make_unique<ThreadState>()) {
+ThreadRuntime::ThreadRuntime(ModuleSet* modules, const std::wstring& androidRoot) : state_(std::make_unique<ThreadState>()) {
     if (!state_->heap) throw std::bad_alloc();
     state_->modules = modules;
+    if (!androidRoot.empty()) {
+        GuestFile root;
+        root.handle = CreateFileW(androidRoot.c_str(), FILE_READ_ATTRIBUTES, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                                  nullptr, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, nullptr);
+        BY_HANDLE_FILE_INFORMATION information{};
+        if (root.handle == INVALID_HANDLE_VALUE || !GetFileInformationByHandle(root.handle, &information) ||
+            !(information.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) || !FinalPath(root.handle, state_->androidRoot))
+            throw std::runtime_error("Android file root is not an accessible directory");
+        if (state_->androidRoot.back() != L'\\') state_->androidRoot += L'\\';
+    }
 }
 
 ThreadRuntime::~ThreadRuntime() {
@@ -804,6 +1137,18 @@ std::span<const HostSymbol> ThreadRuntime::Imports() {
         {"strrchr", reinterpret_cast<void*>(&StringReverseFind)},
         {"strstr", reinterpret_cast<void*>(&StringSubstring)},
         {"strdup", reinterpret_cast<void*>(&StringDuplicate)},
+        {"open", reinterpret_cast<void*>(&FileOpen)},
+        {"open64", reinterpret_cast<void*>(&FileOpen)},
+        {"__open_2", reinterpret_cast<void*>(&FileOpenChecked)},
+        {"read", reinterpret_cast<void*>(&FileRead)},
+        {"write", reinterpret_cast<void*>(&FileWrite)},
+        {"close", reinterpret_cast<void*>(&FileClose)},
+        {"lseek", reinterpret_cast<void*>(&FileSeek)},
+        {"lseek64", reinterpret_cast<void*>(&FileSeek)},
+        {"fstat", reinterpret_cast<void*>(&FileStat)},
+        {"fstat64", reinterpret_cast<void*>(&FileStat)},
+        {"clock_gettime", reinterpret_cast<void*>(&ClockGetTime)},
+        {"nanosleep", reinterpret_cast<void*>(&NanoSleep)},
         {"dlopen", reinterpret_cast<void*>(&DlOpen)},
         {"dlsym", reinterpret_cast<void*>(&DlSym)},
         {"dlclose", reinterpret_cast<void*>(&DlClose)},
@@ -836,7 +1181,7 @@ void* ThreadRuntime::Call(Entry entry, void* argument) {
 bool ThreadRuntime::Idle() const {
     std::lock_guard lock(state_->mutex);
     return state_->workers.empty() && state_->contexts == 0 && state_->tlsBlocks == 0 &&
-           state_->mutexes.empty() && state_->conditions.empty() && state_->allocations.empty() &&
+           state_->mutexes.empty() && state_->conditions.empty() && state_->allocations.empty() && state_->descriptors.empty() &&
            std::all_of(state_->keys.begin(), state_->keys.end(), [](const Key& key) { return key.token == 0; });
 }
 

@@ -33,6 +33,7 @@ Go 1.27.4 和 MyGo v0.9.2。
 后续工作按 `PLAN.md` §10（P3：Bionic、线程、errno、TLS）和 §11（P4：JNI，以及在 `winapk run` 中加载 APK 的库）推进。
 独立 T08 线程基础现已覆盖受管理 pthread、errno、key/析构、显式仿真 C TLS 与无超时 mutex/condition 同步；
 T07 新增事务式依赖图、构造函数与客体 dl API；两者均不开放完整 N1 或 APK 原生库加载。
+T08 还覆盖私有堆分配、字节/字符串及映射常规文件/时间 API。
 优先推进后端，暂缓前端集成。
 
 ## 上游版本

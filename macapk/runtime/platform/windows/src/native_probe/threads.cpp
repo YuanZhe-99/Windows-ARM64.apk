@@ -24,13 +24,24 @@ int HostState(const int32_t* guestErrno) {
     return ok;
 }
 
+/// Checks the guest wall clock's Unix epoch and nanosecond units against the actual host clock.
+int TimeCheck(int64_t seconds, int64_t nanoseconds) {
+    FILETIME time{};
+    GetSystemTimePreciseAsFileTime(&time);
+    const int64_t now = static_cast<int64_t>((static_cast<uint64_t>(time.dwHighDateTime) << 32) | time.dwLowDateTime);
+    const int64_t unixSeconds = (now - 116444736000000000LL) / 10000000;
+    return nanoseconds >= 0 && nanoseconds < 1000000000 && nanoseconds % 100 == 0 &&
+           seconds >= unixSeconds - 2 && seconds <= unixSeconds + 2;
+}
+
 }  // namespace
 
-int ProbeBionic(const std::wstring& path, BionicSuite suite) {
+int ProbeBionic(const std::wstring& path, BionicSuite suite, const std::wstring& androidRoot) {
     using winapk::guest::ThreadRuntime;
     auto imports = ThreadRuntime::Imports();
     std::vector<winapk::guest::HostSymbol> symbols(imports.begin(), imports.end());
     symbols.push_back({"t08_host_state", reinterpret_cast<void*>(&HostState)});
+    symbols.push_back({"t08_time_check", reinterpret_cast<void*>(&TimeCheck)});
     winapk::guest::LoadError error;
     auto module = winapk::guest::Load(path, symbols, &error);
     if (!module) {
@@ -46,11 +57,13 @@ int ProbeBionic(const std::wstring& path, BionicSuite suite) {
         return 3;
     }
     // Registry destruction precedes module destruction, including every key callback.
-    ThreadRuntime runtime;
+    ThreadRuntime runtime(nullptr, androidRoot);
     const char* threadCases[] = {"threads8", "threads32", "destructor-limit", "deleted-keys", "key-exhaustion", "errors", "memset"};
     const char* syncCases[] = {"mutex-contention8", "mutex-kinds", "mutex-lifecycle", "cond-signal", "cond-broadcast", "cond-errors"};
     const char* memoryCases[] = {"memory-allocation", "memory-bytes", "memory-strings", "memory-sharing"};
-    const auto cases = suite == BionicSuite::Memory ? std::span(memoryCases) :
+    const char* ioCases[] = {"io-roundtrip", "io-flags", "io-refusals", "io-clocks"};
+    const auto cases = suite == BionicSuite::Io ? std::span(ioCases) :
+                       suite == BionicSuite::Memory ? std::span(memoryCases) :
                        suite == BionicSuite::Sync ? std::span(syncCases) : std::span<const char* const>(threadCases);
     int failed = 0;
     for (uintptr_t i = 0; i < std::size(cases); i++) {
@@ -66,7 +79,7 @@ int ProbeBionic(const std::wstring& path, BionicSuite suite) {
     const bool sync = suite == BionicSuite::Sync;
     // Repeated fresh contexts at one module address must reinitialize every emutls variable.
     // Memory/strings have bounded semantic cases, not another redundant stress loop.
-    if (suite != BionicSuite::Memory) {
+    if (suite == BionicSuite::Threads || suite == BionicSuite::Sync) {
         DWORD before = 0, after = 0;
         for (int i = 0; i < 10; i++)
             if (runtime.Call(entry, nullptr) || !runtime.Idle()) failed++;
@@ -82,7 +95,8 @@ int ProbeBionic(const std::wstring& path, BionicSuite suite) {
     }
     const bool host = callbacks > 0 && violations == 0;
     std::printf("case T08.%shost-state %s: %zu callbacks, %zu x18/sp/errno violations\n",
-                suite == BionicSuite::Memory ? "memory-" : sync ? "sync-" : "", host ? "PASS" : "FAIL", callbacks.load(), violations.load());
+                suite == BionicSuite::Io ? "io-" : suite == BionicSuite::Memory ? "memory-" : sync ? "sync-" : "",
+                host ? "PASS" : "FAIL", callbacks.load(), violations.load());
     failed += !host;
     std::printf("result T08 %s\n", failed ? "FAIL" : "PASS");
     return failed ? 3 : 0;

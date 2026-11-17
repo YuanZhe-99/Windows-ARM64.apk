@@ -70,6 +70,7 @@ and Latin words only where it helps readability.
 | predicate loop | 谓词循环 |
 | spurious wakeup | 伪唤醒 |
 | process-private | 进程私有 |
+| reparse point | 重解析点 |
 
 ## 6. Review checklist
 

@@ -37,9 +37,11 @@ Windows 11 ARM64 上构建或运行过（[port-audit.md](port-audit.md)）。
 | 要点 | 影响 | 核实程度 |
 |---|---|---|
 | `x18` 指向 TEB，`TPIDR_EL0` 保留 | 客体 TLS 和影子调用栈方案绝不使用它们；进入时不做交换 | 已验证：每次客体回调中 x18 都是 TEB（T05 `host.state`） |
-| 固定签名调用遵循 AAPCS64（寄存器、栈槽、HFA、`x8`、被调用方保存的寄存器）；可变参数调用把浮点放在整数寄存器中 | 固定签名直通，可变参数调用绝不跨越（[abi-compatibility.md](abi-compatibility.md)） | 固定签名已验证（T05）；可变参数的差异已阅读 |
+| 固定签名调用遵循 AAPCS64（寄存器、栈槽、HFA、`x8`、被调用方保存的寄存器）；Windows 可变参数调用把浮点放在整数寄存器中 | 固定签名直通；绝不共享宿主变参/va_list，经审计的可选参数需要显式入口（[abi-compatibility.md](abi-compatibility.md)） | 固定签名（T05）、纯整数可选 mode（T08 io）已验证；可变参数的差异已阅读 |
 | 数据模型为 LLP64：`long` 为 32 位 | 跨边界的客体 `long` 使用独立的 64 位类型 | 已阅读 |
 | 展开使用专门的 `.pdata`/`.xdata` 元数据与 SEH | 客体 DWARF 展开与宿主 thunk 是两个不同的问题 | 已阅读 |
+| [精确 unbiased interrupt time](https://learn.microsoft.com/en-us/windows/win32/api/realtimeapiset/nf-realtimeapiset-queryunbiasedinterrupttimeprecise) 单位为 100 ns，不计挂起；SDK 导入库为 mincore | 显式 timespec 转换及相对 monotonic 期限；不使用墙钟 sleep | 已阅读；T08 io 检查单位、墙钟 epoch 及最短 sleep 期限；挂起 NOT_RUN |
+| [WriteFile](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-writefile) 的两个 OVERLAPPED offset 均为 `0xFFFFFFFF` 时写入 EOF；同步句柄等待并更新文件指针 | 追加不使用先 seek 后 write，不向客体暴露 OVERLAPPED 对象 | 已阅读；T08 io 验证 seek 到开头后追加 |
 
 | JVM 只在 `System.loadLibrary` 加载的库中查找 `Java_*` native，不在嵌入它的程序中查找 | 宿主 native 用 `RegisterNatives` 注册（[decisions.md](decisions.md)） | 已验证（T01） |
 | 在这台电脑上（Adreno 8cx Gen 3），Vulkan loader 只提供 Mesa Dozen，即转换到 Direct3D 12 的 Vulkan 1.2 | `doctor` 报告 `VULKAN_DRIVER_TRANSLATED`；图形关卡需要厂商驱动或一项已记录的决定 | 已验证（`doctor`） |
@@ -53,6 +55,7 @@ Windows 11 ARM64 上构建或运行过（[port-audit.md](port-audit.md)）。
 | ELF TLS 有多种访问 model 及 TLSDESC（AOSP `elf-tls.md`） | 每种 model 要么明确支持，要么明确拒绝 | 已阅读 |
 | Bionic LP64 `pthread_t` 是 64 位 `long`，key 为有符号 32 位；LLVM emutls 描述符包含大小/对齐/object/初始值字段 | 使用显式客体类型和受管理 resolver，绝不用 Windows `long`、CRT pthread 对象或硬件线程指针切换 | 已阅读 NDK r30 头文件与 compiler-rt `emutls.c`；T08 验证 C 仿真 TLS 初始值/对齐及线程/key 语义 |
 | NDK LP64 mutex/condition 布局为 40/48 字节，对齐 4；静态类型/时钟位在 `pthread.h` 中；Bionic non-PI 递归计数为 11 位的深度减一 | 客体大小标记与宿主对象表，绝不复制宿主锁；不支持的属性/时钟明确失败 | 已阅读 NDK r30 头文件及 AOSP `pthread_mutex.cpp` / `pthread_cond.cpp`；T08 `sync` 覆盖已声明子集 |
+| AArch64 stat 为 128 字节，timespec 为两个有符号 64 位字段；open/open64 有可选整数 mode | 显式客体布局及三寄存器可选 mode 入口；绝不传递宿主 stat、long 或 va_list | 已阅读 NDK r30 `sys/stat.h`、`bits/timespec.h`、`fcntl.h`；T08 io 检查真实声明、哨兵范围、数值及带/不带 mode 调用 |
 
 ## MyGo
 

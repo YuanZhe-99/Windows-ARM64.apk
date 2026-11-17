@@ -38,9 +38,11 @@ moves. The Mac.apk points below hold at `3f35611` (merged 2026-11-16); "read" me
 | Point | Consequence | Checked |
 |---|---|---|
 | `x18` holds the TEB and `TPIDR_EL0` is reserved | guest TLS and shadow-call-stack schemes never use them; no swap on entry | verified: x18 is the TEB in every guest callback (T05 `host.state`) |
-| Fixed-signature calls follow AAPCS64 (registers, stack slots, HFAs, `x8`, callee-saved registers); variadic calls pass floating point in integer registers | fixed signatures call directly, variadic ones never cross ([abi-compatibility.md](abi-compatibility.md)) | verified for fixed signatures (T05); the variadic difference read |
+| Fixed-signature calls follow AAPCS64 (registers, stack slots, HFAs, `x8`, callee-saved registers); Windows variadic calls pass floating point in integer registers | fixed signatures call directly; never share host varargs/va_list, audited optional arguments need an explicit entry ([abi-compatibility.md](abi-compatibility.md)) | verified for fixed signatures (T05), integer-only optional mode (T08 io); the variadic difference read |
 | The data model is LLP64: `long` is 32-bit | guest `long` uses its own 64-bit type across the boundary | read |
 | Unwinding uses its own `.pdata`/`.xdata` metadata and SEH | guest DWARF unwinding and host thunks are separate problems | read |
+| [Precise unbiased interrupt time](https://learn.microsoft.com/en-us/windows/win32/api/realtimeapiset/nf-realtimeapiset-queryunbiasedinterrupttimeprecise) is in 100-ns units and excludes suspend; its SDK import library is mincore | explicit timespec conversion and relative monotonic deadlines; not wall-clock sleeps | read; T08 io tests units, wall-clock epoch and a minimum sleep deadline; suspend NOT_RUN |
+| [WriteFile](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-writefile) with both OVERLAPPED offsets at `0xFFFFFFFF` targets EOF; a synchronous handle waits and updates its file pointer | append does not seek then write or expose an OVERLAPPED object to the guest | read; T08 io verifies append after a seek to the beginning |
 
 | The JVM finds `Java_*` natives only in libraries loaded by `System.loadLibrary`, not in the program embedding it | host natives are registered with `RegisterNatives` ([decisions.md](decisions.md)) | verified (T01) |
 | On this PC (Adreno 8cx Gen 3) the Vulkan loader offers only Mesa Dozen, Vulkan 1.2 translated to Direct3D 12 | `doctor` reports `VULKAN_DRIVER_TRANSLATED`; graphics gates need a vendor driver or a recorded decision | verified (`doctor`) |
@@ -54,6 +56,7 @@ moves. The Mac.apk points below hold at `3f35611` (merged 2026-11-16); "read" me
 | ELF TLS has several access models and TLSDESC (AOSP `elf-tls.md`) | each model is supported or refused explicitly | read |
 | Bionic LP64 `pthread_t` is a 64-bit `long`, key is signed 32-bit; LLVM emutls uses size/alignment/object/initializer descriptor fields | explicit guest types and a managed resolver, never Windows `long`, CRT pthread objects or hardware thread-pointer swapping | read in NDK r30 headers and compiler-rt `emutls.c`; T08 verifies C emutls initialization/alignment and thread/key semantics |
 | NDK LP64 mutex/condition layouts are 40/48 bytes, alignment 4; static kind/clock bits are in `pthread.h`; Bionic non-PI recursion has an 11-bit depth-minus-one counter | guest-sized markers and host-side object tables, not copied host locks; unsupported attributes/clocks fail explicitly | NDK r30 headers and AOSP `pthread_mutex.cpp` / `pthread_cond.cpp` read; T08 `sync` covers the declared subset |
+| AArch64 stat is 128 bytes and timespec is two signed 64-bit fields; open/open64 have an optional integer mode | explicit guest layout and three-register optional-mode entry; never pass host stat, long or va_list | NDK r30 `sys/stat.h`, `bits/timespec.h`, `fcntl.h` read; T08 io checks actual declarations, sentinel bounds, values and mode/no-mode calls |
 
 ## MyGo
 

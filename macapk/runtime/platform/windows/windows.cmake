@@ -68,7 +68,7 @@ target_include_directories(native-probe PRIVATE
   "${CMAKE_CURRENT_LIST_DIR}/../../guest/loader" "${CMAKE_CURRENT_LIST_DIR}/../../translator/include")
 target_compile_definitions(native-probe PRIVATE WINAPK_VERSION="${WINAPK_VERSION}" UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX _CRT_SECURE_NO_WARNINGS)
 target_compile_options(native-probe PRIVATE /W4 /EHsc -Wno-missing-field-initializers)
-target_link_libraries(native-probe PRIVATE capstone::capstone psapi)
+target_link_libraries(native-probe PRIVATE capstone::capstone psapi mincore)
 
 if(WINAPK_BIN_DIR)
   set_target_properties(winapk winapk-bridge native-probe PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${WINAPK_BIN_DIR}")

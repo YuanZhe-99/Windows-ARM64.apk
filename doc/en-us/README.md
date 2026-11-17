@@ -38,6 +38,7 @@ Active work continues with `PLAN.md` §10 (P3: Bionic, threads, errno, TLS) and 
 loading an APK's libraries in `winapk run`). The independent T08 thread foundation now covers
 managed pthreads, errno, keys/destructors, explicitly emulated C TLS and untimed mutex/condition
 synchronization. T07 adds transactional dependency graphs, constructors and guest dl APIs;
+T08 also covers private-heap allocation, byte/strings and mapped regular-file/time APIs.
 neither enables full N1 or APK native loading. Front-end integration is deferred while the backend progresses.
 
 ## Upstream versions

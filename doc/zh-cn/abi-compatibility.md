@@ -36,11 +36,13 @@ Native`）；下文的用例名即其本身的名称。2026-11-04 在 [platform-
 | 宿主的可变参数函数（`printf`、`__android_log_print`） | — | 需要一个读取客体参数、再调用类型明确的宿主函数的 thunk；不在 N0 中 | 尚无（P3） |
 | `va_list` | 绝不 | 绝不 | — |
 | 通过导入共享的数据（客体经 GLOB_DAT 读写的宿主变量） | — | 两侧布局相同的类型可直通 | `import.call` |
-| 布局不同的结构体（`stat`、`timespec`、`sockaddr`） | 显式的客体布局与转换（P3） | 同左 | 尚无 |
+| `stat`、`timespec` | 显式 128/16 字节客体布局及转换，绝不使用宿主 CRT 对象 | 同左 | T08 `io`：NDK 布局断言、stat 哨兵/值、墙钟 epoch/单位及 monotonic 期限 |
+| 其他不同布局（`sockaddr` 等） | 不支持 | 不支持 | — |
 | Android mutex/condition 对象 | 不透明客体存储，40/48 字节，按 4 字节对齐；绝不在其中存放宿主锁 | 固定指针签名；代际/地址表拥有宿主状态 | T08（`sync`）：类型、竞争、等待/重锁、生命周期与拒绝用例 |
 | 线程/key shim 与 C 仿真 TLS | 固定整数/指针签名；Android `pthread_t` 用 `int64_t`，key 用 `int32_t` | 显式包装；不把宿主 pthread/CRT 对象交给客体 | T08（`threads`）；见 [native-profiles.md](native-profiles.md) |
 | 客体 dl API | 固定指针/int 签名，客体不透明句柄标识 | 仅限模块命名空间；绝不传递 Windows 加载器句柄或任意宿主符号 | T07：往返、错误读取清除、标志及无效/已关闭句柄 |
 | 内存、字节与字符串 | 显式 64 位客体大小/长度，固定指针/int | 运行时所有的堆及归属检查；仅字节包装，不共享分配器/CRT 对象 | T08 `memory`：零值/溢出/失败、重叠/无符号字节、UTF-8、跨线程归属及无效释放 |
+| `open`/`open64` 可选 mode | — | 专用固定 `(pointer, int32, uint32)` 入口仅在创建时读取 x2；不使用宿主变参或共享 va_list | T08 `io`：双参数 open、三参数 create、fortified `__open_2` 及不支持的标志/模式 |
 | `long double`、C++ 类、异常 | 不受支持 | 不受支持 | — |
 
 直通指宿主通过匹配的宿主原型的指针调用，或客体的导入被绑定到宿主函数的地址，中间没有任何东西。只有本表列出的签名
