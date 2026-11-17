@@ -133,7 +133,8 @@ func (a *App) dropZonesView(c *ui.Context, g *group, t string) {
 		zone := ui.Box(c.Key("drop-" + t + "-" + string(rune('0'+z.zone)))).Absolute().
 			LeftPercent(z.x).TopPercent(z.y).WidthPercent(z.w).HeightPercent(z.h).Radius(radiusCard).Center()
 		fg := p.muted
-		if _, on := ui.DragOver[tabDrag](zone); on {
+		if d, on := ui.DragOver[tabDrag](zone); on {
+			a.dragging = d.tab
 			zone.Background(p.accent.Alpha(0.25)).Border(2, p.accent)
 			fg = p.accentText
 		}
