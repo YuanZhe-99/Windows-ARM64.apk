@@ -138,6 +138,8 @@ public static class WinApkTestWin {
   [DllImport("user32.dll")] public static extern bool SetProcessDpiAwarenessContext(IntPtr c);
   [DllImport("user32.dll")] public static extern bool IsIconic(IntPtr h);
   [DllImport("user32.dll")] public static extern uint GetDpiForWindow(IntPtr h);
+  // PROCESS_MITIGATION_CONTROL_FLOW_GUARD_POLICY is one DWORD; policy index 7.
+  [DllImport("kernel32.dll")] public static extern bool GetProcessMitigationPolicy(IntPtr p, int policy, out uint flags, UIntPtr size);
   [DllImport("user32.dll")] static extern IntPtr MonitorFromPoint(long pointXY, uint flags);  // POINT by value: (0, 0) is 0
   [DllImport("shcore.dll")] static extern int GetDpiForMonitor(IntPtr m, int type, out uint x, out uint y);
   // The primary display's current (effective) DPI, as winapk run reads it.
@@ -450,7 +452,7 @@ function Test-Java {
     $h3 = Find-AppWindow $p3.Id 'Hello JNI'
     $res = Wait-Log $log3 'JNI: native\.(value|error)=(.*)' 30
     $text3 = Read-Log $log3
-    Check 'G1.5.inspect' ($text3 -match 'guest native is off: the APK''s 1 native libraries \(arm64-v8a\)') 'winapk run reports the APK''s native library'
+    Check 'G1.5.inspect' ($text3 -match 'guest native is off: the APK''s 3 native libraries \(arm64-v8a\)') 'winapk run reports the APK''s native libraries'
     Check 'G1.5.load-refused' ($res -and $res.Groups[1].Value -eq 'error' -and $res.Groups[2].Value -match '^GUEST_NATIVE_DISABLED: libhello\.so') "System.loadLibrary: $(if ($res) { $res.Value })"
     if ($h3 -ne [IntPtr]::Zero) { $code3 = Close-App $h3 $p3 } else { if (-not $p3.HasExited) { $p3.Kill() }; $code3 = $null }
     Check 'G1.5.exit' ($code3 -eq 0) "the app kept running and closed normally (exit $code3)"
@@ -724,6 +726,11 @@ function Test-Jni {
         $arguments = @("`"$jdk`"", "`"$fixture`"", "`"$helper`"") + $variant.Extra
         $p = Start-Process (Join-Path $out 'bin\jni-probe.exe') -ArgumentList $arguments -NoNewWindow -PassThru -RedirectStandardOutput $stdout -RedirectStandardError $stderr
         try {
+            if ($variant.Name -eq 'positive') {
+                $cfg = [uint32]0
+                $cfgQueried = [WinApkTestWin]::GetProcessMitigationPolicy($p.Handle, 7, [ref]$cfg, [UIntPtr]4)
+                Write-Host "diagnostic T09.positive.cfg=$($cfg -band 1) query=$cfgQueried"
+            }
             if (-not $p.WaitForExit(15000)) {
                 $p.Kill(); $p.WaitForExit()
                 Check "T09.$($variant.Name).deadline" $false 'exceeded 15 seconds'
@@ -735,7 +742,7 @@ function Test-Jni {
                 $cases = [regex]::Matches($text, '(?m)^case (T09\.\S+) (PASS|FAIL)')
                 foreach ($c in $cases) { Check $c.Groups[1].Value ($c.Groups[2].Value -eq 'PASS') $c.Groups[2].Value }
                 $compilation = [IO.File]::ReadAllText((Join-Path $logs 'T09-compilation.xml'))
-                $ok = $p.ExitCode -eq 0 -and $cases.Count -eq 9 -and $text -match 'result T09.foundation PASS \(not G3\)' -and
+                $ok = $cfgQueried -and $p.ExitCode -eq 0 -and $cases.Count -eq 9 -and $text -match 'result T09.foundation PASS \(not G3\)' -and
                       [string]::IsNullOrWhiteSpace($err) -and $text -notmatch '(?i)WARNING|FATAL ERROR' -and
                       $compilation -match "<nmethod\b[^>]*method='com.winapk.probe.GuestJniProbe implicit \(I\)I'"
             } else {
@@ -746,7 +753,7 @@ function Test-Jni {
     }
 }
 
-<# Checks the actual APK loading path and Activity values; this small increment is not full G3. #>
+<# Runs the source-owned T09/G3 APK matrix, normal close, disabled mode and explicit JNI refusal. #>
 function Test-ApkJni {
     $script:appSize = '360x720'
     $logs = Join-Path $out 'test-data\logs'
@@ -755,23 +762,58 @@ function Test-ApkJni {
     $apk = Join-Path $repo 'tests\fixtures\hello-jni.apk'
     $record = Get-Content (Join-Path $repo 'tests\fixtures\hello-jni.json') -Raw | ConvertFrom-Json
     Check 'T09.apk.hash' ($record.apkSha256 -eq (Get-FileHash $apk -Algorithm SHA256).Hash.ToLower()) 'APK source/build record'
-    foreach ($mode in 'off', 'restricted') {
-        $log = Join-Path $logs "T09-apk-$mode.log"
+    foreach ($variant in @(
+        @{ Name = 'off'; Mode = 'off' },
+        @{ Name = 'restricted'; Mode = 'restricted' },
+        @{ Name = 'unsupported'; Mode = 'restricted' }
+    )) {
+        $mode = $variant.Mode
+        $log = Join-Path $logs "T09-apk-$($variant.Name).log"
         $oldOptions = $env:JAVA_TOOL_OPTIONS
         try {
-            $env:JAVA_TOOL_OPTIONS = "$oldOptions -Xcheck:jni"
+            if ($variant.Name -eq 'restricted') { $env:JAVA_TOOL_OPTIONS = "$oldOptions -Xcheck:jni" }
             $p = Start-App $apk $data $log $mode
         } finally { $env:JAVA_TOOL_OPTIONS = $oldOptions }
         $h = Find-AppWindow $p.Id 'Hello JNI' 15
+        $cfg = [uint32]0
+        $policy = [WinApkTestWin]::GetProcessMitigationPolicy($p.Handle, 7, [ref]$cfg, [UIntPtr]4)
+        Write-Host "diagnostic T09.apk.$($variant.Name).cfg=$($cfg -band 1) query=$policy"
         $result = Wait-Log $log 'JNI: native\.(value|error)=(.*)' 10
+        $ready = Wait-Log $log 'delivering window focus to org\.winapk\.fixture\.jni\.MainActivity \(surface ready\)' 15
         $ok = $result -and $(if ($mode -eq 'off') {
             $result.Groups[1].Value -eq 'error' -and $result.Groups[2].Value.StartsWith('GUEST_NATIVE_DISABLED:')
-        } else { $result.Groups[1].Value -eq 'value' -and $result.Groups[2].Value.Trim() -eq '43 checks=PASS' })
-        $ok = $ok -and (Read-Log $log) -notmatch 'WARNING in native method|FATAL ERROR in native method'
-        Check "T09.apk.$mode" $ok "$(if ($result) { $result.Value })"
+        } else { $result.Groups[1].Value -eq 'value' -and $result.Groups[2].Value.Trim() -eq '43 checks=PASS matrix=PASS' })
+        $ok = $ok -and $policy -and $h -ne [IntPtr]::Zero -and $null -ne $ready -and
+              (Read-Log $log) -notmatch 'WARNING in native method|FATAL ERROR in native method'
+        Check "T09.apk.$($variant.Name)" $ok "$(if ($result) { $result.Value })"
+        if ($variant.Name -eq 'restricted' -and $ok -and $h -ne [IntPtr]::Zero) {
+            $layout = Wait-Log $log 'JNI: refusal.bounds=(\d+,\d+,\d+,\d+)' 5
+            if ($layout) {
+                Add-Type -AssemblyName System.Drawing
+                $rect = New-Object WinApkTestWin+RECT
+                [WinApkTestWin]::GetClientRect($h, [ref]$rect) | Out-Null
+                $bitmap = New-Object System.Drawing.Bitmap $rect.R, $rect.B
+                $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
+                $dc = $graphics.GetHdc()
+                try { [WinApkTestWin]::PrintWindow($h, $dc, 3) | Out-Null }
+                finally { $graphics.ReleaseHdc($dc); $graphics.Dispose() }
+                try { $bitmap.Save((Join-Path $logs 'T09-apk-activity.png')) }
+                finally { $bitmap.Dispose() }
+            }
+        }
+        if ($variant.Name -eq 'unsupported') {
+            $bounds = Wait-Log $log 'JNI: refusal.bounds=(\d+,\d+,\d+,\d+)' 5
+            if ($bounds -and $h -ne [IntPtr]::Zero) { Send-Tap $h $bounds.Groups[1].Value }
+            $exited = $p.WaitForExit(5000)
+            $reason = Read-Log $log
+            Check 'T09.apk.unsupported.refused' ($ok -and $exited -and $p.ExitCode -eq 3 -and
+                $reason -match 'GUEST_ABI_UNSUPPORTED JNI: unsupported entry \(slot 217\)') "exit $(if ($exited) { $p.ExitCode }); MonitorEnter refused"
+            if (-not $exited) { $p.Kill() }
+            continue
+        }
         if ($h -ne [IntPtr]::Zero) { $code = Close-App $h $p }
         else { if (-not $p.HasExited) { $p.Kill() }; $code = $null }
-        Check "T09.apk.$mode.exit" ($code -eq 0) "exit $code"
+        Check "T09.apk.$($variant.Name).exit" ($code -eq 0) "exit $code"
     }
     # Mutate only one APK ZIP entry: reject traversal before DEX conversion or any guest execution.
     $bad = Join-Path $data 'unsafe-library.apk'

@@ -138,12 +138,31 @@ JVM 专属 `1bad` 声明即使有匹配导出也保持未解析，符合 JNI 歧
 拒绝错误版本、pending exception、数据型 hook 及重复失败加载。
 独立终止 hook 用例证明无效版本 hook 不能留下可用的 native 绑定。
 
-`-Suite ApkJni` 是首批产品路径增量，不是完整 G3 矩阵：两个 Activity 启动（off/restricted）
-加一个 ZIP 路径穿越拒绝，共六项检查。Activity 断言真实 native 结果 43、显式注册、
-跨 System/Runtime load/loadLibrary 的仅一次 hook、Android 命名、加载后才定义的类、
-缺失库及准入目录以外的路径。两次启动均启用 CheckJNI，必须正常关闭。
-畸形条目在 DEX 转换或 boot 之前拒绝。夹具源码/构建参数及哈希仍记录于 `hello-jni.json`；
-不增加大范围应用扫描或重复压力循环。
+`-Suite ApkJni` 运行 T09 的 G3 Activity 矩阵：off/restricted 正常关闭启动、一个必要的不支持 JNI
+终止启动，以及一个 ZIP 路径穿越拒绝，共八项检查。Activity 断言真实 native 结果 43、显式注册、
+仅一次 System/Runtime 加载、Android 命名、后加载类导出及缺失/目录外拒绝。
+还检查字符串/数组、long/float/double 和实例结果、异常传播/清除、仅由依赖导出的方法、
+依赖 hook 分离、错误版本拒绝缓存及附着 guest worker 的嵌套回调。
+正例矩阵启用 CheckJNI；全部启动等待真实 surface-ready 事件。
+拒绝按钮调用 MonitorEnter，必须退出 3 并报告槽位 217，不返回替代结果。
+截图为 `T09-apk-activity.png`，不替代数值检查。ZIP 路径穿越在 DEX 转换或 boot 之前拒绝。
+`hello-jni.json` 记录源码/链接、SONAME 参数及哈希；不增加大范围应用扫描或重复压力循环。
+
+CFG 实验在独立的 `build/windows-arm64/native/CFGDebug` 目录重复 `Build-Host` 的 CMake
+配置/构建参数，保持 Debug/ARM64 及相同的输出 bin，并添加以下 CMake 参数：
+
+```powershell
+'-DCMAKE_CXX_FLAGS=/DWIN32 /D_WINDOWS /EHsc /guard:cf'
+'-DCMAKE_EXE_LINKER_FLAGS=/guard:cf'
+'-DCMAKE_SHARED_LINKER_FLAGS=/guard:cf'
+```
+
+运行 Host、Java、Native、Bionic、Jni 和 ApkJni 后，在相同 ARM64 开发 shell 中执行
+`cmake --build build/windows-arm64/native/Debug --clean-first` 恢复普通构建。
+两个构建树共享 bin，单独增量构建 Host 可能保留较新的 CFG 产物；恢复后要求两种运行中进程查询均为 CFG=0。
+Jni 和 ApkJni 查询运行中进程的 CFG 策略；native 注册组还在 CFG 启用时，对照运行中 GFID 表验证
+每个静态 PE 入口。检查 PE 加载配置，不仅检查请求的编译参数。这只验证已声明 profile 的 CFG，
+不证明任意客体控制流安全，也不是安全沙箱。
 
 `winapk run` 把每个应用的数据放在 `%LOCALAPPDATA%\Windows-ARM64.apk\Apps` 下（`--data-dir` 可改）：`android\`
 是应用看到的 Android 根目录（`data\data\<package>`、`sdcard`），`code\<package>\` 是转换后的代码及缓存戳，

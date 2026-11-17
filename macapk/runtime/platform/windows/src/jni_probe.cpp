@@ -1,11 +1,13 @@
 // P4 JNI foundation with a real ARM64 JVM, not APK admission or G3.
 #include "doctor.h"
 #include "../../../guest/jni/bridge.h"
+#include "../../../guest/jni/entries.h"
 #include "../../../guest/bionic/threads.h"
 #include "../../../guest/bionic/libraries.h"
 
 #include <windows.h>
 #include <cstdio>
+#include <cstring>
 #include <filesystem>
 
 namespace {
@@ -78,6 +80,40 @@ int Nested(int closing) {
 
 /// Records an actually executed key destructor after it has checked its JNI/TLS context.
 void ContextExit(int ok) { contextExits += ok ? 1 : 100; }
+
+/// Checks that every advertised PE entry is aligned and listed as a valid target when CFG is active.
+/// Notes: reads this trusted, OS-loaded image, not an untrusted PE input; no guest entry executes here.
+bool NativeEntryTargets() {
+    PROCESS_MITIGATION_CONTROL_FLOW_GUARD_POLICY policy{};
+    if (!GetProcessMitigationPolicy(GetCurrentProcess(), ProcessControlFlowGuardPolicy, &policy, sizeof policy))
+        return false;
+    for (void* entry : winapk::guest::winapk_jni_entries)
+        if (reinterpret_cast<uintptr_t>(entry) & 15) return false;
+    if (!policy.EnableControlFlowGuard) return true;
+    auto* base = reinterpret_cast<uint8_t*>(GetModuleHandleW(nullptr));
+    auto* dos = reinterpret_cast<IMAGE_DOS_HEADER*>(base);
+    auto* nt = reinterpret_cast<IMAGE_NT_HEADERS64*>(base + dos->e_lfanew);
+    const auto& directory = nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_LOAD_CONFIG];
+    if (directory.Size < offsetof(IMAGE_LOAD_CONFIG_DIRECTORY64, GuardFlags) + sizeof(DWORD)) return false;
+    auto* config = reinterpret_cast<IMAGE_LOAD_CONFIG_DIRECTORY64*>(base + directory.VirtualAddress);
+    if (!(config->GuardFlags & IMAGE_GUARD_CF_FUNCTION_TABLE_PRESENT)) return false;
+    auto* table = reinterpret_cast<const uint8_t*>(config->GuardCFFunctionTable);
+    const size_t stride = 4 + (config->GuardFlags >> 28); // PE guard flags encode extra bytes per GFID.
+    size_t found = 0;
+    for (void* entry : winapk::guest::winapk_jni_entries) {
+        const uintptr_t rva = reinterpret_cast<uintptr_t>(entry) - reinterpret_cast<uintptr_t>(base);
+        bool admitted = false;
+        for (uint64_t i = 0; i < config->GuardCFFunctionCount; i++) {
+            uint32_t target;
+            std::memcpy(&target, table + i * stride, sizeof target);
+            if (target == rva && (stride == 4 || !(table[i * stride + 4] & 1))) { admitted = true; break; }
+        }
+        if (!admitted) return false;
+        found++;
+    }
+    std::printf("diagnostic native-entry.cfg=1 gfids=%zu\n", found);
+    return found == 64;
+}
 }  // namespace
 
 /// Starts one native JVM and runs a compact descriptor/varargs/reference/thread contract matrix.
@@ -162,7 +198,7 @@ int wmain(int argc, wchar_t** argv) {
             if (loaded) nativeType = static_cast<jclass>(env->NewLocalRef(guestType));
             jmethodID runNatives = loaded ? env->GetStaticMethodID(guestType, "runNatives", "()Z") : nullptr;
             jboolean called = runNatives ? env->CallStaticBooleanMethodA(guestType, runNatives, nullptr) : JNI_FALSE;
-            const bool ok = !env->ExceptionCheck() && !registration.result && called == JNI_TRUE;
+            const bool ok = !env->ExceptionCheck() && !registration.result && called == JNI_TRUE && NativeEntryTargets();
             std::printf("case T09.native %s registration=%d\n", ok ? "PASS" : "FAIL", registration.result);
             if (!ok) result = 3;
             if (guestType) env->DeleteLocalRef(guestType);

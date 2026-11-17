@@ -40,6 +40,7 @@ Windows 11 ARM64 上构建或运行过（[port-audit.md](port-audit.md)）。
 | 固定签名调用遵循 AAPCS64（寄存器、栈槽、HFA、`x8`、被调用方保存的寄存器）；Windows 可变参数调用把浮点放在整数寄存器中 | 固定签名直通；绝不共享宿主变参/va_list，经审计的可选参数需要显式入口（[abi-compatibility.md](abi-compatibility.md)） | 固定签名（T05）、纯整数可选 mode（T08 io）已验证；可变参数的差异已阅读 |
 | 数据模型为 LLP64：`long` 为 32 位 | 跨边界的客体 `long` 使用独立的 64 位类型 | 已阅读 |
 | 展开使用专门的 `.pdata`/`.xdata` 元数据与 SEH | 客体 DWARF 展开与宿主 thunk 是两个不同的问题 | 已阅读 |
+| [CFG](https://learn.microsoft.com/en-us/windows/win32/secbp/control-flow-guard) 需要编译器/链接器插桩与有效目标元数据；VirtualAlloc/VirtualProtect 的可执行页默认是有效目标 | PE JNI 入口提供显式 GFID；检查 Guard/CF Instrumented/FID table 标志及真实进程策略；客体跳转仍显式筛查，不是沙箱 | Debug `/guard:cf` Host/Java/Native/Bionic/Jni/ApkJni PASS；运行策略启用，已加载 GFID 表包含全部 64 个 PE 入口 |
 | [精确 unbiased interrupt time](https://learn.microsoft.com/en-us/windows/win32/api/realtimeapiset/nf-realtimeapiset-queryunbiasedinterrupttimeprecise) 单位为 100 ns，不计挂起；SDK 导入库为 mincore | 显式 timespec 转换及相对 monotonic 期限；不使用墙钟 sleep | 已阅读；T08 io 检查单位、墙钟 epoch 及最短 sleep 期限；挂起 NOT_RUN |
 | [WriteFile](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-writefile) 的两个 OVERLAPPED offset 均为 `0xFFFFFFFF` 时写入 EOF；同步句柄等待并更新文件指针 | 追加不使用先 seek 后 write，不向客体暴露 OVERLAPPED 对象 | 已阅读；T08 io 验证 seek 到开头后追加 |
 | [AddVectoredExceptionHandler](https://learn.microsoft.com/en-us/windows/win32/api/errhandlingapi/nf-errhandlingapi-addvectoredexceptionhandler) 的 First=1 先于现有处理器；未知故障必须继续搜索 | 只处理已注册客体可执行 PC；JVM/JIT 及所有其他 PC 仍走正常链；不替换 HotSpot 处理器 | T08 宿主 SEH 及 T09 Java/JIT 异常、客体 trap：PASS；First=0 在锁定的 Microsoft JVM 中未收到客体 trap，由 JVM 退出 1 |

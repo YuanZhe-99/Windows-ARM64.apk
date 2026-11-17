@@ -56,7 +56,7 @@ void Limitations(Report& r) {
     auto add = [&](const char* id, const std::string& why) { r.limitations.emplace_back(id, why); };
     if (r.host.processArch != "arm64") add("HOST_ARCH_UNSUPPORTED", "winapk runs as " + r.host.processArch + ", not native arm64");
     if (r.jvm.started != "ok") add("DEPENDENCY_MISSING", "JVM: " + r.jvm.started);
-    add("GUEST_ABI_UNSUPPORTED", "guest native defaults off; restricted APK loading is experimental and full N1/G3 acceptance is unfinished");
+    add("GUEST_ABI_UNSUPPORTED", "guest native defaults off; restricted C/JNI profile only, not arbitrary NDK/C++/ELF TLS or graphics compatibility");
     add("ANGLE_NOT_BUILT", "no ANGLE for Windows ARM64 yet (P5a): no OpenGL ES");
     if (r.vulkan.loader != "available") {
         add("GRAPHICS_CAPABILITY_MISSING", "Vulkan loader: " + r.vulkan.loader);

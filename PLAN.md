@@ -6,7 +6,7 @@
 >
 > 图形方向：Android Vulkan → ABI/WSI 适配 → Windows 原生 Vulkan；Android OpenGL ES/EGL → ANGLE → Vulkan。ANGLE/D3D11 是独立、可配置的备选后端。
 
-> **状态（2026-11-16）：开发进行中（版本 0.1.0，尚未发布）。** P0–P2 已完成（G0、G1、G2 通过），当前推进 P3（§10）与 P4（§11）。
+> **状态（2026-11-17）：开发进行中（版本 0.1.0，尚未发布）。** G0–G3 已通过所声明的 profile；P3/P4 的契约与限制见 `doc/en-us/native-profiles.md`，当前按依赖推进 P5/P6；厂商 Vulkan 驱动仍缺失。
 > 当前进度、上游版本与已验证项见 `doc/zh-cn/README.md` 与 `doc/zh-cn/platform-notes.md`。
 
 - 编写日期：2026-11-03。
@@ -301,7 +301,7 @@ P2 与 G2（独立 `native-probe.exe` 上的 profile N0、ABI 正例 T05、提�
 - **N0 准入条件、加载顺序、重定位支持表、静态筛查与拒绝类别：** `doc/en-us/native-profiles.md`。
 - **宿主 ↔ 客体调用约定对比及直通 / 需 thunk / 不支持签名表：** `doc/en-us/abi-compatibility.md`。
 - **G2 验收证据：** `doc/en-us/platform-notes.md`。
-- **转入 P3/P4 的未完成项：** N0 仅绑定固定签名宿主函数，尚未动态生成宿主 thunk；P3/P4 引入宿主 thunk（如可变参数桥、`RegisterNatives` Java→客体入口）时，必须按 Windows ARM64 要求处理可调用目标和展开信息，并在目标进程实际缓解策略（含启用 CFG 的构建，当前为 `NOT_RUN`）下测试。`winapk run` 中客体原生当前仍默认关闭。
+- **P3/P4 延续项已落实：** 使用静态 PE JNI 入口而非动态生成 thunk；Windows 展开信息、16 字节对齐及显式 GFID 均已核实，启用 CFG 的真实进程回归通过（`doc/en-us/abi-compatibility.md`、`platform-notes.md`）。`winapk run` 中客体原生仍默认关闭；不宣称客体 C++ 展开或任意控制流安全。
 
 ## 10. P3 — Bionic、线程、TLS 与客体模块语义
 
@@ -320,33 +320,14 @@ P4 继续验证 JNI/APK 接入、线程 JNI 状态清理及 JVM/客体混合故�
 
 ## 11. P4 — JNI 与 APK 原生库集成
 
-进度（2026-11-17）：首个独立 T09 JNI 基础增量已真机验证，不是 G3。
-每线程 JNIEnv/JavaVM 代理、客体 ABI 的 .../V→A 解码、构造/静态/实例/非虚调用、
-引用/字符串/数组、pending exception、隔离 loader 查询及普通/daemon worker attach/detach 通过。
-JVM/客体 trap 与访问违规边界通过，热 Java 空指针/除零仍由 JVM 正常处理；
-仅注册客体 PC 的诊断不拦截 JVM 所有的异常。测试四组语义共用进程及四个短负例进程，共 11 项，不加重复压力。
-完整回归 requirements/build All、Host 23、Java 43、Native 58、Bionic 104、Jni 11 通过。
-长期契约与限制见 `doc/en-us/native-profiles.md`，证据见 `doc/en-us/platform-notes.md`。
-Java→guest native 签名 thunk、显式/导出名绑定、JNI_OnLoad 与 APK 加载仍待完成，§11.2/G3 不整体勾选。
-后续线程绑定增量保持 errno/key/仿真 TLS 跨宿主入口存续，支持同一绑定的嵌套回调；
-JNI 代理销毁前执行 key/TLS 清理，Bionic worker 借用既有上下文。T09 增至 13 项，
-不另加进程或压力循环；这仍不是 Java→guest native thunk 的证据。
-后续静态 PE 入口增量已通过真实 JVM RegisterNatives 双向调用：六种固定签名、25 参数寄存器/栈混合、
-对象/数组、异常、多层 Java↔guest 重入及普通/daemon worker native 回调。
-T09 增为 14 项；数据入口、非 native 方法、槽位超额及其他 ClassLoader 均拒绝，销毁后真实注销。
-宿主入口的 Windows 展开记录已静态解码；不宣称客体 C++ 展开或 CFG-enabled 通过。
-导出名、JNI_OnLoad、APK 接入及完整 G3 仍未完成。
-后续显式加载增量已验证根库专属/仅一次 JNI_OnLoad、版本/异常/数据入口拒绝、失败缓存及失败 hook
-注册入口的执行禁止；JNI short/long、int/long 重载、UTF-16 名称编码、依赖库导出及显式注册优先均通过。
-T09 共 24 项（同进程新增两个语义组及一个必要的失败 hook 入口终止进程），普通 NDK 链接库家族也已覆盖。
-完整回归 requirements/build All、Host 23、Java 43、Native 58、Bionic 104、Jni 24 通过；
-剩余为 DEX/ClassLoader 调用点、APK 库提取/CLI restricted 及 hello-jni Activity 的完整 G3。
-后续首批产品路径增量已接通 GuestNativeLoader、受控 APK ARM64 库提取与 CLI restricted（默认仍关闭）。
-ApkJni 六项、两个 Activity 进程及一个 ZIP 拒绝共 4.77 秒：真实返回值 43、显式注册/导出、
-System/Runtime load/loadLibrary/Android 命名、仅一次 hook、后定义类及缺失/目录外/条目越界拒绝均通过。
-两次启动启用 CheckJNI；完整 requirements/build All、Host 23、Java 43、Native 58、Bionic 104、
-Jni 24、ApkJni 6 通过。APK 夹具使用普通 NDK API-30 链接；API-24 紧凑 RX 元数据布局仍被保守扫描拒绝。
-完整 G3 仍需把双向值/异常、依赖/错误版本及 worker/嵌套回调放进 APK Activity 验收，不以独立 T09 代替。
+完成（2026-11-17）：G3 在已声明 C/Bionic/JNI 子集通过，不扩张为任意 NDK APK 兼容。
+长期契约与排除项见 `doc/en-us/native-profiles.md`，ABI/CFG 见 `abi-compatibility.md`，
+完整报告及源码/哈希证据见 `platform-notes.md`。独立 Jni 24 与真实 APK Activity 矩阵 ApkJni 8
+组合覆盖双向值/异常、显式/导出绑定、依赖/版本/一次性 hook、worker/嵌套回调及不支持 JNI 的真实终止。
+requirements/build All、Host 23、Java 43、Native 58、Bionic 104、Jni 24、ApkJni 8 均通过；
+独立 CFG Debug 构建也通过同一回归，运行中策略开启，64 个 PE 入口全部在有效目标表。
+普通构建已 clean-first 恢复并核对实际 CFG=0。客体 C++、ELF TLS、动态卸载及额外加载器仍明确不支持；
+API-24 紧凑 RX 元数据布局仍拒绝，APK 夹具使用普通 NDK API-30 链接。未发布、未擅自推送。
 
 ### 11.1 不能省略的加载适配
 
@@ -368,20 +349,22 @@ Windows JVM 的 `System.load()` 不能直接加载 ELF。上游 `NativeLoaderShi
 
 ### 11.2 JNI 双向桥
 
-- [ ] 宿主 `JavaVM*` / `JNIEnv*` 与客体可见的表/代理进行映射；不能凭结构相似直接复制整个函数表。
-- [ ] 正确处理 `GetEnv`、Attach/Detach、guest 线程附着与每线程 `JNIEnv`，禁止跨线程复用 `JNIEnv*`。
-- [ ] 支持基础引用、字符串、数组、方法查找和回调；正确传播 Java pending exception。
-- [ ] 对 `Call*Method`、`Call*MethodV`、`Call*MethodA` 与对象构造路径分别测试。
-- [ ] 对 `...` 和 `va_list` 路径，按方法签名解码 guest 参数，转换为 `jvalue[]` 后调用宿主 `A` 版本。
-- [ ] Java→guest native entry 也需按签名封送；guest→Java 的成功不能证明反方向成功。
-- [ ] `FindClass` 使用正确的 ClassLoader 上下文，覆盖依赖库与新建 guest 线程的场景。
-- [ ] 保留引用生命周期，处理局部/全局引用、数组 pin/release、字符串 UTF 编码和异常清理。
-- [ ] 静态/实例、重载、64 位整数、float/double、数组、对象及多层回调均有 fixture。
-- [ ] `JNI_OnUnload`/模块卸载能力按实现范围明确标注；MVP 可选择进程级生命周期，不宣称完整动态卸载。
+- [x] 宿主 `JavaVM*` / `JNIEnv*` 与客体可见的表/代理进行映射；不能凭结构相似直接复制整个函数表。
+- [x] 正确处理 `GetEnv`、Attach/Detach、guest 线程附着与每线程 `JNIEnv`，禁止跨线程复用 `JNIEnv*`。
+- [x] 支持基础引用、字符串、数组、方法查找和回调；正确传播 Java pending exception。
+- [x] 对 `Call*Method`、`Call*MethodV`、`Call*MethodA` 与对象构造路径分别测试。
+- [x] 对 `...` 和 `va_list` 路径，按方法签名解码 guest 参数，转换为 `jvalue[]` 后调用宿主 `A` 版本。
+- [x] Java→guest native entry 也需按签名封送；guest→Java 的成功不能证明反方向成功。
+- [x] `FindClass` 使用正确的 ClassLoader 上下文，覆盖依赖库与新建 guest 线程的场景。
+- [x] 保留引用生命周期，处理局部/全局引用、数组 pin/release、字符串 UTF 编码和异常清理。
+- [x] 静态/实例、重载、64 位整数、float/double、数组、对象及多层回调均有 fixture。
+- [x] `JNI_OnUnload`/模块卸载能力按实现范围明确标注；MVP 可选择进程级生命周期，不宣称完整动态卸载。
 
 JNI 的表布局、可变参数入口与引用规则以规范为准。[JNI Functions](https://docs.oracle.com/en/java/javase/21/docs/specs/jni/functions.html)
 
 ### G3 验收
+
+PASS（2026-11-17，所声明的 N1 C/JNI 子集）；以下全部由真实 APK/窗口路径与独立 ABI/JNI 回归共同覆盖。
 
 `hello-jni.apk` 必须覆盖：
 
@@ -621,7 +604,7 @@ Next blocking issue:
 
 ## 18. 构建与命令接口契约
 
-P0–P2 已实现的命令（含 `FrameworkRes`、`Fixtures`、`-Suite Host`、`winapk dex`、`native-probe`）以 `doc/en-us/development.md` 为准；下面列出完整阶段的命令接口契约（其中 `Graphics`、`--native=restricted`、`--gles-backend`、`--guest-vulkan`、`package.ps1` 随 P3–P7 实现）：
+P0–P4 已实现的命令（含 `FrameworkRes`、`Fixtures`、`Host`、`Jni`、`ApkJni`、`winapk dex`、`native-probe`、`--native=restricted`）以 `doc/en-us/development.md` 为准；下面列出完整阶段的命令接口契约（其中 `Graphics`、`--gles-backend`、`--guest-vulkan`、`package.ps1` 随 P5–P7 实现）：
 
 ```powershell
 # 盘点环境；只检查，不默默安装或修改系统配置。
@@ -682,7 +665,7 @@ P0–P2 已实现的命令（含 `FrameworkRes`、`Fixtures`、`-Suite Host`、`
 - [x] Windows ARM64 宿主构建与 Java 独立构建入口可用。
 - [x] G1：真实纯 Java APK 的界面、输入与持久化通过。
 - [x] G2：N0 ELF 与 ABI 测试在 ARM64 真机通过。
-- [ ] G3：受支持 N1 的 Bionic/TLS/JNI 测试通过，限制明确。
+- [x] G3：受支持 N1 的 Bionic/TLS/JNI 测试通过，限制明确。
 - [ ] G4：guest GLES 与 guest Vulkan 路径分别通过，不用宿主样例代替。
 - [ ] G5：干净环境实验包、文档、日志和兼容性报告完成。
 - [ ] 产品显示名称为 `Windows-ARM64.apk`；MyGo 前端按设计 Agent 参考 Kyokai 的方案实现，App 在主窗口窗格内和独立窗口中均可打开、交互及关闭。
@@ -694,4 +677,4 @@ P0–P2 已实现的命令（含 `FrameworkRes`、`Fixtures`、`-Suite Host`、`
 
 ## 20. 基线里程碑状态与当前起点
 
-首次工作会话的目标（P0 审计与工具链锁定、Java-only 独立构建、最小 Windows ARM64 宿主与 `doctor`、纯 Java APK 路线 G1、独立 N0 ELF/ABI 探测闭环 G2）均已完成并记录于 `doc/en-us/platform-notes.md`。当前起点为 §10（P3：Bionic、线程、errno、TLS）与 §11（P4：JNI 与在 `winapk run` 中接入 APK 原生库），图形集成（§12、§13）与实验版打包（§14）按 §6 依赖图依次推进。
+P0 审计/锁定、Java MVP（G1）、N0 ELF/ABI（G2）及已声明 C/Bionic/JNI 子集与真实 APK 集成（G3）均已完成，证据见 `doc/en-us/platform-notes.md`。层 A、B 在该范围 PASS；不是整个后端完成。当前起点为图形（§12、§13），随后按依赖推进 §14 后端交付；本机只有 Mesa Dozen 转换层 Vulkan，厂商 Vulkan 路径需设备或用户明确决定。前端暂缓；不提前勾选 G4/G5 或发布。

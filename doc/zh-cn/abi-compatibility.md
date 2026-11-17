@@ -54,9 +54,12 @@ Native`）；下文的用例名即其本身的名称。2026-11-04 在 [platform-
 ## 宿主侧的限制
 
 - N0 把导入绑定到宿主自己的函数；它不生成宿主 thunk，因此没有哪个 thunk 需要自己的展开数据或有效调用目标。
-  `native-probe.exe` 以 `winapk.exe` 的编译选项构建；二者都在允许动态代码、关闭 Control Flow Guard 的条件下运行
-  （`native-probe` 会打印该策略）。启用 CFG 或生成 thunk 的构建为 NOT_RUN。
+  `native-probe.exe` 以 `winapk.exe` 的编译选项构建；普通构建允许动态代码、关闭 Control Flow Guard
+  （`native-probe` 会打印该策略）。独立的 Debug `/guard:cf` 构建通过相同 G2/P3/T09/APK 套件；
+  运行中进程策略查询及 PE 加载配置证明 CFG 实际启用。运行时生成的 PE thunk 仍未实现。
 - 宿主状态只读：每次回调中将 x18 与 `NtCurrentTeb()` 比对并检查 sp，从不向 x18 写入哨兵值（`PLAN.md` §9.3）。
 - T09 的 native 入口表是静态链接 PE 代码，不是运行时生成代码。两个非叶汇编函数带有 Windows
   `.pdata/.xdata`；`llvm-readobj --unwind` 已解码 160/512 字节栈区域、frame/LR 及 x19 保存/恢复对。
-  此检查和真实 JNI 调用不证明客体异常展开或启用 CFG 的构建。
+  每个叶入口 16 字节对齐并显式列于 COFF GFID；native 注册组对照已加载 CFG 映像的有效目标表验证全部 64 个入口。
+  手写客体跳转仍依赖显式筛查目标准入，不推定编译器自动插桩。
+  这些检查均不证明客体 C++ 异常展开或任意客体安全。

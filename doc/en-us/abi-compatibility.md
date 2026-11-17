@@ -58,11 +58,16 @@ when this table lists it; the rest of a module's imports and exports are not cal
 
 - N0 binds imports to the host's own functions; it generates no host thunks, so none needs unwind
   data or a valid call target of its own. `native-probe.exe` is built with `winapk.exe`'s flags;
-  both run with dynamic code allowed and Control Flow Guard off (`native-probe` prints the policy).
-  A build with CFG or generated thunks is NOT_RUN.
+  the ordinary build runs with dynamic code allowed and Control Flow Guard off (`native-probe`
+  prints the policy). A separate Debug `/guard:cf` build passes the same G2/P3/T09/APK suites;
+  running-process policy queries and PE load configuration establish that CFG was actually on.
+  Runtime-generated PE thunks remain unimplemented.
 - Host state is only read: x18 against `NtCurrentTeb()` and sp in every callback, never a sentinel
   written to x18 (`PLAN.md` §9.3).
 - T09's native entry bank is statically linked PE code, not runtime-generated code. Its two
   non-leaf assembly functions have Windows `.pdata/.xdata`; `llvm-readobj --unwind` decoded
-  the 160/512-byte stack regions, frame/LR and x19 save/restore pairs. This inspection and
-  real JNI calls do not establish guest exception unwinding or a CFG-enabled build.
+  the 160/512-byte stack regions, frame/LR and x19 save/restore pairs. Every leaf is 16-byte
+  aligned and explicitly listed in COFF GFIDs; the native-registration group checks all 64
+  against the loaded CFG image's valid-target table. The manually written guest transfer still
+  relies on its explicit screened-target admission, not inferred compiler instrumentation.
+  None of these checks establish guest C++ exception unwinding or arbitrary guest safety.

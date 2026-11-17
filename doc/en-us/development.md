@@ -168,13 +168,36 @@ a matching export, as required by JNI's ambiguous-escape rule.
 Wrong versions, pending exceptions, data-valued hooks and repeated failed loads are refused.
 The separate fatal hook case proves that an invalid-version hook cannot leave a usable native binding.
 
-`-Suite ApkJni` is the initial product-path increment, not the complete G3 matrix: two Activity
-launches (off/restricted) plus one ZIP traversal refusal, six checks total. The Activity asserts
-the actual native result 43, explicit registration, once-only hook across System/Runtime
-load/loadLibrary, Android naming, a class defined after loading, a missing library and a path
-outside the admitted directory. Both launches run with CheckJNI and must close normally.
-The malformed entry is refused before DEX conversion or boot. Fixture source/build parameters
-and hashes remain in `hello-jni.json`; no broad app sweep or duplicate pressure loop is added.
+`-Suite ApkJni` runs T09's G3 Activity matrix: off/restricted normal-close launches and one
+necessary unsupported-JNI termination launch, plus a ZIP traversal refusal, eight checks total.
+The Activity asserts the native result 43, explicit registration, once-only System/Runtime
+loads, Android naming, late-class exports and missing/outside-directory refusal. It additionally
+checks strings/arrays, long/float/double and instance results, exception propagation/clearing,
+dependency-only exports, dependency hook separation, cached bad-version refusal and an attached
+guest worker's nested callback. The positive matrix runs with CheckJNI; all launches wait for the
+actual surface-ready event. The refusal button calls MonitorEnter and must exit 3 with slot 217,
+not return a stand-in result. The screenshot is `T09-apk-activity.png`, not a substitute for values.
+ZIP traversal is refused before DEX conversion or boot. `hello-jni.json` records source/links,
+SONAME arguments and hashes; no broad app sweep or duplicate pressure loop is added.
+
+For the CFG experiment, repeat `Build-Host`'s CMake configure/build arguments in the separate
+`build/windows-arm64/native/CFGDebug` directory, keeping Debug/ARM64 and the same output bin,
+and add these CMake flags:
+
+```powershell
+'-DCMAKE_CXX_FLAGS=/DWIN32 /D_WINDOWS /EHsc /guard:cf'
+'-DCMAKE_EXE_LINKER_FLAGS=/guard:cf'
+'-DCMAKE_SHARED_LINKER_FLAGS=/guard:cf'
+```
+
+Run Host, Java, Native, Bionic, Jni and ApkJni before restoring the ordinary build with
+`cmake --build build/windows-arm64/native/Debug --clean-first` in the same ARM64 developer shell.
+Because the two build trees share bin, an incremental Host build alone can keep newer CFG
+outputs; require CFG=0 in both running-process queries after restoration.
+Jni and ApkJni query the running process's CFG policy; the native
+registration group also verifies every static PE entry against its live GFID table when CFG is
+enabled. Check PE load configuration, not merely the requested compiler flags. This is CFG
+verification of the declared profile, not arbitrary guest control-flow safety or a security sandbox.
 
 `winapk run` keeps each app's data under `%LOCALAPPDATA%\Windows-ARM64.apk\Apps` (`--data-dir`
 moves it): `android\` is the Android root the app sees (`data\data\<package>`, `sdcard`),

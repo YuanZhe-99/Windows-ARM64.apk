@@ -24,23 +24,15 @@ MyGo 前端在手机式窗格或独立窗口中打开每个应用，每个 APK �
 
 ## 项目状态
 
-开发于 2026-11-16 在未发布的 0.1.0 版本恢复（2026-11-05 起曾暂停）。G0、G1 和 G2 在
-[platform-notes.md](platform-notes.md) 记录的 Windows 11 ARM64 机器上通过；G3、G4 和 G5 尚未运行。已有内容：
-`winapk run` 在 Win32 窗口中运行纯 Java 和 Kotlin APK；`native-probe.exe` 加载 profile N0 的客体 ELF 库并在其上运行
-ABI 测试集；MyGo 界面对接示例数据（`winapk.Mock`），尚不启动运行时。当前构建使用 Mac.apk `3f35611`、
-Go 1.27.4 和 MyGo v0.9.2。
+版本 0.1.0 尚未发布。G0–G3 在 [platform-notes.md](platform-notes.md) 记录的 Windows 11 ARM64
+机器上通过：Java/Kotlin APK、N0 ELF/ABI、已声明 C/Bionic 子集及真实 hello-jni Activity 矩阵。
+`--native=restricted` 必须显式指定，原生默认仍关闭。T09 覆盖双向 JNI、类型数值、异常、
+依赖、加载 hook、worker/嵌套回调及不支持入口的明确失败。
+独立启用 CFG 的构建与恢复后的普通构建均通过完整回归。
 
-P3 已声明子集已完成；后续工作按 `PLAN.md` §11（P4：JNI，以及在 `winapk run` 中加载 APK 的库）推进。
-独立 T08 线程基础现已覆盖受管理 pthread、errno、key/析构、显式仿真 C TLS 与无超时 mutex/condition 同步；
-T07 新增事务式依赖图、构造函数与客体 dl API；两者均不开放完整 N1 或 APK 原生库加载。
-T08 还覆盖私有堆分配、字节/字符串及映射常规文件/时间 API。
-P3 已声明的 C/Bionic 准入现已通过普通 NDK 链接的 C 夹具，包含逻辑系统库、版本与真实 CRT 生命周期回调。
-完整 N1/JNI 及 APK 原生库加载仍属于 P4/G3。
-独立的真实 JVM `jni-probe.exe` 已通过 T09 双向 JNI 调用，包含显式注册的静态 PE 入口、
-引用/异常、嵌套回调及 worker 附着。独立 JNI_OnLoad 和 short/long/Unicode 导出绑定也已通过；
-首批 APK 调用点集成通过 hello-jni 真实 Activity 返回值、重复 System/Runtime 加载、
-仅一次 hook、后加载类绑定及加载边界拒绝。完整 Activity/G3 矩阵仍未完成。
-优先推进后端，暂缓前端集成。
+这不表示任意 NDK/C++/ELF-TLS 或图形兼容。P5/P6 图形及 G4/G5 仍未验证；
+本机仅有 Mesa Dozen 转换层 Vulkan、没有厂商驱动，该路径需要硬件或明确决定。
+MyGo 界面仍使用 `winapk.Mock`，暂缓前端集成。当前为 Mac.apk `3f35611`、Go 1.27.4、MyGo v0.9.2。
 
 ## 上游版本
 

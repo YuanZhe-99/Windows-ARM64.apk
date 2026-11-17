@@ -3,12 +3,16 @@
 Guest native code is off by default and runs only within a declared, tested profile
 (`PLAN.md` §5.2). The loader is `macapk/runtime/guest/loader/elf_loader.cpp`, used by the
 standalone probes and the explicit `winapk run --native=restricted` APK path.
-That path passes the first hello-jni Activity checks, not the full G3 matrix.
+That path passes G3 for the declared, source-owned C/JNI subset on this PC, including the
+hello-jni Activity matrix and explicit unsupported-entry termination. This does not admit
+arbitrary NDK binaries. Each static PE JNI entry is 16-byte aligned with explicit COFF GFIDs;
+PE load configuration, all 64 live targets and actual process policy are checked in a separate
+CFG build. Default-build and CFG-build results are reported separately.
 
 | Profile | State |
 |---|---|
 | N0, an auditable leaf ELF | implemented; G2 passes on this PC ([platform-notes.md](platform-notes.md)) |
-| N1, a restricted C/JNI ELF (dependencies, imports, constructors, JNI) | P3 declared C/Bionic admission passes T07/T08, including one normally linked NDK C fixture; APK/JNI integration incomplete, G3 NOT_RUN |
+| N1, a restricted C/JNI ELF (dependencies, imports, constructors, JNI) | declared C/Bionic/JNI subset and ordinary NDK API-30 APK fixture pass G3; off by default, with the exclusions below |
 | N2, graphics samples | not started (P5, P6) |
 
 ## N0
@@ -209,7 +213,7 @@ T08 io combines roundtrip/seek/stat, open/append flags, mapping/error refusals a
 checks. A host-side check confirms the Unicode-mapped file and that a refused junction path
 did not truncate a file outside the mapped root.
 
-## P4 JNI foundation (T09, not G3)
+## P4 JNI (T09)
 
 The first JNI increment is a standalone, real-JVM probe, not APK admission. A private guest
 `JavaVM` table and per-thread `JNIEnv` proxy forward only audited fixed signatures. Opaque JNI
@@ -262,10 +266,10 @@ JNI escape failure (an unescaped `0`–`3` at the start or after a mapped slash)
 method unresolved even if a matching ELF export exists; explicit registration remains valid.
 Successful explicit registrations take precedence over export-name binding.
 
-These standalone T09 library contracts also back the initial APK integration below.
-Neither standalone results nor its first Activity increment prove the full G3 matrix.
+These standalone T09 contracts also back the APK integration below; standalone results alone
+never establish G3. The combined APK/standalone evidence is recorded in platform-notes.md.
 
-### Initial APK integration
+### APK integration
 
 The P4 integration uses `winapk run --native=restricted`, with `off` still the default.
 Admission is one extracted ARM64 library directory per APK content identity,
@@ -280,7 +284,12 @@ on Windows. The host bridge owns one namespace and JNI bridge until process term
 neither JNI_OnUnload nor ELF finalizers run at JVM shutdown, and no destructor reenters a dead
 JVM. Export reflection can resolve referenced Java types; a missing type is an explicit failure,
 not a claim to support arbitrary APK classes.
-These constraints and the first Activity checks are not a full G3 result.
+The G3 APK adds guest↔Java strings/arrays and mixed numbers, instance results, exception
+propagation/clearing, a method exported only by a dependency, separate explicit dependency hooks,
+cached invalid-version failure, a joined attached worker and nested Java→guest callbacks.
+An unsupported MonitorEnter is activated through the window and terminates with a stable
+category. Value assertions, normal close, error outcomes and the actual screenshot are separate
+evidence; a window alone is never a pass.
 The APK fixture uses the ordinary NDK API-30 link, as the standalone library family does.
 An API-24 compact RX segment containing headers/metadata was refused when conservative
 whole-executable-segment scanning decoded metadata as an `x18` instruction. The loader is not

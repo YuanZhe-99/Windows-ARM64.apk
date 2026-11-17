@@ -277,9 +277,19 @@ function Build-Fixtures {
             $clang = Find-AndroidNdk
             [xml]$manifest = Get-Content (Join-Path $dir.FullName 'AndroidManifest.xml') -Raw
             $api = $manifest.manifest.'uses-sdk'.GetAttribute('minSdkVersion', 'http://schemas.android.com/apk/res/android')
-            foreach ($c in Get-ChildItem $jni -Filter *.c) {
-                $so = Join-Path $work "lib$($c.BaseName).so"
-                Invoke-Checked $clang @("--target=aarch64-linux-android$api", '-shared', '-fPIC', '-O2', '-Wl,-z,max-page-size=16384', '-o', $so, $c.FullName)
+            $recipes = if (Test-Path (Join-Path $jni 'fixtures.psd1')) {
+                (Import-PowerShellDataFile (Join-Path $jni 'fixtures.psd1')).Fixtures
+            } else {
+                @(Get-ChildItem $jni -Filter *.c | ForEach-Object {
+                    @{ Source = $_.Name; Name = "lib$($_.BaseName).so"; Links = @() }
+                })
+            }
+            foreach ($recipe in $recipes) {
+                $so = Join-Path $work $recipe.Name
+                $links = @($recipe.Links | ForEach-Object { Join-Path $work $_ })
+                Invoke-Checked $clang (@("--target=aarch64-linux-android$api", '-shared', '-fPIC', '-O2',
+                    '-Wl,-z,max-page-size=16384', "-Wl,-soname,$($recipe.Name)", '-o', $so,
+                    (Join-Path $jni $recipe.Source)) + $links)
                 # PLAN.md §7: every built ELF is checked to be ELF64 for AArch64 (e_machine 183).
                 $b = [IO.File]::ReadAllBytes($so)
                 if (-not ($b[0] -eq 0x7F -and $b[1] -eq 0x45 -and $b[4] -eq 2 -and [BitConverter]::ToUInt16($b, 18) -eq 183)) { throw "$so is not an ELF64 AArch64 library" }
@@ -313,11 +323,12 @@ function Build-Fixtures {
         }
         if ($libs) {
             $info.ndk = $lock.guest.androidNdk.version
-            $info.clang = "--target=aarch64-linux-android$api -shared -fPIC -O2 -Wl,-z,max-page-size=16384"
+            $info.clang = "--target=aarch64-linux-android$api -shared -fPIC -O2 -Wl,-z,max-page-size=16384 -Wl,-soname,<recipe.Name>"
+            $info.nativeRecipes = $recipes
             $info.libs = [ordered]@{}
             foreach ($so in $libs) { $info.libs["lib/arm64-v8a/$([IO.Path]::GetFileName($so))"] = (Get-FileHash $so -Algorithm SHA256).Hash.ToLower() }
         }
-        $info | ConvertTo-Json | Set-Content (Join-Path $fixtures "$name.json") -Encoding utf8NoBOM
+        $info | ConvertTo-Json -Depth 6 | Set-Content (Join-Path $fixtures "$name.json") -Encoding utf8NoBOM
         Write-Step "$name.apk: dex sha256 $($info.dexSha256)"
     }
 }

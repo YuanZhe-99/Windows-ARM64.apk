@@ -27,27 +27,17 @@ per APK.
 
 ## Project status
 
-Development resumed on 2026-11-16 at version 0.1.0 (unreleased; paused from 2026-11-05). G0, G1
-and G2 pass on the Windows 11 ARM64 machine recorded in [platform-notes.md](platform-notes.md); G3,
-G4 and G5 have not been run yet. What exists: `winapk run` runs pure-Java and Kotlin APKs in a
-Win32 window; `native-probe.exe` loads profile-N0 guest ELF libraries and runs the ABI suite on
-them; the MyGo interface runs against sample data (`winapk.Mock`) and does not start the runtime
-yet. The current build uses Mac.apk `3f35611`, Go 1.27.4 and MyGo v0.9.2.
+Version 0.1.0 is unreleased. G0–G3 pass on the Windows 11 ARM64 machine recorded in
+[platform-notes.md](platform-notes.md): Java/Kotlin APKs, N0 ELF/ABI, the declared C/Bionic
+subset and the real hello-jni Activity matrix. `--native=restricted` is explicit; native is
+still off by default. T09 covers both JNI directions, typed values, exceptions, dependencies,
+load hooks, worker/nested callbacks and explicit unsupported-entry failure. A separate
+CFG-enabled build and the restored ordinary build pass the full regression.
 
-P3's declared subset is complete; active work continues with `PLAN.md` §11 (P4: JNI and
-loading an APK's libraries in `winapk run`). The independent T08 thread foundation covers
-managed pthreads, errno, keys/destructors, explicitly emulated C TLS and untimed mutex/condition
-synchronization. T07 adds transactional dependency graphs, constructors and guest dl APIs;
-T08 also covers private-heap allocation, byte/strings and mapped regular-file/time APIs.
-P3's declared C/Bionic admission now also passes a normally linked NDK C fixture with logical
-system libraries, versions and real CRT lifecycle callbacks. Full N1/JNI and APK native loading
-remain P4/G3 work. The separate real-JVM `jni-probe.exe` passes T09's JNI calls in both directions,
-including explicitly registered static PE entries, references/exceptions, nested callbacks and
-worker attachment. Standalone JNI_OnLoad and short/long/Unicode export binding also pass;
-The initial APK call-site integration passes hello-jni's real Activity value, repeated
-System/Runtime loads, once-only hook, late-class binding and loading-boundary refusals.
-The complete Activity/G3 matrix remains unfinished.
-Front-end integration is deferred while the backend progresses.
+This is not arbitrary NDK/C++/ELF-TLS or graphics compatibility. P5/P6 graphics and G4/G5 remain
+unverified; this PC has only Mesa Dozen translated Vulkan, not a vendor driver, so that path
+needs hardware or an explicit decision. The MyGo interface still uses `winapk.Mock` and
+front-end integration is deferred. Mac.apk `3f35611`, Go 1.27.4 and MyGo v0.9.2 are current.
 
 ## Upstream versions
 

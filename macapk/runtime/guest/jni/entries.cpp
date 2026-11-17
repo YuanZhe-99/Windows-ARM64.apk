@@ -6,6 +6,8 @@ __asm__(R"(
 .text
 .p2align 2
 .macro jni_slot n
+.p2align 4
+.def winapk_jni_entry_\n; .scl 2; .type 32; .endef
 .globl winapk_jni_entry_\n
 winapk_jni_entry_\n:
     mov w16, #\n
@@ -101,6 +103,10 @@ winapk_jni_invoke:
 winapk_jni_entries:
 .irp n,0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,59,60,61,62,63
     .quad winapk_jni_entry_\n
+.endr
+.section .gfids$y,"dr"
+.irp n,0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,59,60,61,62,63
+    .symidx winapk_jni_entry_\n
 .endr
 .text
 )");

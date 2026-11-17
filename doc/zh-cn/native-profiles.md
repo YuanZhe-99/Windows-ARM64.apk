@@ -2,12 +2,14 @@
 
 客体原生代码默认关闭，只在已声明、已测试的 profile 内运行（`PLAN.md` §5.2）。加载器是
 `macapk/runtime/guest/loader/elf_loader.cpp`；独立探测与显式 `winapk run --native=restricted`
-APK 路径使用它。该路径通过首批 hello-jni Activity 检查，不是完整 G3 矩阵。
+APK 路径使用它。该路径在本机为已声明、自有源码的 C/JNI 子集通过 G3，包含 hello-jni Activity
+矩阵及不支持入口的明确终止；不准入任意 NDK 二进制。每个静态 PE JNI 入口 16 字节对齐并带显式 COFF GFID；
+在独立 CFG 构建中检查 PE 加载配置、全部 64 个运行中目标及真实进程策略。默认构建与 CFG 构建结果分别报告。
 
 | Profile | 状态 |
 |---|---|
 | N0，可审计的 leaf ELF | 已实现；G2 在本机通过（[platform-notes.md](platform-notes.md)） |
-| N1，受限的 C/JNI ELF（依赖、导入、构造函数、JNI） | 已声明的 P3 C/Bionic 准入通过 T07/T08，含一个普通 NDK 链接的 C 夹具；APK/JNI 集成未完成，G3 NOT_RUN |
+| N1，受限的 C/JNI ELF（依赖、导入、构造函数、JNI） | 已声明 C/Bionic/JNI 子集及普通 NDK API-30 APK 夹具通过 G3；默认关闭，排除项见下文 |
 | N2，图形样例 | 未开始（P5、P6） |
 
 ## N0
@@ -170,7 +172,7 @@ T08 format 测试寄存器/栈整数参数、客体 va_copy/V 调用、范围/�
 T08 io 合并读写/seek/stat、open/追加标志、映射/错误拒绝与时钟/sleep 检查。
 宿主侧检查确认 Unicode 映射文件，以及拒绝 junction 路径时没有截断映射根目录之外的文件。
 
-## P4 JNI 基础（T09，不是 G3）
+## P4 JNI（T09）
 
 首个 JNI 增量是独立的真实 JVM 探测，不是 APK 准入。私有客体 `JavaVM` 表及每线程 `JNIEnv`
 代理只转发经审计的固定签名。不透明 JNI 引用及 ID 仍是 JVM 所有的标识；
@@ -213,10 +215,10 @@ hook 中的注册可在 hook 的所属线程初始化期间调用，但 hook 失
 JNI 转义失败（开头或映射的斜杠后出现未经转义的 `0`–`3`）时，即使 ELF 存在匹配导出，
 方法也保持未解析；显式注册仍有效。
 
-这些独立 T09 库契约也用于下述首批 APK 集成。
-独立结果及首批 Activity 增量都不证明完整 G3 矩阵。
+这些独立 T09 契约也用于下述 APK 集成；独立结果永远不单独证明 G3。
+APK/独立探测的组合证据记录于 platform-notes.md。
 
-### 首批 APK 集成
+### APK 集成
 
 P4 集成使用 `winapk run --native=restricted`，默认仍为 `off`。
 准入每个 APK 内容标识对应的一个 ARM64 库提取目录，仅允许可移植 `.so` 基名，
@@ -228,7 +230,10 @@ DEX 调用点重定向覆盖 System/Runtime load/loadLibrary 及 Android 库命�
 宿主桥持有一个命名空间及 JNI 桥直到进程终止；
 JVM 关闭时不运行 JNI_OnUnload 或 ELF finalizer，不让析构重入已结束的 JVM。
 导出反射可能解析引用的 Java 类型；缺失类型明确失败，不推定任意 APK 类兼容。
-这些约束及首批 Activity 检查不是完整 G3 结果。
+G3 APK 加入 guest↔Java 字符串/数组及混合数值、实例结果、异常传播/清除、
+仅由依赖导出的方法、单独的显式依赖 hook、无效版本失败缓存、已 join 的附着 worker
+及嵌套 Java→guest 回调。不支持的 MonitorEnter 通过窗口激活，以稳定类别终止。
+数值断言、正常关闭、错误结果及真实截图是不同证据；单独出现窗口永远不是通过。
 APK 夹具与独立库家族一样使用普通 NDK API-30 链接。
 API-24 的紧凑 RX 段包含头/元数据，保守的完整可执行段扫描将元数据解码为 `x18` 指令时拒绝。
 不放宽加载器去信任节表或跳过可执行字节；此布局仍不受支持。

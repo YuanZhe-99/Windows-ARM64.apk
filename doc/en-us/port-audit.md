@@ -165,8 +165,9 @@ than porting Darwin's shim. T07 adds dependency/constructor transactions and gue
 mapped files/time and guest-PC fault diagnostics. A small Android-ABI helper keeps restricted
 formatting/va_list entirely guest-side; fixed byte logs reach the host. P3's declared C/Bionic
 scope now includes logical system libraries, validated import versions and real CRT lifetime
-records, tested with a normally linked NDK C fixture. Complete APK/JNI admission remains P4
-([native-profiles.md](native-profiles.md)); P4 routes an
-APK's libraries and `System.load` to the loader. P1's open items are a density
+records, tested with a normally linked NDK C fixture. P4 now passes G3 for the declared subset
+([native-profiles.md](native-profiles.md)), including APK library redirects, the real Activity
+matrix and a CFG-enabled build. Next are P5/P6 graphics, with the vendor-Vulkan path blocked
+as described above. P1's open items are a density
 change while an app runs and the host natives an app may need next (`NativeOs`, host fonts); the
 interface's switch from `winapk.Mock` to `winapk run` belongs to P7 (`PLAN.md` §14).
