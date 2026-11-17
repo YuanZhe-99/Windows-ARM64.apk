@@ -190,10 +190,12 @@ void Touch(Window* w, int action, LPARAM lp) {
 }
 
 /// Ends a held pointer that Windows took away (capture lost, window deactivated) with
-/// ACTION_CANCEL at its last position, so the app never sees a touch that never lifts.
+/// ACTION_CANCEL at its last position, releasing mouse capture if this window still holds it,
+/// so neither the app nor Win32's system-command handling sees a press that never lifts.
 void CancelPointer(Window* w) {
     if (!w->pointerDown) return;
     w->pointerDown = false;
+    if (GetCapture() == w->hwnd) ReleaseCapture();
     Touch(w, kActionCancel, w->lastPointer);
 }
 
