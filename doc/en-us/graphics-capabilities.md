@@ -11,7 +11,7 @@ independent; enabling guest native does not enable GLES or guest Vulkan.
 | Host ANGLE/Vulkan on Dozen | PASS; user-approved experiment (ADR-0004) | same Adreno GPU via D3D12, Mesa `26.3.0-devel (git-e3fc7749c6)`, Vulkan `1.2.359`, EGL 1.5 / GLES 2.0; `translated=yes software=no` |
 | Java GLES into ANGLE | PASS for the bounded GLES20 profile below | real APK `GLSurfaceView` colors, resize, restore, teardown, and explicit refusal |
 | Managed native window | PASS for the reference profile below | real restricted APK, client extent, replacement and refused references; no drawing |
-| Guest GLES/N2 | NOT_RUN | managed Surface/ANativeWindow, audited EGL/GLES calls and function pointers, positive/negative APK contracts |
+| Guest GLES/N2 | PASS for the bounded T11 profile | normal NDK APK; texture/FBO, blended shader, resize, surface replacement, and explicit Vulkan refusal |
 | Guest Vulkan/N2 | NOT_RUN | separate Android/Win32 WSI and dispatch/handle/callback contracts, not ANGLE's private device |
 | Vendor ARM64 Vulkan ICD | BLOCKED | a machine with that driver; Dozen results cannot fill this row |
 
@@ -108,8 +108,7 @@ Size queries on stale or unknown tokens return a negative error; acquire/release
 dereference such tokens. Releasing the Java `Surface` refuses new conversions but does not
 cancel native references already acquired to a still-live attachment.
 
-This endpoint does not yet give a guest a renderable EGL or Vulkan surface. No `HWND` or host
-graphics function pointer is passed to guest code. It does not implement Android buffer
+The endpoint does not give guest code an `HWND` or driver function pointer. It does not implement Android buffer
 queues, `ANativeWindow_lock`, or a general `SurfaceHolder.surfaceDestroyed` dispatcher.
 The bridge publishes a zero client extent on minimize, but minimized-size queries are not
 part of this fixture.
@@ -118,3 +117,29 @@ part of this fixture.
 fixture declares `DT_NEEDED libandroid.so`. The same reference tracks `360x720` to `424x752`;
 the test checks unrelated/null objects, Java release, old attachment invalidation, fresh
 identity and spent/unknown tokens in one APK process with CheckJNI.
+
+## Guest EGL/GLES profile
+
+With `--native=restricted` and an enabled `--graphics` backend, a plain `SurfaceView` can
+back one guest EGL display/config/context/window surface. These are bridge tokens; their
+driver handles stay on the Win32 message thread. The guest thread owns the logical binding,
+and commands run synchronously on the message thread without holding a registry lock.
+A resized attachment renews the native drawable, not the guest context; an invalidated
+attachment cannot swap or be bound again. Guest EGL and Java EGL cannot own ANGLE at the
+same time. Guest Vulkan will use separate dispatch and ownership.
+
+The logical `libEGL.so` and `libGLESv2.so` expose a fixed set of ES2 and window EGL
+commands only. `eglGetProcAddress` returns a bridge entry from the same table or null.
+No extensions are advertised; ES3 contexts, pbuffer/surfaceless contexts, multiple
+displays, custom native displays and shared contexts are unsupported. The reported 1.4/ES2
+version strings identify the profile; they are not conformance claims. Calls require a
+running window message loop, and display ownership cannot transfer between guest threads.
+Context loss is returned as an error; a real loss, minimize/restore on guest EGL and
+long-running stability have not been exercised.
+
+`test.ps1 -Suite GraphicsGuest` runs one API-30 APK against explicit hardware D3D11 and
+Vulkan/Dozen, plus one launch with the Vulkan ICD hidden only from the child. It checks
+exact RGBA8 texture upload via an FBO, blended triangle readback (1–2 bytes of tolerance), retention of
+the same context on resize and surface replacement, an extension-free view, proc identity,
+and invalid native window, ES3, stale/current surface and unavailable backend errors.
+The app sees `EGL_NOT_INITIALIZED` when explicit Vulkan fails; it can close normally.

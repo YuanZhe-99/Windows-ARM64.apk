@@ -1,6 +1,7 @@
 // Windows host EGL and the bounded Java GLES20 JNI surface.
 #include "graphics.h"
 #include "bridge.h"
+#include "guest_graphics.h"
 
 #ifdef WINAPK_HAS_ANGLE_HEADERS
 #include <EGL/egl.h>
@@ -49,17 +50,20 @@ struct Gl {
 };
 thread_local const Gl* currentGl = nullptr;
 
-/// Finds the fixed private ANGLE directory relative to the loaded bridge, never to the APK.
-std::filesystem::path AngleDirectory() {
+} // namespace
+
+std::wstring PrivateAngleDirectory() {
     HMODULE bridge = nullptr;
     if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
-            reinterpret_cast<LPCWSTR>(&AngleDirectory), &bridge)) return {};
+            reinterpret_cast<LPCWSTR>(&PrivateAngleDirectory), &bridge)) return {};
     std::wstring file(32768, L'\0');
     const DWORD n = GetModuleFileNameW(bridge, file.data(), static_cast<DWORD>(file.size()));
     if (!n || n >= file.size()) return {};
     file.resize(n);
-    return std::filesystem::path(file).parent_path() / L"angle";
+    return (std::filesystem::path(file).parent_path() / L"angle").wstring();
 }
+
+namespace {
 
 /// Throws a Java exception without replacing one already in flight.
 void Throw(JNIEnv* env, const char* type, const char* message) {
@@ -204,7 +208,7 @@ JavaGraphics::JavaGraphics(std::unique_ptr<State> state) : state_(std::move(stat
 JavaGraphics::~JavaGraphics() = default;
 
 std::shared_ptr<JavaGraphics> JavaGraphics::Open(HWND window, const std::string& request, std::string& error) {
-    const auto directory = AngleDirectory();
+    const std::filesystem::path directory = PrivateAngleDirectory();
     const bool automatic = request == "auto";
     const int count = automatic ? 2 : 1;
     for (int i = 0; i < count; ++i) {

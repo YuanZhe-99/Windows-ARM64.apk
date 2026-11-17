@@ -11,7 +11,7 @@ G3 之后 P5/P6 进行中，尚无图形关卡通过。Java 位图路径保持�
 | 宿主 ANGLE/Vulkan 经 Dozen | PASS；用户批准的实验（ADR-0004） | 同一 Adreno GPU 经 D3D12，Mesa `26.3.0-devel (git-e3fc7749c6)`、Vulkan `1.2.359`、EGL 1.5 / GLES 2.0；`translated=yes software=no` |
 | Java GLES 进入 ANGLE | 下述受限 GLES20 profile PASS | 真实 APK `GLSurfaceView` 颜色、resize、恢复、销毁及显式拒绝 |
 | 受管理的 native window | 下述引用 profile PASS | 真实受限 APK、客户区尺寸、换挂载及引用拒绝；不绘制 |
-| 客体 GLES/N2 | NOT_RUN | 受管理 Surface/ANativeWindow、审计后的 EGL/GLES 调用与函数指针、正负 APK 契约 |
+| 客体 GLES/N2 | 受限 T11 profile PASS | 普通 NDK APK；纹理/FBO、混合 shader、resize、surface 替换与显式 Vulkan 拒绝 |
 | 客体 Vulkan/N2 | NOT_RUN | 独立 Android/Win32 WSI 及 dispatch/handle/callback 契约，不是 ANGLE 私有 device |
 | 厂商 ARM64 Vulkan ICD | BLOCKED | 具有该驱动的机器；Dozen 结果不能填入此行 |
 
@@ -94,10 +94,30 @@ APK 断言带 position 的直接缓冲区回读出两种 RGBA 颜色、只读和
 acquire/release 不解引用这些令牌。释放 Java `Surface` 后不允许新的转换，
 但不会取消已取得且挂载仍有效的原生引用。
 
-该端点尚未给客体提供可渲染的 EGL 或 Vulkan surface，不向客体传递 `HWND` 或宿主图形函数指针。
+该端点不向客体传递 `HWND` 或宿主图形函数指针。
 不实现 Android buffer queue、`ANativeWindow_lock`，也不提供通用的 `SurfaceHolder.surfaceDestroyed` 分发。
 最小化时桥发布零尺寸，但该夹具不覆盖最小化时的尺寸查询。
 
 `test.ps1 -Suite Surface`：Windows ARM64 上 **4 项 PASS，3.48 秒**。普通 NDK API-30
 夹具声明 `DT_NEEDED libandroid.so`，同一引用追踪 `360x720` 到 `424x752`；
 在一个启用 CheckJNI 的 APK 进程中验证无关/空对象、Java release、旧挂载失效、新身份及过期/未知令牌。
+
+## 客体 EGL/GLES profile
+
+启用 `--native=restricted` 及 `--graphics` 后端后，普通 `SurfaceView` 可承载一组客体 EGL
+display/config/context/window surface。客体看到的是桥接令牌；驱动句柄留在 Win32 消息线程。
+客体线程持有逻辑绑定，命令同步在消息线程执行，不持有注册表锁。resize 更新宿主 drawable
+而不更换客体 context；失效挂载不能交换或再次绑定。客体 EGL 与 Java EGL 不能同时占用
+ANGLE；客体 Vulkan 使用独立 dispatch 与所有权。
+
+逻辑 `libEGL.so` 与 `libGLESv2.so` 只暴露固定的 ES2 和窗口 EGL 命令。`eglGetProcAddress`
+从同一张表返回桥入口或空值。不公布扩展；不支持 ES3 context、pbuffer / 无 surface context、
+多个 display、自定义 native display 或共享 context。报告的 1.4/ES2 字符串标识 profile，
+不是一致性声明。调用要求窗口消息循环已运行，display 归属不能在客体线程间转移。
+context loss 返回错误；真实 context loss、客体 EGL 最小化/恢复及长期稳定性尚未验证。
+
+`test.ps1 -Suite GraphicsGuest` 以一个 API-30 APK 分别测试显式硬件 D3D11 和 Vulkan/Dozen，
+并在仅隐藏子进程 Vulkan ICD 时额外启动一次。检查 RGBA8 纹理上传经 FBO 精确回读、
+混合三角形回读（容差 1–2 字节）、resize 和 surface 替换保留同一个 context、不公布扩展、
+proc 地址身份，以及无效 native window、ES3、过期/当前 surface 和后端不可用错误。
+显式 Vulkan 失败时应用收到 `EGL_NOT_INITIALIZED`，可以正常关闭。

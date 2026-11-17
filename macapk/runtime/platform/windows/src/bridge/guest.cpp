@@ -1,6 +1,7 @@
 // guest.cpp -- process-private P4 APK namespace and host-owned guest JNI service.
 #include "bridge.h"
 #include "surface.h"
+#include "guest_graphics.h"
 #include "../../../../guest/bionic/libraries.h"
 #include "../../../../guest/jni/bridge.h"
 
@@ -65,6 +66,7 @@ void Open(JNIEnv* env, jclass, jobject loader, jstring name) {
                 const auto baseLibraries = value->support->Libraries();
                 std::vector<guest::BuiltinLibrary> libraries(baseLibraries.begin(), baseLibraries.end());
                 libraries.push_back(NativeWindowLibrary());
+                AddGuestGraphicsLibraries(libraries);
                 value->modules = std::make_unique<guest::ModuleSet>(config.libraries,
                     value->support->Imports(), libraries);
                 value->threads = std::make_unique<guest::ThreadRuntime>(value->modules.get(), config.android);

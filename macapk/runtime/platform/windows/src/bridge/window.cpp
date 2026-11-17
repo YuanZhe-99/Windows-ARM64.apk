@@ -20,6 +20,7 @@
 // DPI scale.
 #include "bridge.h"
 #include "graphics.h"
+#include "guest_graphics.h"
 #include "surface.h"
 
 #include <windows.h>
@@ -103,6 +104,8 @@ std::mutex g_dirsMu;
 std::string g_dataSubdir, g_nativeLibDir; // for the guest loader (P2–P4); not used by the Java path
 std::string g_graphicsRequest = "off";   // CLI option, captured before app code
 bool g_graphicsFailed = false;            // window thread; read after Boot.run returns
+bool g_guestGraphicsCommand = false;      // guards synchronous driver reentry
+HWND g_guestDeferredClose = nullptr;
 
 /// Publishes client pixels for the currently attached plain SurfaceView, with no graphics allocation.
 void PublishWindowSurface(Window* w) {
@@ -412,7 +415,7 @@ void TickGraphics(Window* w, View* v, JNIEnv* env, jclass cls) {
 /// Notes: a minimised window has no client area; it keeps its last size and draws at 2 Hz.
 void Tick(Window* w) {
     View* v = w->content;
-    if (w->inGraphicsFrame || w->closingGraphics) return;
+    if (w->inGraphicsFrame || w->closingGraphics || g_guestGraphicsCommand) return;
     if (w->graphics && (v != w->graphicsView || v->rendererRevision != w->graphicsRevision)) {
         w->graphics.reset();
         w->graphicsView = nullptr;
@@ -428,6 +431,10 @@ void Tick(Window* w) {
         return global;
     }();
     if (glView && env->IsInstanceOf(v->renderer, glView)) {
+        if (GuestGraphicsActive()) {
+            FailGraphics(w, "GRAPHICS_CAPABILITY_MISSING", "guest EGL already owns ANGLE");
+            return;
+        }
         TickGraphics(w, v, env, glView);
         return;
     }
@@ -462,7 +469,7 @@ void Tick(Window* w) {
 void Paint(Window* w) {
     PAINTSTRUCT ps;
     HDC dc = BeginPaint(w->hwnd, &ps);
-    if (w->graphics && w->graphicsView == w->content) {
+    if ((w->graphics && w->graphicsView == w->content) || GuestGraphicsPresents(w->hwnd)) {
         EndPaint(w->hwnd, &ps);
         return;
     }
@@ -598,17 +605,23 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         }
         case WM_CLOSE:
             // The person closed the app: end the loop; Boot.run returns and the process exits.
+            if (g_guestGraphicsCommand) {
+                g_guestDeferredClose = hwnd;
+                return 0;
+            }
             if (w->inGraphicsFrame) {
                 w->closingGraphics = true;
                 return 0;
             }
             w->closingGraphics = true;
+            RetireGuestGraphics(hwnd, true);
             w->graphics.reset();
             DestroyWindow(hwnd);
             return 0;
         case WM_DESTROY:
             KillTimer(hwnd, kFrameTimer);
             RetireSurface(hwnd);
+            RetireGuestGraphics(hwnd, true);
             g_windows.erase(hwnd);
             delete w;
             PostQuitMessage(0);
@@ -735,7 +748,10 @@ jlong JNICALL CreateSurfaceView(JNIEnv*, jclass, jint w, jint h) {
 void JNICALL SetContentView(JNIEnv*, jclass, jlong window, jlong view) {
     RunOnUi("setContentView", [&] {
         if (Window* w = FromHandle(window)) {
-            if (w->content != reinterpret_cast<View*>(view)) RetireSurface(w->hwnd);
+            if (w->content != reinterpret_cast<View*>(view)) {
+                RetireSurface(w->hwnd);
+                RetireGuestGraphics(w->hwnd);
+            }
             w->content = reinterpret_cast<View*>(view);
             g_current = w->content;
             PublishWindowSurface(w);
@@ -806,7 +822,10 @@ void JNICALL SetRenderer(JNIEnv* env, jclass, jlong view, jobject callbacks) {
         JNIEnv* ui = Env();
         const bool sameSurface = surface && v->holderSurface && ui->IsSameObject(surface, v->holderSurface);
         if (v->holderSurface && !sameSurface) {
-            for (auto& [hwnd, w] : g_windows) if (w->content == v) RetireSurface(hwnd);
+            for (auto& [hwnd, w] : g_windows) if (w->content == v) {
+                RetireSurface(hwnd);
+                RetireGuestGraphics(hwnd);
+            }
             ui->DeleteGlobalRef(v->holderSurface);
         }
         if (sameSurface) ui->DeleteGlobalRef(surface);
@@ -833,7 +852,10 @@ void JNICALL ReleaseRenderer(JNIEnv*, jclass, jlong view) {
     if (!v) return;
     RunOnUi("releaseRenderer", [&] {
         if (v->holderSurface) {
-            for (auto& [hwnd, w] : g_windows) if (w->content == v) RetireSurface(hwnd);
+            for (auto& [hwnd, w] : g_windows) if (w->content == v) {
+                RetireSurface(hwnd);
+                RetireGuestGraphics(hwnd);
+            }
             Env()->DeleteGlobalRef(v->holderSurface);
             v->holderSurface = nullptr;
             v->surfaceReleased = nullptr;
@@ -995,6 +1017,33 @@ const JNINativeMethod kMethods[] = {
 
 bool RegisterWindow(JNIEnv* env) {
     return Bind(env, "com/macapk/loader/NativeCocoa", kMethods, static_cast<int>(std::size(kMethods)));
+}
+
+bool DispatchGuestGraphics(const std::function<void()>& command) {
+    if (g_loop != 1) return false; // The caller may otherwise block Activity startup or shutdown.
+    bool ran = false;
+    return RunOnUi("guest graphics", [&] {
+        if (g_guestGraphicsCommand) return;
+        g_guestGraphicsCommand = true;
+        try {
+            command();
+            ran = true;
+        } catch (const std::bad_alloc&) {
+            LogLine("GRAPHICS_RENDER_FAILED: guest graphics allocation failed");
+        }
+        g_guestGraphicsCommand = false;
+        if (g_guestDeferredClose) {
+            PostMessageW(g_guestDeferredClose, WM_CLOSE, 0, 0);
+            g_guestDeferredClose = nullptr;
+        }
+    }) && ran;
+}
+
+const std::string& GuestGraphicsRequest() {
+    static const std::string off = "off";
+    for (const auto& [hwnd, w] : g_windows)
+        if (w->graphics || w->inGraphicsFrame || w->closingGraphics) return off;
+    return g_graphicsRequest;
 }
 
 }  // namespace winapk::bridge

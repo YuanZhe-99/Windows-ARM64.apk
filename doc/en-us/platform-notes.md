@@ -248,6 +248,20 @@ Requirements and Build All passed, as did Host 27, Java 43, Native 58, Bionic 10
 ApkJni 8, GraphicsHost 6 and GraphicsJava 4. Logs: `P5-surface-*.log`.
 The shared `Surface` and `SurfaceView` edits have no macOS build or smoke evidence (`NOT_RUN`).
 
+## P5b guest EGL/GLES
+
+The T11 APK is a normal NDK r30 API-30 ARM64 shared object linked against `libandroid.so`,
+`libEGL.so` and `libGLESv2.so`. Its APK SHA-256 is
+`56079dace1f38642913f6cef69be9e69370a30d26c63007885880cb3fcc58924`.
+On the same Adreno 8cx Gen 3, `GraphicsGuest` passed all four checks in 7.15 s,
+including explicit ANGLE D3D11 and Vulkan via Dozen, and a Vulkan refusal with no fallback.
+The APK verifies texture/FBO data, blended shader pixels and logical handle/proc behavior.
+This does not run Android Vulkan dispatch or WSI. G4/layer C and G5/layer D remain NOT_RUN;
+vendor Vulkan remains BLOCKED on this device.
+
+Requirements and Build All passed, as did Host 27, Java 43, Native 58, Bionic 104, Jni 24,
+ApkJni 8, GraphicsHost 6, GraphicsJava 4 and Surface 4. Logs: `P5-T11-*.log`.
+
 ## Known limitations
 
 - Shared Windows hooks are platform-gated CMake/SQLite changes and the Windows guest DEX,

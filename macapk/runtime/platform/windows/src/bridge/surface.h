@@ -13,6 +13,12 @@ void PublishSurface(HWND window, jobject surface, jfieldID released, int width, 
 void ResizeSurface(HWND window, int width, int height);
 /// Removes the attachment before its JNI reference or window disappears. Null retires any window.
 void RetireSurface(HWND window);
+/// Takes a snapshot of a live guest token on the window thread, without exposing its HWND to the guest.
+bool ResolveSurface(void* token, HWND& window, int& width, int& height);
+/// Retains a live guest token for a graphics surface until that surface is destroyed.
+bool RetainSurface(void* token);
+/// Releases the graphics surface's lease on a native window token.
+void ReleaseSurface(void* token);
 /// Lists the five fixed Android native window exports in the restricted logical library.
 guest::BuiltinLibrary NativeWindowLibrary();
 

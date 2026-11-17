@@ -38,11 +38,11 @@ and hardware TLS/syscall/register access remain refused. Each probe has a
 60-second deadline. Build first: build.ps1 -Component NativeProbe.
 
 .PARAMETER Suite
-Host, Java, Native, Bionic, Jni, ApkJni, GraphicsHost, GraphicsJava, Surface, or a targeted Bionic subset.
+Host, Java, Native, Bionic, Jni, ApkJni, GraphicsHost, GraphicsJava, Surface, GraphicsGuest, or a targeted Bionic subset.
 #>
 [CmdletBinding()]
 param(
-    [ValidateSet('Host', 'Java', 'Native', 'Bionic', 'Modules', 'Memory', 'Io', 'Faults', 'Format', 'Libraries', 'Jni', 'ApkJni', 'GraphicsHost', 'GraphicsJava', 'Surface')]
+    [ValidateSet('Host', 'Java', 'Native', 'Bionic', 'Modules', 'Memory', 'Io', 'Faults', 'Format', 'Libraries', 'Jni', 'ApkJni', 'GraphicsHost', 'GraphicsJava', 'Surface', 'GraphicsGuest')]
     [string]$Suite = 'Host'
 )
 Set-StrictMode -Version Latest
@@ -1022,7 +1022,78 @@ function Test-Surface {
     }
 }
 
-switch ($Suite) { 'Host' { Test-Host } 'Java' { Test-Java } 'Native' { Test-Native } 'Bionic' { Test-Bionic } 'Modules' { Test-Modules } 'Memory' { Test-Bionic -Command memory } 'Io' { Test-Bionic -Command io } 'Faults' { Test-Bionic -Command faults } 'Format' { Test-Bionic -Command format } 'Libraries' { Test-Libraries } 'Jni' { Test-Jni } 'ApkJni' { Test-ApkJni } 'GraphicsHost' { Test-GraphicsHost } 'GraphicsJava' { Test-GraphicsJava } 'Surface' { Test-Surface } }
+<# Runs two explicit guest backends and the same APK with Vulkan hidden from the child. #>
+function Test-GraphicsGuest {
+    $apk = Join-Path $repo 'tests\fixtures\hello-guest-gles.apk'
+    $record = Get-Content (Join-Path $repo 'tests\fixtures\hello-guest-gles.json') -Raw | ConvertFrom-Json
+    Check 'T11.hash' ((Get-FileHash $apk).Hash.ToLower() -eq $record.apkSha256) 'APK and NDK build record'
+    $script:appSize = '360x720'
+    [WinApkTestWin]::SetProcessDpiAwarenessContext([IntPtr]-4) | Out-Null
+    $logs = Join-Path $out 'test-data\logs'
+    New-Item -ItemType Directory -Force $logs | Out-Null
+    $data = Join-Path $out 'test-data\graphics-guest'
+    foreach ($variant in @(
+        @{ Name = 'd3d11'; Request = 'd3d11'; Unavailable = $false },
+        @{ Name = 'vulkan'; Request = 'vulkan'; Unavailable = $false },
+        @{ Name = 'vulkan-unavailable'; Request = 'vulkan'; Unavailable = $true }
+    )) {
+        $log = Join-Path $logs "T11-$($variant.Name).log"
+        $saved = @{}
+        foreach ($key in 'VK_DRIVER_FILES', 'VK_ICD_FILENAMES', 'VK_LOADER_DRIVERS_SELECT', 'JAVA_TOOL_OPTIONS') {
+            $saved[$key] = [Environment]::GetEnvironmentVariable($key)
+        }
+        try {
+            if ($variant.Unavailable) {
+                $env:VK_DRIVER_FILES = Join-Path $logs 'not-an-installed-icd.json'
+                $env:VK_ICD_FILENAMES = $env:VK_DRIVER_FILES
+                $env:VK_LOADER_DRIVERS_SELECT = '*not-an-installed-icd*'
+            }
+            $env:JAVA_TOOL_OPTIONS = "$($saved.JAVA_TOOL_OPTIONS) -Xcheck:jni"
+            $p = Start-App $apk $data $log 'restricted' $variant.Request
+        } finally { Set-TestEnv $saved }
+        try {
+            $h = Find-AppWindow $p.Id 'Guest GLES' 15 $p
+            $first = Wait-Log $log 'T11: (PASS initial=(\d+x\d+)|EGL_NOT_INITIALIZED|FAIL [^\r\n]+)' 15 $p
+            if (!$h -or !$first) {
+                Check "T11.$($variant.Name)" $false 'no initial outcome or window; see APK log'
+                continue
+            }
+            if ($variant.Unavailable) {
+                $code = Close-App $h $p
+                $text = Read-Log $log
+                Check 'T11.vulkan-unavailable' ($code -eq 0 -and $first.Value -eq 'T11: EGL_NOT_INITIALIZED' -and
+                    $text -match 'guest EGL backend=vulkan; no fallback' -and
+                    $text -notmatch 'T11: PASS|backend=d3d11|WARNING in native method|FATAL ERROR in native method') 'explicit Vulkan initialization refused; APK observed the EGL error'
+                continue
+            }
+            if (!$first.Groups[2].Success) {
+                Check "T11.$($variant.Name)" $false $first.Value
+                continue
+            }
+            $wr = New-Object WinApkTestWin+RECT
+            $rc = New-Object WinApkTestWin+RECT
+            $initial = [WinApkTestWin]::GetClientRect($h, [ref]$rc) -and $first.Groups[2].Value -eq "$($rc.R)x$($rc.B)"
+            $resized = [WinApkTestWin]::GetWindowRect($h, [ref]$wr) -and
+                [WinApkTestWin]::SetWindowPos($h, [IntPtr]::Zero, 0, 0, ($wr.R - $wr.L + 64), ($wr.B - $wr.T + 32), 0x16) -and
+                [WinApkTestWin]::GetClientRect($h, [ref]$rc)
+            $extent = "$($rc.R)x$($rc.B)"
+            $after = if ($resized) { Wait-Log $log "T11: (PASS recreated=$extent\b|FAIL [^\r\n]+)" 10 $p }
+            $code = Close-App $h $p
+            $text = Read-Log $log
+            Check "T11.$($variant.Name)" ($initial -and $after -and $after.Value -eq "T11: PASS recreated=$extent" -and
+                $extent -ne $first.Groups[2].Value -and $code -eq 0 -and
+                $text -match "guest EGL request=$($variant.Request) backend=$($variant.Request)" -and
+                $text -match "guest GLES renderer backend=$($variant.Request) name=ANGLE" -and
+                $text -match 'guest EGL teardown complete' -and
+                $text -notmatch 'WARNING in native method|FATAL ERROR in native method|GRAPHICS_RENDER_FAILED|T11: FAIL') "APK drawing and readback at two client sizes; recreated $extent; EGL teardown"
+        } finally {
+            if (!$p.HasExited) { $p.Kill(); $p.WaitForExit() }
+            $p.Dispose()
+        }
+    }
+}
+
+switch ($Suite) { 'Host' { Test-Host } 'Java' { Test-Java } 'Native' { Test-Native } 'Bionic' { Test-Bionic } 'Modules' { Test-Modules } 'Memory' { Test-Bionic -Command memory } 'Io' { Test-Bionic -Command io } 'Faults' { Test-Bionic -Command faults } 'Format' { Test-Bionic -Command format } 'Libraries' { Test-Libraries } 'Jni' { Test-Jni } 'ApkJni' { Test-ApkJni } 'GraphicsHost' { Test-GraphicsHost } 'GraphicsJava' { Test-GraphicsJava } 'Surface' { Test-Surface } 'GraphicsGuest' { Test-GraphicsGuest } }
 if ($script:failed -gt 0) { Write-Host "$script:failed check(s) failed"; exit 1 }
 Write-Host 'all checks passed'
 exit 0

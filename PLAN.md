@@ -396,14 +396,15 @@ P5a 固定 ANGLE `801a1a5f6e00ed0028937067b7663fd7053bff31`，ARM64 源码构建
 ### 12.2 P5b：接通 Framework 和客体 ABI
 
 - [x] T10.java：真实 APK 的受限 Java GLES20 已验证两色回读、resize、最小化/恢复、不支持调用拒绝及销毁。
-- [x] T10.surface：真实 APK 已验证受限 `libandroid.so`、holder 身份、引用、resize 和换挂载；尚未接入 `EGLNativeWindowType`。
-- [ ] 先验证 Java GLES 调用进入宿主 ANGLE，再接入客体 ELF 的 `libEGL.so`/`libGLESv2.so` 虚拟模块。
-- [ ] 将 guest `EGLNativeWindowType`/`ANativeWindow` 映射到受管理的 Windows Surface 对象；不是裸指针强转。
-- [ ] 管理 display/context/surface 生命周期、线程绑定、context current 状态与销毁顺序。
-- [ ] `eglGetProcAddress` 返回 guest 可调用的桥入口；不对未知扩展返回裸宿主函数地址。
-- [ ] 筛选 EGL/GLES 扩展和版本：只报告 ANGLE 支持且桥接层可用的交集。
-- [ ] 验证 context loss、resize、最小化/恢复、surface 销毁后重建。
-- [ ] 最初仅支持单个明确归属的渲染 Surface；View/SurfaceView 混合合成单独列为能力，不用多次提交到同一个窗口凑出效果。
+- [x] T10.surface：真实 APK 已验证受限 `libandroid.so`、holder 身份、引用、resize 和换挂载。
+- [x] T11：客体 `libEGL.so`/`libGLESv2.so` 已接入，D3D11 与 Vulkan/Dozen 分别验证。
+- [x] 将 guest `EGLNativeWindowType`/`ANativeWindow` 映射到受管理的 Windows Surface 对象；不是裸指针强转。
+- [x] T11 的单 display/context/surface profile 管理归属、current 和销毁顺序。
+- [x] `eglGetProcAddress` 仅返回 guest 可调用的固定桥入口；未知入口返回空。
+- [x] T11 不暴露硬件私有 EGL/GLES 扩展，仅报告受限 EGL 1.4 / ES2 profile，不作一致性声明。
+- [x] T11 验证 resize、surface 销毁后重建及原 context 保留。
+- [ ] 客体 GLES 真实 context loss、最小化/恢复及长期稳定性未验收。
+- [x] 只支持单个明确归属的渲染 Surface；不提供 View/SurfaceView 混合合成。
 
 首个客体图形 APK 采用普通 Java Activity + SurfaceView + JNI 的结构，由 Java 将 `Surface` 交给 native。实现受限的 `ANativeWindow_fromSurface`、acquire/release、尺寸查询和对象注册；`jobject`、guest `ANativeWindow*` 与 `HWND` 是不同对象，不能相互强转。首轮不依赖 `NativeActivity`/`android_native_app_glue`；它们需要额外的生命周期、ALooper/AInputQueue 适配，另开任务。
 
@@ -686,4 +687,4 @@ P0–P4 已实现的命令（含 `FrameworkRes`、`Fixtures`、`Host`、`Jni`、
 
 ## 20. 基线里程碑状态与当前起点
 
-P0 审计/锁定、Java MVP（G1）、N0 ELF/ABI（G2）及已声明 C/Bionic/JNI 子集与真实 APK 集成（G3）均已完成，证据见 `doc/en-us/platform-notes.md`。层 A、B 在该范围 PASS；不是整个后端完成。当前起点为图形（§12、§13），随后按依赖推进 §14 后端交付；本机只有 Mesa Dozen 转换层 Vulkan，厂商 Vulkan 路径需设备或用户明确决定。前端暂缓；不提前勾选 G4/G5 或发布。
+P0 审计/锁定、Java MVP（G1）、N0 ELF/ABI（G2）及已声明 C/Bionic/JNI 子集与真实 APK 集成（G3）均已完成，证据见 `doc/en-us/platform-notes.md`。层 A、B 在该范围 PASS；不是整个后端完成。P5 的受限 T11 客体 EGL/GLES 已通过，真实 context loss、客体最小化/恢复及长期稳定性未验收。接下来推进 §13 客体 Vulkan，再做 §14 后端交付；本机只有 Mesa Dozen 转换层 Vulkan，厂商 Vulkan 路径需设备。前端暂缓；不提前勾选 G4/G5 或发布。

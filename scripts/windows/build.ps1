@@ -338,6 +338,9 @@ function Build-Fixtures {
         if ($name -eq 'hello-surface') {
             $info.expected = 'T10.surface: client extent follows resize; Java release, detach, spent/unknown tokens and a distinct reattachment verified'
         }
+        if ($name -eq 'hello-guest-gles') {
+            $info.expected = 'T11: texture/FBO readback, blended shader draw, resize and drawable replacement, EGL proc/token refusals and normal teardown'
+        }
         $info | ConvertTo-Json -Depth 6 | Set-Content (Join-Path $fixtures "$name.json") -Encoding utf8NoBOM
         Write-Step "$name.apk: dex sha256 $($info.dexSha256)"
     }

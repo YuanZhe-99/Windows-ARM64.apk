@@ -28,3 +28,4 @@
 | `macapk/runtime/platform/windows/src/angle_probe.cpp` | 可选 T10 宿主 ANGLE 硬件实验、类型化设备标识、shader 回读/resize 及显式后端拒绝；不是 Java/客体 GLES | `Probe`、`Device`、`Shader`、`Draw`、`Test-GraphicsHost` |
 | `macapk/runtime/platform/windows/src/bridge/graphics.cpp`、`android/opengl/GLSurfaceView.java` | T10 Java GLES20：私有 ANGLE DLL、宿主管理窗口 context、受限于当前帧的 renderer 回调及有界回读 | `JavaGraphics::Open`、`Begin`、`End`、`RegisterJavaGraphics`、`macapkWindowsDrawFrame`、`Test-GraphicsJava` |
 | `macapk/runtime/platform/windows/src/bridge/surface.cpp` | 受限 `libandroid.so` 的窗口身份、挂载寿命和客户区尺寸 | `PublishSurface`、`ResizeSurface`、`RetireSurface`、`NativeWindowLibrary` |
+| `macapk/runtime/platform/windows/src/bridge/guest_graphics.cpp` | T11 固定 Android EGL/GLES 入口、客体句柄归属、消息线程驱动分发 | `AddGuestGraphicsLibraries`、`MakeCurrent`、`EnsureSurface`、`GetProc`、`Test-GraphicsGuest` |

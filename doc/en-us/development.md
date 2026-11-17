@@ -47,6 +47,7 @@ tree can contain large third-party checkouts; it is not product Go source. Root 
 .\scripts\windows\build.ps1 -Component Host         # after Angle, to enable the Java GLES bridge
 .\scripts\windows\test.ps1 -Suite GraphicsJava      # real APK; not guest GLES or G4
 .\scripts\windows\test.ps1 -Suite Surface           # one APK; native window lifetime only
+.\scripts\windows\test.ps1 -Suite GraphicsGuest     # guest EGL/GLES T11; not guest Vulkan or G4
 .\scripts\windows\test.ps1 -Suite Host
 .\scripts\windows\test.ps1 -Suite Java
 .\scripts\windows\test.ps1 -Suite Native

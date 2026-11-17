@@ -95,6 +95,29 @@ void RetireSurface(HWND window) {
     if (!window || attached.window == window) attached = {};
 }
 
+bool ResolveSurface(void* token, HWND& window, int& width, int& height) {
+    std::lock_guard lock(surfaceMutex);
+    if (!token || reinterpret_cast<uintptr_t>(token) != attached.token) return false;
+    window = attached.window;
+    width = attached.width;
+    height = attached.height;
+    return true;
+}
+
+bool RetainSurface(void* token) {
+    std::lock_guard lock(surfaceMutex);
+    const auto id = reinterpret_cast<uintptr_t>(token);
+    if (!id || id != attached.token) return false;
+    auto& count = references.find(id)->second;
+    if (count == std::numeric_limits<unsigned>::max()) return false;
+    ++count;
+    return true;
+}
+
+void ReleaseSurface(void* token) {
+    Release(token);
+}
+
 guest::BuiltinLibrary NativeWindowLibrary() {
     return {"libandroid.so", {
         {"ANativeWindow_fromSurface", reinterpret_cast<void*>(&FromSurface)},

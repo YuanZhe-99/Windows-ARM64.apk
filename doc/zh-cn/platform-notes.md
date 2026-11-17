@@ -234,6 +234,19 @@ T10 Java APK SHA-256：`61e2cda0de295ea98f02d144abe3fbf81b1d9b64acbd84e3a8e10804
 GraphicsHost 6、GraphicsJava 4 均通过。日志为 `P5-surface-*.log`。
 共享 `Surface` 和 `SurfaceView` 改动没有 macOS 构建或 smoke 证据（`NOT_RUN`）。
 
+## P5b 客体 EGL/GLES
+
+T11 APK 使用普通 NDK r30 API-30 ARM64 共享库，链接 `libandroid.so`、`libEGL.so`
+及 `libGLESv2.so`，APK SHA-256 为
+`56079dace1f38642913f6cef69be9e69370a30d26c63007885880cb3fcc58924`。
+在同一 Adreno 8cx Gen 3 上，`GraphicsGuest` 通过四项（7.15 秒），包括显式 ANGLE D3D11、
+Vulkan 经 Dozen，以及 Vulkan 不可用时拒绝且不回退。APK 核验纹理/FBO 数据、混合
+shader 像素、逻辑句柄和 proc 行为。此测试不运行 Android Vulkan dispatch 或 WSI。
+G4/层 C 与 G5/层 D 仍为 NOT_RUN；本机厂商 Vulkan 仍为 BLOCKED。
+
+环境检查及 Build All 通过；Host 27、Java 43、Native 58、Bionic 104、Jni 24、ApkJni 8、
+GraphicsHost 6、GraphicsJava 4、Surface 4 均通过。日志为 `P5-T11-*.log`。
+
 ## 已知限制
 
 - 共享 Windows hook 包括平台条件化的 CMake/SQLite 改动及 Windows 客体 DEX、Boot、AppClassLoader
