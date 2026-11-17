@@ -423,7 +423,8 @@ Vulkan GPU 命令和 SPIR-V 原则上交给 Windows 原生驱动；本层负责�
 
 ### 13.2 Loader 和 dispatch
 
-- [ ] 使用可获得的 Windows ARM64 Vulkan Loader，通过正常 ICD 发现加载驱动，不硬编码某个 Qualcomm DLL。
+- [x] T13.wsi 使用 System32 ARM64 Vulkan Loader 正常发现 ICD；不硬编码厂商驱动。
+- [x] T13.wsi 验证实例与物理设备令牌、实例 proc 分发、Android→Win32 surface、实际呈现支持查询及 resize/换挂载；不呈现帧。
 - [ ] 为虚拟 `libvulkan.so` 提供 bootstrap、instance/device dispatch 和版本协商。
 - [ ] 基于固定 `vk.xml` 生成签名/桥表或采用经过验证的等价方式；首轮可以只开放完成的命令集合。
 - [ ] 若只实现 Vulkan 核心命令的受限子集，产品能力报告标为 fixture/PoC profile；不能据此宣称符合某个完整 Vulkan 版本或通过 Khronos 一致性认证。
@@ -436,9 +437,9 @@ Vulkan GPU 命令和 SPIR-V 原则上交给 Windows 原生驱动；本层负责�
 
 - [ ] guest 枚举 `VK_KHR_android_surface`，host 请求 `VK_KHR_win32_surface`；实例创建时转换扩展列表并验证依赖。
 - [ ] 只有 Surface 桥已经可用时才向 guest 宣告 Android Surface 扩展。
-- [ ] 从 guest `ANativeWindow` 查找受管理的 `HWND`/`HINSTANCE`，正确构造 `VkWin32SurfaceCreateInfoKHR`。
-- [ ] 保持 `ANativeWindow` acquire/release、HWND 与 `VkSurfaceKHR` 的独立生命周期。
-- [ ] 查询 host queue family 的实际 present 支持；不沿用 Android 的默认呈现假设。
+- [x] 从 guest `ANativeWindow` 查找受管理的 `HWND`/`HINSTANCE`，构造 `VkWin32SurfaceCreateInfoKHR`。
+- [x] 保持 `ANativeWindow` acquire/release、HWND 与 `VkSurfaceKHR` 的独立生命周期，验证换挂载后失效。
+- [x] 查询实际 surface/queue family 的 present 支持，不沿用 Android 默认呈现假设。
 - [ ] 处理 surface formats、present modes、extent、DPI、最小化的零尺寸和窗口重新创建。
 - [ ] 正确处理 `VK_ERROR_OUT_OF_DATE_KHR`、`VK_SUBOPTIMAL_KHR`、`VK_ERROR_SURFACE_LOST_KHR` 和 device lost。
 - [ ] 重建交换链时等待正确的在途资源，避免销毁仍被 GPU 使用的对象。

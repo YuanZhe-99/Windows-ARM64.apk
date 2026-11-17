@@ -12,7 +12,8 @@ G3 之后 P5/P6 进行中，尚无图形关卡通过。Java 位图路径保持�
 | Java GLES 进入 ANGLE | 下述受限 GLES20 profile PASS | 真实 APK `GLSurfaceView` 颜色、resize、恢复、销毁及显式拒绝 |
 | 受管理的 native window | 下述引用 profile PASS | 真实受限 APK、客户区尺寸、换挂载及引用拒绝；不绘制 |
 | 客体 GLES/N2 | 受限 T11 profile PASS | 普通 NDK APK；纹理/FBO、混合 shader、resize、surface 替换与显式 Vulkan 拒绝 |
-| 客体 Vulkan/N2 | NOT_RUN | 独立 Android/Win32 WSI 及 dispatch/handle/callback 契约，不是 ANGLE 私有 device |
+| 客体 Vulkan 实例/WSI | T13.wsi 在 Dozen 上 PASS | 真实 APK、Android→Win32 surface、实际支持与 capabilities、resize、换挂载及拒绝；不绘制 |
+| 客体 Vulkan/N2 呈现 | NOT_RUN | device/queue dispatch、交换链绘制、回调与同步 |
 | 厂商 ARM64 Vulkan ICD | BLOCKED | 具有该驱动的机器；Dozen 结果不能填入此行 |
 
 ## ANGLE 源码构建
@@ -121,3 +122,18 @@ context loss 返回错误；真实 context loss、客体 EGL 最小化/恢复及
 混合三角形回读（容差 1–2 字节）、resize 和 surface 替换保留同一个 context、不公布扩展、
 proc 地址身份，以及无效 native window、ES3、过期/当前 surface 和后端不可用错误。
 显式 Vulkan 失败时应用收到 `EGL_NOT_INITIALIZED`，可以正常关闭。
+
+## 客体 Vulkan 实例与 WSI 增量
+
+选择 `--native=restricted --graphics=vulkan` 时，受限 `libvulkan.so` 仅使用 System32
+Vulkan loader。桥筛选实例扩展，把 Android surface 创建翻译为 Win32，私有保存实例、
+物理设备和 surface 句柄，并查询实际呈现支持和 capabilities。消息线程负责 surface
+创建、查询及销毁；ANGLE 不参与。
+
+该增量不暴露逻辑设备、交换链、命令缓冲区或回调。支持查询和 WSI 创建均不等于呈现一帧，
+也不等于通过 G4。
+
+`test.ps1 -Suite VulkanWsi` 启动同一个普通 NDK API-30 APK 两次：一次系统 ICD 可用，
+一次仅对子进程屏蔽 ICD。验证扩展和 proc 作用域，拒绝 AHardwareBuffer、分配回调、
+非空 `pNext` 及过期句柄。窗口从 `360x720` 改到 `424x752`；替换视图后旧 surface
+返回 `VK_ERROR_SURFACE_LOST_KHR`。不安装或复制驱动。

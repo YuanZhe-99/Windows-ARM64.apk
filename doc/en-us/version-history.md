@@ -2,6 +2,7 @@
 
 ## 0.1.0 (in progress)
 
+- 2026-11-17: added the independent guest Vulkan instance/WSI profile (T13.wsi) and verified it on Dozen, including window resize/replacement and child-only ICD unavailability. Guest Vulkan drawing and G4/G5 remain NOT_RUN. Go 1.27.4, MyGo v0.10.0 and merged Mac.apk `3f35611` checked, unchanged.
 - 2026-11-17: added bounded guest EGL/GLES (T11). The real NDK API-30 APK verifies ANGLE on explicit D3D11 and Vulkan/Dozen, including texture/FBO and blended shader readback, surface replacement, and no fallback for unavailable explicit Vulkan. Guest Vulkan and G4/G5 remain NOT_RUN. Go 1.27.4, MyGo v0.10.0 and merged Mac.apk `3f35611` checked, unchanged.
 - 2026-11-17: verified the restricted Android native window reference profile in a real APK; guest EGL/Vulkan rendering remains NOT_RUN. Go 1.27.4, MyGo v0.10.0 and merged Mac.apk `3f35611` checked, unchanged.
 - 2026-11-17: verified a bounded Java GLES20 profile from a real `GLSurfaceView` APK on ARM64 ANGLE, including resize, restore and Vulkan/Dozen vs. D3D11 selection. Guest GLES/Vulkan and G4/G5 remain NOT_RUN; no frontend source changes. Go 1.27.4, MyGo v0.10.0 and merged Mac.apk `3f35611` checked.

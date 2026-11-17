@@ -50,6 +50,7 @@ add_library(winapk-bridge SHARED
   ${_win}/src/bridge/window.cpp
   ${_win}/src/bridge/graphics.cpp
   ${_win}/src/bridge/guest_graphics.cpp
+  ${_win}/src/bridge/guest_vulkan.cpp
   ${_win}/src/bridge/surface.cpp
   ${_win}/src/bridge/guest.cpp
   ${CMAKE_CURRENT_LIST_DIR}/../../guest/jni/bridge.cpp
@@ -64,7 +65,7 @@ target_include_directories(winapk-bridge PRIVATE "${JAVA_HOME}/include" "${JAVA_
 target_include_directories(winapk-bridge PRIVATE "${CMAKE_CURRENT_LIST_DIR}/../../translator/include")
 target_compile_definitions(winapk-bridge PRIVATE UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX _CRT_SECURE_NO_WARNINGS)
 target_compile_options(winapk-bridge PRIVATE /W4 /EHsc -Wno-missing-field-initializers)
-target_link_libraries(winapk-bridge PRIVATE unofficial::sqlite3::sqlite3 user32 gdi32 shcore capstone::capstone mincore)
+target_link_libraries(winapk-bridge PRIVATE Vulkan::Headers unofficial::sqlite3::sqlite3 user32 gdi32 shcore capstone::capstone mincore)
 set(_angle_headers "${CMAKE_CURRENT_LIST_DIR}/../../../../build/windows-arm64/deps/angle/include")
 if(EXISTS "${_angle_headers}/EGL/eglext_angle.h")
   target_include_directories(winapk-bridge PRIVATE "${_angle_headers}")

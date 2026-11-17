@@ -247,6 +247,18 @@ G4/层 C 与 G5/层 D 仍为 NOT_RUN；本机厂商 Vulkan 仍为 BLOCKED。
 环境检查及 Build All 通过；Host 27、Java 43、Native 58、Bionic 104、Jni 24、ApkJni 8、
 GraphicsHost 6、GraphicsJava 4、Surface 4 均通过。日志为 `P5-T11-*.log`。
 
+## P6 客体 Vulkan 实例与 WSI
+
+T13.wsi 使用含 `DT_NEEDED libvulkan.so` 的普通 ARM64 NDK API-30 APK。定向运行在 4.74 秒内通过三项：
+产物身份、经系统 loader 与 Dozen 查询已挂载 Activity 的实际 Win32 surface
+支持和 capabilities，以及子进程发现不了 ICD 时的明确拒绝。正例还验证从 `360x720` 到
+`424x752` 的 resize、替换内容后 surface 失效，以及实例与 surface 分别销毁。
+未创建逻辑设备，未获取或呈现图像。完整客体图形的 G4 与层 C 仍为 NOT_RUN；G5 与层 D
+也为 NOT_RUN。厂商 Vulkan 为 BLOCKED；此测试未启用 validation layers。
+已验证的 APK SHA-256 为 `8c5dbddc771f8c56f0e0a810f2e5691aea55624a07b7fb557432f1c7f50dfcd1`。
+环境检查及 Build All 通过；Host 27、Java 43、Native 58、Bionic 104、Jni 24、ApkJni 8、
+GraphicsHost 6、GraphicsJava 4、Surface 4、GraphicsGuest 4 均通过。日志为 `P6-WSI-*.log`。
+
 ## 已知限制
 
 - 共享 Windows hook 包括平台条件化的 CMake/SQLite 改动及 Windows 客体 DEX、Boot、AppClassLoader

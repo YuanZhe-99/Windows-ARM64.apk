@@ -12,7 +12,8 @@ independent; enabling guest native does not enable GLES or guest Vulkan.
 | Java GLES into ANGLE | PASS for the bounded GLES20 profile below | real APK `GLSurfaceView` colors, resize, restore, teardown, and explicit refusal |
 | Managed native window | PASS for the reference profile below | real restricted APK, client extent, replacement and refused references; no drawing |
 | Guest GLES/N2 | PASS for the bounded T11 profile | normal NDK APK; texture/FBO, blended shader, resize, surface replacement, and explicit Vulkan refusal |
-| Guest Vulkan/N2 | NOT_RUN | separate Android/Win32 WSI and dispatch/handle/callback contracts, not ANGLE's private device |
+| Guest Vulkan instance/WSI | PASS for T13.wsi on Dozen | real APK, Android→Win32 surface, actual support/capabilities, resize, replacement and refusal; no drawing |
+| Guest Vulkan/N2 presentation | NOT_RUN | device/queue dispatch, swapchain drawing, callbacks and synchronization |
 | Vendor ARM64 Vulkan ICD | BLOCKED | a machine with that driver; Dozen results cannot fill this row |
 
 ## ANGLE source build
@@ -143,3 +144,20 @@ exact RGBA8 texture upload via an FBO, blended triangle readback (1–2 bytes of
 the same context on resize and surface replacement, an extension-free view, proc identity,
 and invalid native window, ES3, stale/current surface and unavailable backend errors.
 The app sees `EGL_NOT_INITIALIZED` when explicit Vulkan fails; it can close normally.
+
+## Guest Vulkan instance and WSI increment
+
+The restricted `libvulkan.so` profile uses only the System32 Vulkan loader when
+`--native=restricted --graphics=vulkan` is selected. It filters the instance extensions,
+translates Android surface creation to Win32, keeps instance, physical-device and surface
+handles private, and checks actual presentation support and capabilities. The message
+thread owns surface creation, queries and teardown. ANGLE does not participate.
+
+This increment does not expose logical devices, swapchains, command buffers or callbacks.
+Neither support queries nor WSI creation count as presenting a frame or passing G4.
+
+`test.ps1 -Suite VulkanWsi` launches one normal NDK API-30 APK twice: once with the system
+ICD available and once with the child unable to discover it. It verifies extension/proc
+scopes and rejects AHardwareBuffer, allocation callbacks, nonempty `pNext` and stale handles.
+The window changes from `360x720` to `424x752`; replacing the view makes the old surface
+report `VK_ERROR_SURFACE_LOST_KHR`. No driver is installed or copied.

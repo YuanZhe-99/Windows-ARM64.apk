@@ -38,11 +38,12 @@ and hardware TLS/syscall/register access remain refused. Each probe has a
 60-second deadline. Build first: build.ps1 -Component NativeProbe.
 
 .PARAMETER Suite
-Host, Java, Native, Bionic, Jni, ApkJni, GraphicsHost, GraphicsJava, Surface, GraphicsGuest, or a targeted Bionic subset.
+Host, Java, Native, Bionic, Jni, ApkJni, GraphicsHost, GraphicsJava, Surface, GraphicsGuest,
+VulkanWsi, or a targeted Bionic subset.
 #>
 [CmdletBinding()]
 param(
-    [ValidateSet('Host', 'Java', 'Native', 'Bionic', 'Modules', 'Memory', 'Io', 'Faults', 'Format', 'Libraries', 'Jni', 'ApkJni', 'GraphicsHost', 'GraphicsJava', 'Surface', 'GraphicsGuest')]
+    [ValidateSet('Host', 'Java', 'Native', 'Bionic', 'Modules', 'Memory', 'Io', 'Faults', 'Format', 'Libraries', 'Jni', 'ApkJni', 'GraphicsHost', 'GraphicsJava', 'Surface', 'GraphicsGuest', 'VulkanWsi')]
     [string]$Suite = 'Host'
 )
 Set-StrictMode -Version Latest
@@ -1093,7 +1094,72 @@ function Test-GraphicsGuest {
     }
 }
 
-switch ($Suite) { 'Host' { Test-Host } 'Java' { Test-Java } 'Native' { Test-Native } 'Bionic' { Test-Bionic } 'Modules' { Test-Modules } 'Memory' { Test-Bionic -Command memory } 'Io' { Test-Bionic -Command io } 'Faults' { Test-Bionic -Command faults } 'Format' { Test-Bionic -Command format } 'Libraries' { Test-Libraries } 'Jni' { Test-Jni } 'ApkJni' { Test-ApkJni } 'GraphicsHost' { Test-GraphicsHost } 'GraphicsJava' { Test-GraphicsJava } 'Surface' { Test-Surface } 'GraphicsGuest' { Test-GraphicsGuest } }
+<# Checks guest instance dispatch and Android WSI, not presentation. #>
+function Test-VulkanWsi {
+    $apk = Join-Path $repo 'tests\fixtures\hello-vulkan-wsi.apk'
+    $record = Get-Content (Join-Path $repo 'tests\fixtures\hello-vulkan-wsi.json') -Raw | ConvertFrom-Json
+    Check 'T13.wsi.hash' ((Get-FileHash $apk).Hash.ToLower() -eq $record.apkSha256) 'APK and NDK build record'
+    $script:appSize = '360x720'
+    [WinApkTestWin]::SetProcessDpiAwarenessContext([IntPtr]-4) | Out-Null
+    $logs = Join-Path $out 'test-data\logs'
+    New-Item -ItemType Directory -Force $logs | Out-Null
+    $data = Join-Path $out 'test-data\vulkan-wsi'
+    foreach ($unavailable in $false, $true) {
+        $name = if ($unavailable) { 'unavailable' } else { 'live' }
+        $log = Join-Path $logs "T13-wsi-$name.log"
+        $saved = @{}
+        foreach ($key in 'VK_DRIVER_FILES', 'VK_ICD_FILENAMES', 'VK_LOADER_DRIVERS_SELECT', 'JAVA_TOOL_OPTIONS') {
+            $saved[$key] = [Environment]::GetEnvironmentVariable($key)
+        }
+        try {
+            if ($unavailable) {
+                $env:VK_DRIVER_FILES = Join-Path $logs 'not-an-installed-icd.json'
+                $env:VK_ICD_FILENAMES = $env:VK_DRIVER_FILES
+                $env:VK_LOADER_DRIVERS_SELECT = '*not-an-installed-icd*'
+            }
+            $env:JAVA_TOOL_OPTIONS = "$($saved.JAVA_TOOL_OPTIONS) -Xcheck:jni"
+            $p = Start-App $apk $data $log 'restricted' 'vulkan'
+        } finally { Set-TestEnv $saved }
+        try {
+            $h = Find-AppWindow $p.Id 'Guest Vulkan WSI' 15 $p
+            $first = Wait-Log $log 'T13\.wsi: (initial=(\d+x\d+)|VULKAN_UNAVAILABLE|FAIL [^\r\n]+)' 12 $p
+            if (!$h -or !$first) {
+                Check "T13.wsi.$name" $false 'no initial result; see APK log'
+                continue
+            }
+            if ($unavailable) {
+                $code = Close-App $h $p
+                $text = Read-Log $log
+                Check 'T13.wsi.unavailable' ($code -eq 0 -and $first.Value -eq 'T13.wsi: VULKAN_UNAVAILABLE' -and
+                    $text -notmatch 'T13\.wsi: initial=|backend=d3d11|WARNING in native method|FATAL ERROR in native method') 'Vulkan ICD hidden; no WSI or fallback'
+                continue
+            }
+            if (!$first.Groups[2].Success) {
+                Check 'T13.wsi.live' $false $first.Value
+                continue
+            }
+            $wr = New-Object WinApkTestWin+RECT
+            $rc = New-Object WinApkTestWin+RECT
+            $initial = [WinApkTestWin]::GetClientRect($h, [ref]$rc) -and $first.Groups[2].Value -eq "$($rc.R)x$($rc.B)"
+            $resized = [WinApkTestWin]::GetWindowRect($h, [ref]$wr) -and
+                [WinApkTestWin]::SetWindowPos($h, [IntPtr]::Zero, 0, 0, ($wr.R - $wr.L + 64), ($wr.B - $wr.T + 32), 0x16) -and
+                [WinApkTestWin]::GetClientRect($h, [ref]$rc)
+            $extent = "$($rc.R)x$($rc.B)"
+            $after = if ($resized) { Wait-Log $log 'T13\.wsi: (PASS replacement|FAIL [^\r\n]+)' 10 $p }
+            $code = Close-App $h $p
+            $text = Read-Log $log
+            Check 'T13.wsi.live' ($initial -and $after -and $after.Value -eq 'T13.wsi: PASS replacement' -and
+                $extent -ne $first.Groups[2].Value -and $text -match "T13\.wsi: resized=$extent\b" -and $code -eq 0 -and
+                $text -match 'guest Vulkan instance teardown complete' -and
+                $text -notmatch 'WARNING in native method|FATAL ERROR in native method|T13\.wsi: FAIL') "WSI, resize to $extent, surface loss/replacement and teardown; no draw"
+        } finally {
+            if (!$p.HasExited) { $p.Kill(); $p.WaitForExit() }
+            $p.Dispose()
+        }
+    }
+}
+
+switch ($Suite) { 'Host' { Test-Host } 'Java' { Test-Java } 'Native' { Test-Native } 'Bionic' { Test-Bionic } 'Modules' { Test-Modules } 'Memory' { Test-Bionic -Command memory } 'Io' { Test-Bionic -Command io } 'Faults' { Test-Bionic -Command faults } 'Format' { Test-Bionic -Command format } 'Libraries' { Test-Libraries } 'Jni' { Test-Jni } 'ApkJni' { Test-ApkJni } 'GraphicsHost' { Test-GraphicsHost } 'GraphicsJava' { Test-GraphicsJava } 'Surface' { Test-Surface } 'GraphicsGuest' { Test-GraphicsGuest } 'VulkanWsi' { Test-VulkanWsi } }
 if ($script:failed -gt 0) { Write-Host "$script:failed check(s) failed"; exit 1 }
 Write-Host 'all checks passed'
 exit 0

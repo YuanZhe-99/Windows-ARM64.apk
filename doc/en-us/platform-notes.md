@@ -262,6 +262,20 @@ vendor Vulkan remains BLOCKED on this device.
 Requirements and Build All passed, as did Host 27, Java 43, Native 58, Bionic 104, Jni 24,
 ApkJni 8, GraphicsHost 6, GraphicsJava 4 and Surface 4. Logs: `P5-T11-*.log`.
 
+## P6 guest Vulkan instance and WSI
+
+T13.wsi uses a normal ARM64 NDK API-30 APK with `DT_NEEDED libvulkan.so`. The directed run
+passed three checks in 4.74 s: artifact identity, actual Win32 surface support/capabilities
+on the attached Activity through the system loader and Dozen, and explicit refusal when
+the child cannot discover the ICD. The live case also checks resize from `360x720` to
+`424x752`, surface loss after content replacement, and separate instance/surface teardown.
+This test does not create a logical device or acquire or present an image. G4 and layer C
+remain NOT_RUN for full guest graphics; G5 and layer D are also NOT_RUN. Vendor Vulkan is
+BLOCKED; this test did not run with validation layers.
+The verified APK SHA-256 is `8c5dbddc771f8c56f0e0a810f2e5691aea55624a07b7fb557432f1c7f50dfcd1`.
+Requirements and Build All passed, as did Host 27, Java 43, Native 58, Bionic 104, Jni 24,
+ApkJni 8, GraphicsHost 6, GraphicsJava 4, Surface 4 and GraphicsGuest 4. Logs: `P6-WSI-*.log`.
+
 ## Known limitations
 
 - Shared Windows hooks are platform-gated CMake/SQLite changes and the Windows guest DEX,

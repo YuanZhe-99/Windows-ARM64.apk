@@ -1,5 +1,6 @@
 // Android EGL/GLES fixed signatures. Driver objects and current state stay on the Win32 thread.
 #include "guest_graphics.h"
+#include "guest_vulkan.h"
 #include "bridge.h"
 
 #ifdef WINAPK_HAS_ANGLE_HEADERS
@@ -176,7 +177,7 @@ EGLint Shutdown() {
 /// Opens private ARM64 ANGLE and selects explicit hardware backends, never the default display.
 EGLint Start(uint64_t owner) {
     const std::string& request = GuestGraphicsRequest();
-    if (request == "off") return EGL_NOT_INITIALIZED;
+    if (request == "off" || GuestVulkanOwnsWindow()) return EGL_NOT_INITIALIZED;
     const std::wstring directory = PrivateAngleDirectory();
     if (directory.empty()) return EGL_NOT_INITIALIZED;
     constexpr DWORD flags = LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_SYSTEM32;

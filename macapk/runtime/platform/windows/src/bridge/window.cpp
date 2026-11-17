@@ -21,6 +21,7 @@
 #include "bridge.h"
 #include "graphics.h"
 #include "guest_graphics.h"
+#include "guest_vulkan.h"
 #include "surface.h"
 
 #include <windows.h>
@@ -431,8 +432,8 @@ void Tick(Window* w) {
         return global;
     }();
     if (glView && env->IsInstanceOf(v->renderer, glView)) {
-        if (GuestGraphicsActive()) {
-            FailGraphics(w, "GRAPHICS_CAPABILITY_MISSING", "guest EGL already owns ANGLE");
+        if (GuestGraphicsActive() || GuestVulkanOwnsWindow()) {
+            FailGraphics(w, "GRAPHICS_CAPABILITY_MISSING", "guest graphics already owns the window");
             return;
         }
         TickGraphics(w, v, env, glView);
@@ -615,6 +616,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             }
             w->closingGraphics = true;
             RetireGuestGraphics(hwnd, true);
+            RetireGuestVulkan(hwnd, true);
             w->graphics.reset();
             DestroyWindow(hwnd);
             return 0;
@@ -622,6 +624,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             KillTimer(hwnd, kFrameTimer);
             RetireSurface(hwnd);
             RetireGuestGraphics(hwnd, true);
+            RetireGuestVulkan(hwnd, true);
             g_windows.erase(hwnd);
             delete w;
             PostQuitMessage(0);
@@ -751,6 +754,7 @@ void JNICALL SetContentView(JNIEnv*, jclass, jlong window, jlong view) {
             if (w->content != reinterpret_cast<View*>(view)) {
                 RetireSurface(w->hwnd);
                 RetireGuestGraphics(w->hwnd);
+                RetireGuestVulkan(w->hwnd);
             }
             w->content = reinterpret_cast<View*>(view);
             g_current = w->content;
@@ -825,6 +829,7 @@ void JNICALL SetRenderer(JNIEnv* env, jclass, jlong view, jobject callbacks) {
             for (auto& [hwnd, w] : g_windows) if (w->content == v) {
                 RetireSurface(hwnd);
                 RetireGuestGraphics(hwnd);
+                RetireGuestVulkan(hwnd);
             }
             ui->DeleteGlobalRef(v->holderSurface);
         }
@@ -855,6 +860,7 @@ void JNICALL ReleaseRenderer(JNIEnv*, jclass, jlong view) {
             for (auto& [hwnd, w] : g_windows) if (w->content == v) {
                 RetireSurface(hwnd);
                 RetireGuestGraphics(hwnd);
+                RetireGuestVulkan(hwnd);
             }
             Env()->DeleteGlobalRef(v->holderSurface);
             v->holderSurface = nullptr;
