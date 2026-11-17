@@ -1,13 +1,67 @@
 // T09: real JNI descriptors, Android va_list/default promotions, references and worker lifecycle.
 #include <jni.h>
+#include <errno.h>
 #include <pthread.h>
 #include <stdarg.h>
 #include <stdint.h>
 #include <string.h>
 
 extern int t09_host_state(jclass type);
+extern int t09_nested(int closing);
+extern void t09_context_exit(int ok);
 static const char* class_name = "com/winapk/probe/GuestJniProbe";
 static const char* mix_signature = "(ZBCSIJFDLjava/lang/Object;IIIIIIIIDDDDDDDD)D";
+static __thread int persistent_tls = 11;
+static pthread_key_t persistent_key;
+static pthread_t persistent_thread;
+static int* persistent_address;
+static JavaVM* persistent_vm;
+static JNIEnv* persistent_env;
+
+/// Checks JNI availability and retained errno/emutls after the last host entry, then deletes its key.
+static void persistent_destructor(void* argument) {
+    JNIEnv* env = NULL;
+    int ok = argument == (void*)(uintptr_t)0x123 && persistent_tls == 42 && errno == 315 &&
+             !pthread_getspecific(persistent_key) && pthread_self() == persistent_thread &&
+             &persistent_tls == persistent_address;
+    if ((*persistent_vm)->GetEnv(persistent_vm, (void**)&env, JNI_VERSION_1_6) != JNI_OK || env != persistent_env) ok = 0;
+    jclass type = env ? (*env)->FindClass(env, class_name) : NULL;
+    if (!type || !t09_host_state(type)) ok = 0;
+    if (type) (*env)->DeleteLocalRef(env, type);
+    if (t09_nested(1) || persistent_tls != 43 || errno != 316) ok = 0;
+    if (pthread_key_delete(persistent_key)) ok = 0;
+    t09_context_exit(ok);
+}
+
+/// Stores observable thread state that must survive returning completely out of guest code.
+static int begin_context(JNIEnv* env, JavaVM* vm) {
+    persistent_vm = vm;
+    persistent_env = env;
+    if (persistent_tls != 11 || pthread_key_create(&persistent_key, persistent_destructor) ||
+        pthread_setspecific(persistent_key, (void*)(uintptr_t)0x123)) return 1;
+    persistent_tls = 41;
+    persistent_address = &persistent_tls;
+    persistent_thread = pthread_self();
+    errno = 314;
+    return 0;
+}
+
+/// Verifies persistence and a nested host→guest callback that changes the same errno/TLS storage.
+static int verify_context(void) {
+    if (persistent_tls != 41 || errno != 314 || &persistent_tls != persistent_address ||
+        pthread_self() != persistent_thread || pthread_getspecific(persistent_key) != (void*)(uintptr_t)0x123) return 1;
+    if (t09_nested(0)) return 2;
+    return persistent_tls == 42 && errno == 315 && &persistent_tls == persistent_address ? 0 : 3;
+}
+
+/// Proves a nested entry sees the outer guest thread identity, key and TLS before mutating it.
+static int nested_context(int closing) {
+    if (persistent_tls != 41 + closing || errno != 314 + closing || pthread_self() != persistent_thread ||
+        pthread_getspecific(persistent_key) != (closing ? NULL : (void*)(uintptr_t)0x123)) return 1;
+    persistent_tls++;
+    errno++;
+    return 0;
+}
 
 /// Calls a static double V entry twice with the same va_list, proving va_copy preserves the caller.
 static double mix_v(JNIEnv* env, jclass type, jmethodID method, ...) {
@@ -261,7 +315,7 @@ static int workers(JNIEnv* env, JavaVM* vm) {
     return 0;
 }
 
-/// Selects four semantic groups or a precise fatal JNI/guest-PC refusal in a fresh process.
+/// Selects JNI semantic/state groups or a precise fatal JNI/guest-PC refusal in a fresh process.
 int t09_case(JNIEnv* env, JavaVM* vm, int number) {
     switch (number) {
     case 0: return calls(env);
@@ -277,6 +331,10 @@ int t09_case(JNIEnv* env, JavaVM* vm, int number) {
     }
     case 6: __builtin_trap();
     case 7: *(volatile int*)(uintptr_t)0x40 = 1; return 1;
+    case 8: return begin_context(env, vm);
+    case 9: return verify_context();
+    case 10: return nested_context(0);
+    case 11: return nested_context(1);
     default: return -1;
     }
 }

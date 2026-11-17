@@ -186,6 +186,12 @@ A 调用使用经验证的 JNI union 固定布局。类查询使用配置的 Cla
 初始化该类，并将查询缺失转换为 `NoClassDefFoundError`。
 代理清理绝不 detach 借用的 JVM 线程；桥所有的附着可显式 detach，或在宿主线程退出时、
 Bionic key/TLS 清理之后 detach。桥及映射必须晚于所有 worker 销毁。
+线程运行时也必须晚于桥销毁。代理跨宿主入口保留线程绑定：返回 Java 时仅停用，
+不销毁 errno/key/仿真 TLS 状态。同一运行时的嵌套调用复用该状态；Bionic worker 借用既有上下文。
+最后一份绑定在 JNI 代理仍有效时关闭 key/TLS 状态，先于 detach。
+绑定不能迁移到其他宿主线程，也不能进入另一个已活动的运行时。
+当前嵌套入口证据是宿主控制的固定签名回调，不是 JVM native 方法绑定。
+Java→guest trampoline 仍需独立的 ABI 及生命周期验证。
 
 该增量不绑定 Java native 方法、不运行 `JNI_OnLoad`、不加载 APK 库，也不证明 G3。
 Java→guest 签名 thunk 及 APK/ClassLoader 加载仍是后续工作。

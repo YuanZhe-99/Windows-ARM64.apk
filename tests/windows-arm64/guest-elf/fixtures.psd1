@@ -14,7 +14,7 @@
     Common   = @('-shared', '-fPIC', '-fno-stack-protector', '-Wall', '-Wextra', '-Werror')
     Fixtures = @(
         @{ Name = 'libjni-probe.so'; Id = 'T09'; Source = 'jni/probe.c'; Target = 'aarch64-linux-android30'
-           Flags = @('-O2', '-nostdlib', '-fno-builtin'); Command = 'jni'
+           Flags = @('-O2', '-nostdlib', '-fno-builtin', '-femulated-tls'); Command = 'jni'
            Result = 'T09 foundation PASS; not APK admission or G3' }
         @{ Name = 'libbionic.so'; Id = 'T07'; Source = 'modules/bionic.c'; Target = 'aarch64-linux-android30'
            Common = @('-shared', '-fPIC', '-Wall', '-Wextra', '-Werror'); Flags = @('-O2'); Libraries = @('log')

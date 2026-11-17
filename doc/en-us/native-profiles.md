@@ -228,6 +228,13 @@ Class lookup uses the configured ClassLoader, including on attached workers, ini
 class and translates lookup misses to `NoClassDefFoundError`. Borrowed JVM
 threads are never detached by proxy cleanup; bridge-owned attachments detach explicitly or at
 host thread exit after Bionic key/TLS cleanup. The bridge and mappings must outlive all workers.
+The thread runtime must also outlive the bridge. A proxy retains a thread binding across host
+entries: returning to Java deactivates rather than destroys errno/key/emulated-TLS state.
+Nested calls on the same runtime reuse that state; a Bionic worker borrows its existing context.
+The last binding closes key/TLS state while its JNI proxy is still valid, before detachment.
+Bindings cannot migrate between host threads or enter a different active runtime.
+The current nested-entry proof is a host-controlled fixed-signature callback, not JVM native
+method binding. Java→guest trampolines still need their own ABI and lifecycle verification.
 
 This increment does not bind Java native methods, run `JNI_OnLoad`, load APK libraries, or
 establish G3. Java-to-guest signature thunks and APK/ClassLoader loading remain subsequent work.

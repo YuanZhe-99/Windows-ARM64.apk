@@ -66,17 +66,27 @@ struct EnvProxy {
     JniState* state;
     JNIEnv* host;
     std::shared_ptr<Attachment> attachment;
+    std::shared_ptr<ThreadBinding> binding;
     /// Detaches only bridge-owned worker attachments, after guest context/TLS destruction.
     ~EnvProxy();
 };
 
-thread_local std::vector<std::unique_ptr<EnvProxy>> environments;
+/// Closes bindings while their environment identities remain visible to guest key/JNI callbacks.
+struct ThreadEnvironments {
+    std::vector<std::unique_ptr<EnvProxy>> entries;
+    bool closing = false;
+    /// Closes remaining proxies before thread-local storage and JVM attachment disappear.
+    ~ThreadEnvironments();
+    /// Removes one proxy only after the last binding has completed key/TLS destruction.
+    void Remove(EnvProxy* proxy);
+};
+thread_local ThreadEnvironments environments;
 std::mutex vmsMutex;
 std::map<void*, JniState*> vms;
 
 /// Validates environment identity against the calling thread's live proxies before dereferencing.
 EnvProxy& Checked(void* pointer) {
-    for (const auto& entry : environments) if (entry.get() == pointer) return *entry;
+    for (const auto& entry : environments.entries) if (entry.get() == pointer) return *entry;
     Fatal("foreign, detached or cross-thread JNIEnv");
 }
 
@@ -141,6 +151,7 @@ char Result(const std::string& descriptor) {
 /// Owns one loader's tables, stable method metadata and screened guest helper mapping.
 struct JniState {
     JavaVM* vm = nullptr;
+    ThreadRuntime* threads = nullptr;
     jobject loader = nullptr;
     std::array<void*, kSlots> table = Refusals(std::make_index_sequence<kSlots>{});
     std::array<void*, 8> invocation = Refusals(std::make_index_sequence<8>{});
@@ -157,29 +168,43 @@ EnvProxy::~EnvProxy() {
     state->proxies--;
 }
 
+ThreadEnvironments::~ThreadEnvironments() {
+    closing = true;
+    while (!entries.empty()) Remove(entries.back().get());
+}
+
+void ThreadEnvironments::Remove(EnvProxy* proxy) {
+    if (proxy->binding && proxy->binding.use_count() == 1) proxy->binding->Close();
+    proxy->binding.reset();
+    std::erase_if(entries, [proxy](const auto& entry) { return entry.get() == proxy; });
+}
+
 /// Finds or allocates one thread-local proxy, returning JNI_ENOMEM without an escaping exception.
 EnvProxy* Environment(JniState& state, JNIEnv* host, bool attached) {
-    for (const auto& entry : environments) {
+    for (const auto& entry : environments.entries) {
         if (entry->state != &state) continue;
         if (entry->host != host) Fatal("JNIEnv changed on an attached thread");
         return entry.get();
     }
+    if (environments.closing) return nullptr;
     try {
         std::shared_ptr<Attachment> attachment;
-        for (const auto& entry : environments)
+        for (const auto& entry : environments.entries)
             if (entry->state->vm == state.vm) { attachment = entry->attachment; break; }
         if (!attachment) {
             attachment = std::make_shared<Attachment>();
             attachment->vm = state.vm;
         }
+        auto binding = state.threads->Bind();
         auto entry = std::make_unique<EnvProxy>();
         entry->functions = state.table.data();
         entry->state = &state;
         entry->host = host;
         entry->attachment = attachment;
+        entry->binding = std::move(binding);
         state.proxies++;
         auto* result = entry.get();
-        environments.push_back(std::move(entry));
+        environments.entries.push_back(std::move(entry));
         if (attached) attachment->owned = true;
         return result;
     } catch (const std::bad_alloc&) { return nullptr; }
@@ -327,13 +352,17 @@ template<bool Daemon> jint Attach(void* guestVm, void** output, const void* argu
 /// Detaches only a bridge-owned attachment, refusing borrowed Java threads and preserving their VM.
 jint Detach(void* guestVm) {
     auto& state = CheckedVm(guestVm);
-    for (const auto& entry : environments) {
+    for (const auto& entry : environments.entries) {
         if (entry->state->vm != state.vm) continue;
         if (!entry->attachment->owned) return JNI_ERR;
         jint status = state.vm->DetachCurrentThread();
         if (status != JNI_OK) return status;
         entry->attachment->owned = false;
-        std::erase_if(environments, [&state](const auto& proxy) { return proxy->state->vm == state.vm; });
+        for (size_t i = 0; i < environments.entries.size();) {
+            auto* proxy = environments.entries[i].get();
+            if (proxy->state->vm == state.vm) environments.Remove(proxy);
+            else i++;
+        }
         return JNI_OK;
     }
     return JNI_OK;
@@ -442,10 +471,12 @@ void Install(JniState& state) {
 
 JniBridge::JniBridge() : state_(std::make_unique<JniState>()) {}
 
-std::unique_ptr<JniBridge> JniBridge::Load(JNIEnv* env, jobject loader, const std::wstring& helper, LoadError* error) {
+std::unique_ptr<JniBridge> JniBridge::Load(JNIEnv* env, jobject loader, ThreadRuntime& threads,
+                                           const std::wstring& helper, LoadError* error) {
     try {
         auto bridge = std::unique_ptr<JniBridge>(new JniBridge);
         auto& state = *bridge->state_;
+        state.threads = &threads;
         if (env->GetJavaVM(&state.vm) != JNI_OK) return nullptr;
         state.loader = loader ? env->NewGlobalRef(loader) : nullptr;
         if (loader && !state.loader) return nullptr;
@@ -471,9 +502,10 @@ std::unique_ptr<JniBridge> JniBridge::Load(JNIEnv* env, jobject loader, const st
 }
 
 JniBridge::~JniBridge() {
-    for (auto at = environments.begin(); at != environments.end();) {
-        if ((*at)->state == state_.get()) at = environments.erase(at);
-        else at++;
+    for (size_t i = 0; i < environments.entries.size();) {
+        auto* proxy = environments.entries[i].get();
+        if (proxy->state == state_.get()) environments.Remove(proxy);
+        else i++;
     }
     if (state_->proxies) Fatal("bridge destroyed with live worker environments");
     if (state_->loader) {
@@ -491,6 +523,12 @@ void* JniBridge::Environment(JNIEnv* env) {
     if (state_->vm->GetEnv(reinterpret_cast<void**>(&actual), JNI_VERSION_1_6) != JNI_OK || actual != env)
         Fatal("foreign host JNIEnv");
     return guest::Environment(*state_, env, false);
+}
+
+void* JniBridge::Call(JNIEnv* env, void* (*entry)(void*), void* argument) {
+    void* proxy = Environment(env);
+    if (!proxy) { Error(env, "GUEST_ABI_UNSUPPORTED JNI thread binding allocation"); return nullptr; }
+    return Checked(proxy).binding->Call(entry, argument);
 }
 
 void* JniBridge::Vm() const { return &state_->proxy; }

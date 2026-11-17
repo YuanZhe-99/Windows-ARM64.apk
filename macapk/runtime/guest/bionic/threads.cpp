@@ -187,8 +187,8 @@ struct GuestThreadContext {
     std::array<Value, kKeys> values{};
     std::vector<TlsBlock> tls;
 
-    /// Creates a context before guest entry, making it visible to audited shims.
-    GuestThreadContext(ThreadState& state, GuestThread id);
+    /// Creates guest state, optionally activating it immediately for a standalone/worker entry.
+    GuestThreadContext(ThreadState& state, GuestThread id, bool activate = true);
     /// Runs key destructors while TLS is alive, then frees TLS before ending the context.
     ~GuestThreadContext();
 };
@@ -201,13 +201,16 @@ GuestThreadContext& Context() {
     return *current;
 }
 
-GuestThreadContext::GuestThreadContext(ThreadState& state, GuestThread id) : runtime(state), token(id) {
-    if (current) Fatal("nested fresh guest context");
-    current = this;
+GuestThreadContext::GuestThreadContext(ThreadState& state, GuestThread id, bool activate) : runtime(state), token(id) {
+    if (activate) {
+        if (current) Fatal("nested fresh guest context");
+        current = this;
+    }
     runtime.contexts++;
 }
 
 GuestThreadContext::~GuestThreadContext() {
+    if (current != this) Fatal("context cleanup requires its active host thread");
     // Snapshot tokens, not table iterators: callbacks may create/delete keys or set values.
     for (int round = 0; round < 4; round++) {
         const auto pending = values;
@@ -1264,6 +1267,73 @@ std::span<const HostSymbol> ThreadRuntime::Imports() {
         {"pthread_cond_destroy", reinterpret_cast<void*>(&ConditionDestroy)},
     };
     return imports;
+}
+
+/// Holds one thread-affine binding and keeps owned storage distinct from a borrowed worker context.
+struct BindingState {
+    DWORD owner = GetCurrentThreadId();
+    std::unique_ptr<GuestThreadContext> owned;
+    GuestThreadContext* context = nullptr;
+    size_t depth = 0;
+    bool closing = false;
+};
+
+ThreadBinding::ThreadBinding(ThreadState& state) : state_(std::make_unique<BindingState>()) {
+    if (current) {
+        if (&current->runtime != &state) Fatal("binding a different active runtime");
+        state_->context = current;
+        return;
+    }
+    GuestThread token;
+    {
+        std::lock_guard lock(state.mutex);
+        if (state.stopping) Fatal("binding a stopping runtime");
+        if (state.nextThread == std::numeric_limits<GuestThread>::max()) Fatal("thread token space exhausted");
+        token = state.nextThread++;
+    }
+    state_->owned = std::make_unique<GuestThreadContext>(state, token, false);
+    state_->context = state_->owned.get();
+}
+
+ThreadBinding::~ThreadBinding() { Close(); }
+
+void ThreadBinding::Close() {
+    if (state_->owner != GetCurrentThreadId()) Fatal("binding closed on a different host thread");
+    if (!state_->context) return;
+    if (state_->depth || (state_->owned && current)) Fatal("binding closed during an active call");
+    state_->closing = true;
+    if (state_->owned) {
+        current = state_->context;
+        state_->owned.reset();  // Key callbacks may reenter Call while context/proxy are still valid.
+    }
+    state_->context = nullptr;
+}
+
+void* ThreadBinding::Call(Entry entry, void* argument) {
+    if (state_->owner != GetCurrentThreadId()) Fatal("binding called on a different host thread");
+    auto* context = state_->context;
+    if (!context || (state_->closing && current != context)) Fatal("calling a closed binding");
+    if (current && current != context) Fatal("entering a different active guest context");
+    /// Restores the previous activation after an ordinary or nested host-controlled call.
+    struct Activation {
+        BindingState& state;
+        GuestThreadContext* previous = current;
+        /// Activates the binding without changing its retained errno/TLS/key storage.
+        explicit Activation(BindingState& binding) : state(binding) { current = state.context; state.depth++; }
+        /// Deactivates only this invocation, leaving any enclosing callback's activation intact.
+        ~Activation() { state.depth--; current = previous; }
+    } activation(*state_);
+    return entry(argument);
+}
+
+std::shared_ptr<ThreadBinding> ThreadRuntime::Bind() {
+    // Weak entries do not extend runtime lifetime; expired entries are replaced on the same thread.
+    thread_local std::map<ThreadState*, std::weak_ptr<ThreadBinding>> bindings;
+    auto& weak = bindings[state_.get()];
+    if (auto existing = weak.lock()) return existing;
+    auto binding = std::shared_ptr<ThreadBinding>(new ThreadBinding(*state_));
+    weak = binding;
+    return binding;
 }
 
 void* ThreadRuntime::Call(Entry entry, void* argument) {

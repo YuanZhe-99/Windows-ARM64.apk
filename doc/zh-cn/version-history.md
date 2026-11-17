@@ -16,3 +16,4 @@
 - 2026-11-16：新增客体 ABI 受限格式化器及固定宿主字节日志入口（T08 format）；完整 ARM64 回归通过（Host 22、Java 43、Native 58、Bionic 92）。Go 1.27.4、MyGo v0.9.2 与 Mac.apk `3f35611` 已检查、未变；完整 N1/APK/JNI 准入尚未完成，不发布。
 - 2026-11-17：以逻辑系统库、经验证的 `LIBC` 导入及真实 CRT 生命周期记录完成已声明的 P3 C/Bionic 准入子集；普通 NDK 链接的 C 夹具及完整 ARM64 回归通过（Host 22、Java 43、Native 58、Bionic 104）。Go 1.27.4、MyGo v0.9.2 与 Mac.apk `3f35611` 已检查、未变；P4/APK/JNI 与 G3 尚未完成，不发布。
 - 2026-11-17：新增 P4 真实 JVM 的 JNI 基础：每线程代理、客体 .../V/A 调用、引用/异常、loader 上下文及 worker attach/detach；通过 JVM/JIT 边界回归修复客体 PC 故障诊断优先级。requirements/build All、Host 23、Java 43、Native 58、Bionic 104、Jni 11 通过。Go 1.27.4、MyGo v0.9.2 与 Mac.apk `3f35611` 已检查、未变；Java→guest native 绑定/APK 集成及 G3 尚未完成，0.1.0 未发布。
+- 2026-11-17：跨 JNI 宿主入口及同绑定重入保留 Bionic 线程状态，在最后代理失效前关闭 key/TLS 状态。requirements/build All、Host 23、Java 43、Native 58、Bionic 104、Jni 13 通过。Go 1.27.4、MyGo v0.9.2 与 Mac.apk `3f35611` 已检查、未变；实际 Java→guest native thunk/APK 集成及 G3 仍未完成，不发布。

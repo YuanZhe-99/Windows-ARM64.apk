@@ -121,22 +121,24 @@ Go vet/测试（含 `CGO_ENABLED=0`）、MyGo vet/i18n 与文档镜像检查均�
 ## P4 JNI 基础检查
 
 2026-11-17，在上述 ARM64 机器及 Microsoft JVM `21.0.13.0.2+1-LTS` 上：
-`build.ps1 -Component All`，然后 `test.ps1 -Suite Jni`：11/11 PASS，启用 `-Xcheck:jni`，没有警告；
+`build.ps1 -Component All`，然后 `test.ps1 -Suite Jni`：13/13 PASS，启用 `-Xcheck:jni`，没有警告；
 最终另跑 `-Xbatch`，在 `T09-compilation.xml` 中验证已安装的 Java 隐式故障方法编译。
-一个 NDK 构建的夹具、一个产品客体辅助库、四组语义及四个短终止进程；不另加压力循环。
-最终 11 项套件在本机耗时 1.55 秒（单次测量，不是性能保证）。这不是 G3。
+一个 NDK 构建的夹具、一个产品客体辅助库、六组语义及四个短终止进程；不另加压力循环。
+最终 13 项套件在本机耗时 1.47 秒（单次测量，不是性能保证）。这不是 G3。
 
 | 条目 | 结果 | 证据 |
 |---|---|---|
 | 客体 → Java 参数/结果 | PASS | .../V/A 构造、静态、实例及非虚调用；混合 25 参数签名溢出整数/浮点寄存器；窄值、64 位 long、提升的 float/double、对象及原生类型数组描述符；同一 va_list 重复 V；虚调用重写相差 100；全部标量结果类别及对象/void 调用 |
 | 引用与异常 | PASS | UTF-16 内嵌 NUL 以 modified UTF-8 往返；数组 element commit/release 及 region 数值；局部 frame 提升、全局/弱/局部引用类别；真实 pending IllegalArgumentException、缺失方法、无效描述符/ID/类别及缺失类 NoClassDefFoundError；配置的隔离 loader 及 FindClass 初始化 |
 | JVM worker 生命周期 | PASS | detached GetEnv 及版本拒绝；普通/daemon Attach、重复 Attach 身份、显式 Detach 或宿主线程退出自动 Detach，后者晚于仍可调用 JNI 的 Bionic key 析构；不 detach 借用的主线程；join 后精确保留一个主代理 |
+| 持久宿主线程绑定 | PASS | 客体 pthread 身份、key 值、emutls 地址/值在返回宿主后保留；宿主控制的嵌套客体入口改变同一 errno/TLS；最后绑定的 key 析构仍可调用 JNI 并重入该绑定，然后释放 TLS 并使运行时 idle；不证明 Java native 入口 thunk |
 | 故障及误用边界 | PASS | 不支持的槽 217 及跨线程 JNIEnv：带明确类别退出 3；客体 trap/访问违规：已注册模块/偏移及退出 3；热 Java 空指针/除零异常仍由 JVM 所有并正常完成；主线程/worker 只读检查 x18/sp |
 | Java → guest native 绑定及 APK 集成 | NOT_RUN | 尚无 RegisterNatives/mangled-name 绑定或 JNI_OnLoad；winapk run 原生准入仍关闭 |
 
 回归同时通过 requirements、Host 23、Native 58、Bionic 104、Java 43；
 Go 格式/vet/测试（含禁用 CGO）、MyGo vet/i18n 及文档镜像通过。
 日志在 `build/windows-arm64/test-data/logs/P4-jni-*.log` 和 `T09-*`。
+后续绑定增量的完整回归在 `P4-context-*.log`；只向既有正例进程添加持久性及销毁语义检查，不另加循环。
 首次混合 trap 实验失败：JVM 在末尾客体处理器运行前退出 1。
 修复安装严格限定客体 PC 的首位处理器，绝不替换 HotSpot 处理器，
 每个非客体 PC 仍走原有链。保留的 T09 用例保护这条边界。

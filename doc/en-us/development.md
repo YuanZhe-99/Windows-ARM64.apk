@@ -139,13 +139,15 @@ shutdown. `fixtures.json` records the exact normal-link flags; copies staged und
 `libwinapk-jni.so` helper and the ELF fixture recipes. `-Suite Jni` runs T09's foundation,
 not G3: one real ARM64 JVM with `-Xcheck:jni` checks constructor/static/instance/nonvirtual
 .../V/A calls, references/strings/arrays, pending exceptions, and normal/daemon worker attachment.
-Four semantic groups share one process; four short fatal processes check unsupported JNI,
+Six semantic groups share one process, including persistent/nested entry state and teardown;
+four short fatal processes check unsupported JNI,
 cross-thread environment misuse, guest trap and access violation. Each has a 15-second deadline.
-Two content hashes and a summary make 11 checks. Warnings from CheckJNI fail the positive run.
+Two content hashes and a summary make 13 checks. Warnings from CheckJNI fail the positive run.
 The positive run uses `-Xbatch` and checks `T09-compilation.xml` for an installed compilation
 of the Java implicit-fault method, rather than assuming a hot loop necessarily ran JIT code.
 The helper and fixture use `-O2 -nostdlib -fno-builtin -fno-stack-protector`; this is an explicit
-JNI experiment, not proof of ordinary NDK APK loading. The separate `native-probe` remains
+JNI experiment, not proof of ordinary NDK APK loading. The fixture also uses `-femulated-tls`
+to test a real, explicitly supported TLS model. The separate `native-probe` remains
 JVM-free. Logs and JVM error files stay under ignored `test-data/logs/T09-*` and `hs_err_pid*.log`.
 
 `winapk run` keeps each app's data under `%LOCALAPPDATA%\Windows-ARM64.apk\Apps` (`--data-dir`

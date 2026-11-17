@@ -122,10 +122,10 @@ by the build script. No new gate is claimed, no version bump, and no plan deviat
 ## P4 JNI foundation checks
 
 2026-11-17 on the ARM64 machine above, Microsoft JVM `21.0.13.0.2+1-LTS`:
-`build.ps1 -Component All`, then `test.ps1 -Suite Jni`: 11/11 PASS, with `-Xcheck:jni` and no
+`build.ps1 -Component All`, then `test.ps1 -Suite Jni`: 13/13 PASS, with `-Xcheck:jni` and no
 warnings; a final rerun uses `-Xbatch` and verifies the installed Java implicit-fault method
-in `T09-compilation.xml`. One NDK-built fixture, one product guest helper, four semantic groups and four short
-fatal processes; no additional pressure loop. The final 11-check suite took 1.55 seconds on this
+in `T09-compilation.xml`. One NDK-built fixture, one product guest helper, six semantic groups and four short
+fatal processes; no additional pressure loop. The final 13-check suite took 1.47 seconds on this
 machine (one run, not a performance guarantee). This is not G3.
 
 | Item | Result | Evidence |
@@ -133,12 +133,15 @@ machine (one run, not a performance guarantee). This is not G3.
 | Guest → Java arguments/results | PASS | .../V/A constructor, static, instance and nonvirtual calls; mixed 25-argument signature spills integer/FP registers; narrow values, 64-bit long, promoted float/double, object and primitive-array descriptors; repeated V with the same va_list; virtual override differs by 100; all scalar result categories and object/void calls |
 | References and exceptions | PASS | UTF-16 embedded NUL roundtrips as modified UTF-8; array element commit/release and region values; local frame promotion, global/weak/local ref kinds; real pending IllegalArgumentException, missing methods, invalid descriptor/ID/category and missing-class NoClassDefFoundError; configured isolated loader and FindClass initialization |
 | JVM worker lifecycle | PASS | detached GetEnv and refused version; normal/daemon Attach, repeated Attach identity, explicit Detach or automatic host-thread-exit Detach after a Bionic key destructor that still calls JNI; borrowed main thread is not detached; exactly one main proxy after joins |
+| Persistent host-thread binding | PASS | guest pthread identity, key value and emutls address/value survive returning to the host; nested host-controlled guest entry changes the same errno/TLS; the last binding's key destructor still calls JNI and reenters that binding, then TLS is freed and the runtime is idle; this does not prove Java native entry thunks |
 | Fault and misuse boundary | PASS | unsupported slot 217 and cross-thread JNIEnv: exit 3 with explicit category; guest trap/access violation: registered module/offset and exit 3; hot Java null-pointer/division exceptions remain JVM-owned and complete normally; x18/sp checked read-only on main/workers |
 | Java → guest native binding and APK integration | NOT_RUN | no RegisterNatives/mangled-name binding or JNI_OnLoad yet; winapk run native admission remains off |
 
 The regression also passes requirements, Host 23, Native 58, Bionic 104 and Java 43;
 Go formatting/vet/tests (including CGO-disabled), MyGo vet/i18n and docs mirror pass.
 Logs are `build/windows-arm64/test-data/logs/P4-jni-*.log` and `T09-*`.
+The subsequent binding increment's full regression is in `P4-context-*.log`; it adds only the
+persistence and teardown semantic checks to the existing positive process, not another loop.
 The first mixed trap experiment failed: the JVM exited 1 before the tail guest handler ran.
 The repair installs a strictly guest-PC-scoped first handler, never replaces HotSpot's handlers
 and leaves every non-guest PC in its original chain. The retained T09 cases guard that boundary.

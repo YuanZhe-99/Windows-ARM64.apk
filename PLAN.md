@@ -328,6 +328,9 @@ JVM/客体 trap 与访问违规边界通过，热 Java 空指针/除零仍由 JV
 完整回归 requirements/build All、Host 23、Java 43、Native 58、Bionic 104、Jni 11 通过。
 长期契约与限制见 `doc/en-us/native-profiles.md`，证据见 `doc/en-us/platform-notes.md`。
 Java→guest native 签名 thunk、显式/导出名绑定、JNI_OnLoad 与 APK 加载仍待完成，§11.2/G3 不整体勾选。
+后续线程绑定增量保持 errno/key/仿真 TLS 跨宿主入口存续，支持同一绑定的嵌套回调；
+JNI 代理销毁前执行 key/TLS 清理，Bionic worker 借用既有上下文。T09 增至 13 项，
+不另加进程或压力循环；这仍不是 Java→guest native thunk 的证据。
 
 ### 11.1 不能省略的加载适配
 
