@@ -186,7 +186,28 @@ Go 格式化/vet/测试、CGO 关闭测试、MyGo vet/i18n 及文档镜像检查
 G0–G3 / 层 A、B：在声明的 profile 内 PASS。G4 / 层 C：NOT_RUN，
 其中厂商 Vulkan 路径因本机只有 Dozen 驱动而 BLOCKED；G5 / 层 D：NOT_RUN。
 macOS、挂起/第二设备及跨显示器 DPI 仍为 NOT_RUN。无设计偏离、版本升级、标签或推送。
-下一阻塞：厂商 ARM64 Vulkan 硬件，或明确决定验证转换层 Vulkan；D3D11 永不替代 Vulkan 结果。
+此 G3 报告之后，用户已允许明确标注的 Dozen 实验（ADR-0004）；厂商驱动验证仍需其他硬件。
+D3D11 永不替代 Vulkan 结果。
+
+## P5a 宿主图形
+
+用户已允许现有 ARM64 Dozen 路径（ADR-0004）。ANGLE `801a1a5` 和 depot_tools
+`ec77017` 的源码构建及 ARM64 DLL 暂存通过。`GraphicsHost` 6 项通过（2.38 秒）：
+Adreno 8cx Gen 3 上 D3D11 和 Vulkan/Dozen 均完成绘制、回读、resize 和销毁；
+显式 Vulkan 不可用时不回退。驱动和像素证据见[图形能力](graphics-capabilities.md)。
+厂商 Vulkan 仍为 BLOCKED；Java GLES、客体 GLES/Vulkan、产品 `auto`、G4/G5 与层 C/D 仍为 NOT_RUN。
+
+准备阶段回归通过 requirements/build All 及 AngleProbe 编译、Host 24
+（新增 PE 是 angle-probe）、Java 43、Native 58、Bionic 104、Jni 24、ApkJni 8。
+日志为 `P5-baseline-*.log`；最终 APK 运行为 `P5-baseline-ApkJni-final.log`，23.11 秒。
+中间 APK 就绪检查曾在 JNI 值正确时失败：焦点通知不是可靠的首帧信号，且 CheckJNI/字体绘制
+可能达到 15 秒截止时间。测试现以既有 30 秒截止等待真实首个位图帧，不增加休眠/重试或进程。
+
+初次 Go vet 在遍历新下载的非产品 build 目录时取消，不记为 PASS。
+go.mod 加入 `ignore ./build` 后，包发现耗时 2.51 秒，仍覆盖相同的六个产品包；
+Go vet/测试、CGO 关闭测试、MyGo vet/i18n 及文档镜像检查通过。
+版本仍为 0.1.0、未发布；跟随上游已检查、未变，已合并 Mac.apk `3f35611`；
+仅配置 origin → `<local_gitea_address>`。
 
 ## 已知限制
 

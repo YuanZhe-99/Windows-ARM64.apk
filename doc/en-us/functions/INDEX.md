@@ -23,3 +23,7 @@ then inputs, returns, side effects and notes where non-trivial).
 | `tests/windows-arm64/guest-elf` | Guest ELF sources: `n0` (T05), `negative` (T06), `modules` (T07), `threads` (T08), `jni` (T09 foundation); build parameters, dependencies and expected results/refusals | `fixtures.psd1`, `root_value`, `t08_case`, `t09_case` |
 | `internal/version` | Product version | `Version`, `Older` |
 | `tools/checkdocs` | Documentation mirror check | `main` |
+| `build-lock.json` | Recorded followed upstreams and locked backend dependencies; ANGLE P5a host paths verified separately | `followed`, `host.angle.hostVerification`, `deferred` |
+| `go.mod` | Front-end/tool dependencies; excludes generated backend downloads from Go wildcard package discovery | `ignore ./build`, `tool`, `require` |
+| `scripts/windows/angle-args.gn` | P5a ARM64 ANGLE DLL recipe: Vulkan and D3D11, system loader, no optional software/WebGPU/OpenCL backend | `Build-Angle`, `target_cpu`, `angle_enable_vulkan`, `angle_use_custom_libvulkan` |
+| `macapk/runtime/platform/windows/src/angle_probe.cpp` | Optional T10 host-only ANGLE hardware experiment, typed device identity, shader readback/resize and explicit-backend refusal; not Java/guest GLES | `Probe`, `Device`, `Shader`, `Draw`, `Test-GraphicsHost` |

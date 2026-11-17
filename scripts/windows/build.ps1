@@ -13,19 +13,20 @@ Java probe with CMake, Ninja and clang-cl from Visual Studio, for ARM64. Compone
 NativeProbe builds native-probe.exe, the guest formatting helper and ELF fixtures (T05–T08)
 with the NDK.
 JniProbe builds the real-JVM JNI probe, Android JNI/Bionic helpers and T09 fixture recipes.
+Angle builds pinned ARM64 ANGLE DLLs; AngleProbe builds only the optional host experiment.
 
 Output goes to build/windows-arm64/ (lib/ and bin/). Nothing outside the
 repository is changed, and nothing is installed.
 
 .PARAMETER Component
-Java, FrameworkRes, Fixtures (the APKs), Host, NativeProbe, JniProbe, or All.
+Java, FrameworkRes, Fixtures (the APKs), Host, NativeProbe, JniProbe, Angle, AngleProbe, or All.
 
 .PARAMETER Configuration
 Debug or Release (Host only).
 #>
 [CmdletBinding()]
 param(
-    [ValidateSet('Java', 'FrameworkRes', 'Fixtures', 'Host', 'NativeProbe', 'JniProbe', 'All')]
+    [ValidateSet('Java', 'FrameworkRes', 'Fixtures', 'Host', 'NativeProbe', 'JniProbe', 'Angle', 'AngleProbe', 'All')]
     [string]$Component = 'All',
     [ValidateSet('Debug', 'Release')]
     [string]$Configuration = 'Debug'
@@ -506,6 +507,124 @@ function Build-GuestJni {
     Write-Step "libwinapk-jni.so: ELF64 AArch64, $($record.sha256.Substring(0, 16))"
 }
 
+<# Builds pinned ANGLE ARM64 DLLs privately with its public DEPS and no system driver/toolchain installation. #>
+function Build-Angle {
+    $lock = Get-Content (Join-Path $repo 'build-lock.json') -Raw | ConvertFrom-Json
+    $record = $lock.host.angle
+    $deps = Join-Path $out 'deps'
+    New-Item -ItemType Directory -Force $deps | Out-Null
+    foreach ($source in @(
+        @{ Name = 'depot_tools'; Url = 'https://chromium.googlesource.com/chromium/tools/depot_tools.git'; Commit = $record.depotToolsCommit },
+        @{ Name = 'angle'; Url = $record.source; Commit = $record.commit }
+    )) {
+        $path = Join-Path $deps $source.Name
+        if (-not (Test-Path $path)) { Invoke-Checked 'git' @('clone', '--depth', '1', $source.Url, $path) }
+        $head = & git -C $path rev-parse HEAD
+        if ($LASTEXITCODE -ne 0) { throw "Not a source checkout: $path" }
+        $changes = & git -C $path status --porcelain --untracked-files=no
+        if ($LASTEXITCODE -ne 0 -or $changes) { throw "Inspect local source changes before building $($source.Name)" }
+        if ($head.Trim() -ne $source.Commit) {
+            Invoke-Checked 'git' @('-C', $path, 'fetch', '--depth', '1', 'origin', $source.Commit)
+            Invoke-Checked 'git' @('-C', $path, 'checkout', '--detach', $source.Commit)
+        }
+    }
+    $client = @'
+solutions = [
+  {
+    "name": "angle",
+    "url": "https://chromium.googlesource.com/angle/angle",
+    "managed": False,
+    "custom_deps": {},
+    "custom_vars": {
+      "checkout_angle_cl_deps": False,
+      "checkout_angle_dawn_deps": False,
+      "checkout_angle_internal": False,
+      "checkout_angle_restricted_traces": False,
+      "checkout_extra_traces": False,
+    },
+  },
+]
+'@
+    $clientPath = Join-Path $deps '.gclient'
+    if (Test-Path $clientPath) {
+        $existing = Get-Content $clientPath -Raw
+        if ($existing.Replace("`r", '').Trim() -ne $client.Replace("`r", '').Trim()) { throw 'Inspect the existing ANGLE .gclient configuration before changing it' }
+    } else { $client | Set-Content $clientPath -Encoding utf8NoBOM }
+    $depot = Join-Path $deps 'depot_tools'
+    $angle = Join-Path $deps 'angle'
+    $env:DEPOT_TOOLS_UPDATE = '0'
+    $env:DEPOT_TOOLS_WIN_TOOLCHAIN = '0'
+    $env:CIPD_CACHE_DIR = Join-Path $deps 'cache\cipd'
+    $env:VPYTHON_VIRTUALENV_ROOT = Join-Path $deps 'cache\vpython'
+    $env:PATH = "$depot;$env:PATH"
+    Invoke-Checked (Join-Path $depot 'bootstrap\win_tools.bat') @()
+    Push-Location $deps
+    try {
+        Invoke-Checked (Join-Path $depot 'gclient.bat') @('sync', '--no-history', '--nohooks', '--revision', "angle@$($record.commit)", '-j4')
+    } finally { Pop-Location }
+    foreach ($relative in $record.patches) {
+        $patch = Join-Path $repo $relative
+        & git -C (Join-Path $angle 'build') apply --reverse --check --ignore-space-change $patch 2> $null
+        if ($LASTEXITCODE -ne 0) {
+            Invoke-Checked 'git' @('-C', (Join-Path $angle 'build'), 'apply', '--check', '--ignore-space-change', $patch)
+            Invoke-Checked 'git' @('-C', (Join-Path $angle 'build'), 'apply', '--ignore-space-change', $patch)
+        }
+    }
+    $vs = Find-VisualStudio
+    $sdk = (Get-ItemPropertyValue 'HKLM:\SOFTWARE\Microsoft\Windows Kits\Installed Roots' 'KitsRoot10').TrimEnd('\')
+    $env:GYP_MSVS_OVERRIDE_PATH = $vs.Root
+    $env:GYP_MSVS_VERSION = '2026'
+    Push-Location $angle
+    try {
+        # Run only the metadata hook needed by these DLL targets; no Rust/test/remote toolchain setup.
+        Invoke-Checked (Join-Path $depot 'python3.bat') @('build/util/lastchange.py', '-o', 'build/util/LASTCHANGE')
+    } finally { Pop-Location }
+    # Fetch the exact public hook object directly: gsutil's own archive exceeds MAX_PATH here.
+    $rc = Join-Path $angle 'build\toolchain\win\rc\win\rc.exe'
+    $rcHash = (Get-Content "$rc.sha1" -Raw).Trim()
+    if (-not (Test-Path $rc) -or (Get-FileHash $rc -Algorithm SHA1).Hash.ToLower() -ne $rcHash) {
+        Invoke-WebRequest "https://storage.googleapis.com/chromium-browser-clang/rc/$rcHash" -OutFile "$rc.download"
+        if ((Get-FileHash "$rc.download" -Algorithm SHA1).Hash.ToLower() -ne $rcHash) { throw 'ANGLE resource compiler hook hash mismatch' }
+        Move-Item "$rc.download" $rc -Force
+    }
+    if ((Get-FileHash $rc -Algorithm SHA256).Hash.ToLower() -ne $record.resourceCompilerSha256) {
+        throw 'ANGLE resource compiler SHA-256 mismatch'
+    }
+    $compiler = Join-Path $angle 'third_party\llvm-build\Release+Asserts\bin\clang-cl.exe'
+    Invoke-Checked $compiler @('--version')
+    $native = Join-Path $angle 'out\WindowsArm64'
+    New-Item -ItemType Directory -Force $native | Out-Null
+    $gnArgs = (Get-Content (Join-Path $repo $record.gnArgs) -Raw) + "`n" +
+        "visual_studio_path = `"$($vs.Root.Replace('\', '/'))`"`nvisual_studio_version = `"2026`"`n" +
+        "windows_sdk_path = `"$($sdk.Replace('\', '/'))`"`nwindows_sdk_version = `"$($lock.host.windowsSdk.version)`"`n" +
+        "wdk_path = `"$($sdk.Replace('\', '/'))`"`n"
+    $gnArgs | Set-Content (Join-Path $native 'args.gn') -Encoding utf8NoBOM
+    Push-Location $angle
+    try {
+        Invoke-InDevShell $vs @((Join-Path $angle 'buildtools\win\gn.exe'), 'gen', $native, '--fail-on-unused-args')
+        Invoke-InDevShell $vs @((Join-Path $vs.NinjaDir 'ninja.exe'), '-C', $native, '-j4', 'libEGL', 'libGLESv2')
+    } finally { Pop-Location }
+    $dest = Join-Path $out 'bin\angle'
+    New-Item -ItemType Directory -Force $dest | Out-Null
+    $hashes = [ordered]@{}
+    foreach ($name in 'libEGL.dll', 'libGLESv2.dll') {
+        $dll = Join-Path $native $name
+        if ((Get-PeMachine $dll) -ne 'ARM64') { throw "$name is not ARM64; not staging it" }
+        Copy-Item $dll (Join-Path $dest $name) -Force
+        $hashes[$name] = (Get-FileHash $dll -Algorithm SHA256).Hash.ToLower()
+    }
+    $patches = @($record.patches | ForEach-Object {
+        [ordered]@{ path = $_; sha256 = (Get-FileHash (Join-Path $repo $_) -Algorithm SHA256).Hash.ToLower() }
+    })
+    [ordered]@{ commit = $record.commit; depotToolsCommit = $record.depotToolsCommit; patches = $patches
+        compiler = $record.compiler; resourceCompilerSha256 = $record.resourceCompilerSha256
+        args = Get-Content (Join-Path $repo $record.gnArgs) -Raw
+        argsSha256 = (Get-FileHash (Join-Path $repo $record.gnArgs) -Algorithm SHA256).Hash.ToLower()
+        windowsSdk = $lock.host.windowsSdk.version; sha256 = $hashes } |
+        ConvertTo-Json -Depth 5 | Set-Content (Join-Path $dest 'angle.json') -Encoding utf8NoBOM
+    Write-Step 'ANGLE DLLs staged as ARM64; no rendering capability is claimed until the host probes run'
+}
+
 <# Builds winapk.exe, native-probe.exe and the Java probe into $out\bin (all targets, or only $Target). #>
 function Build-Host([string]$Target = '') {
     $vs = Find-VisualStudio
@@ -545,6 +664,18 @@ function Build-Host([string]$Target = '') {
         if ($m -ne 'ARM64') { throw "$($f.Name) is $m, not ARM64 (AGENTS.md: native means native)" }
         Write-Step "$($f.Name): $m"
     }
+    if ($Target -eq 'angle-probe') {
+        $lock = Get-Content (Join-Path $repo 'build-lock.json') -Raw | ConvertFrom-Json
+        $source = 'macapk/runtime/platform/windows/src/angle_probe.cpp'
+        [ordered]@{
+            fixture = 'T10.host'; source = $source
+            sourceSha256 = (Get-FileHash (Join-Path $repo $source) -Algorithm SHA256).Hash.ToLower()
+            compiler = $lock.host.'clang-cl'.version; configuration = $Configuration
+            cmake = 'macapk/runtime/platform/windows/windows.cmake; angle-probe target, C++20, ARM64'
+            sha256 = (Get-FileHash (Join-Path $bin 'angle-probe.exe') -Algorithm SHA256).Hash.ToLower()
+            expected = 'vulkan/d3d11: exit 0, four RGBA 64/128/191/255 reads (tolerance 1), resize and teardown; unavailable Vulkan: exit 2, no fallback'
+        } | ConvertTo-Json | Set-Content (Join-Path $bin 'angle-probe.json') -Encoding utf8NoBOM
+    }
 }
 
 switch ($Component) {
@@ -554,5 +685,7 @@ switch ($Component) {
     'Host' { Build-Host }
     'NativeProbe' { Build-Host 'native-probe'; Build-GuestBionic; Build-ElfFixtures }
     'JniProbe' { Build-Host 'jni-probe'; Build-GuestBionic; Build-GuestJni; Build-ElfFixtures }
+    'Angle' { Build-Angle }
+    'AngleProbe' { Build-Host 'angle-probe' }
     'All' { Build-Java; Build-FrameworkRes; Build-Fixtures; Build-Host; Build-GuestBionic; Build-GuestJni; Build-ElfFixtures }
 }

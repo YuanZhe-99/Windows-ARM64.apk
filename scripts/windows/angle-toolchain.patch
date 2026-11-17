@@ -1,0 +1,64 @@
+diff --git a/config/win/visual_studio_version.gni b/config/win/visual_studio_version.gni
+--- a/config/win/visual_studio_version.gni
++++ b/config/win/visual_studio_version.gni
+@@ -41,6 +41,6 @@
+   assert(wdk_path != "",
+          "You must set the wdk_path if you set the visual studio path")
+-  visual_studio_runtime_dirs = []
++  visual_studio_runtime_dirs = "None"
+ }
+ 
+ visual_studio_version_logs = [ "windows_sdk_version=${windows_sdk_version}" ]
+diff --git a/toolchain/win/setup_toolchain.py b/toolchain/win/setup_toolchain.py
+--- a/toolchain/win/setup_toolchain.py
++++ b/toolchain/win/setup_toolchain.py
+@@ -21,7 +21,7 @@
+ import gn_helpers
+ 
+ SCRIPT_DIR = os.path.dirname(__file__)
+-SDK_VERSION = '10.0.28000.0'
++SDK_VERSION = '10.0.26100.0'
+ MSVC_DIR = re.compile('^.*/VC/Tools/MSVC/[^/]+/include$')
+ WINDOWS_KITS_DIR = re.compile(r'^(.*/Windows Kits/\d+/Include/[^/]+)/.*')
+ 
+diff --git a/vs_toolchain.py b/vs_toolchain.py
+--- a/vs_toolchain.py
++++ b/vs_toolchain.py
+@@ -60,7 +60,7 @@
+ #   Make sure any version numbers in the documentation match the code.
+ #
+ TOOLCHAIN_HASH = '3bfcb536c8'
+-SDK_VERSION = '10.0.28000.0'
++SDK_VERSION = '10.0.26100.0'
+ 
+ # Visual Studio versions are listed in descending order of priority.
+ # The first version is assumed by this script to be the one that is packaged,
+@@ -459,7 +459,7 @@
+     _CopyRuntime(target_dir, runtime_dir, target_cpu, debug=False)
+     if configuration == 'Debug':
+         _CopyRuntime(target_dir, runtime_dir, target_cpu, debug=True)
+-    _CopyDebugger(target_dir, target_cpu)
++    # DLL-only ANGLE build: no Chromium symbolizer/debugger is packaged.
+     if target_cpu == 'arm64':
+         target_dir = os.path.join(target_dir, 'win_clang_x64')
+         target_cpu = 'x64'
+@@ -468,7 +468,7 @@
+         _CopyRuntime(target_dir, runtime_dir, target_cpu, debug=False)
+         if configuration == 'Debug':
+             _CopyRuntime(target_dir, runtime_dir, target_cpu, debug=True)
+-        _CopyDebugger(target_dir, target_cpu)
++        # Host build tools do not require the optional SDK debugger copies.
+ 
+ 
+ def _CopyDebugger(target_dir, target_cpu):
+diff --git a/config/win/BUILD.gn b/config/win/BUILD.gn
+--- a/config/win/BUILD.gn
++++ b/config/win/BUILD.gn
+@@ -306,6 +306,6 @@
+ config("winver") {
+   defines = [
+-    "NTDDI_VERSION=NTDDI_WIN11_BR",
++    "NTDDI_VERSION=NTDDI_WIN11_GE",
+ 
+     # We can't say `=_WIN32_WINNT_WIN10` here because some files do
+     # `#if WINVER < 0x0600` without including windows.h before,

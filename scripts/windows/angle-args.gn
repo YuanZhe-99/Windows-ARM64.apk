@@ -1,0 +1,20 @@
+# Builds only Windows ARM64 EGL/GLES DLLs for separately selected Vulkan and D3D11 probes.
+# Tool/source revisions come from build-lock.json and ANGLE's DEPS; paths are supplied locally.
+target_cpu = "arm64"
+is_debug = false
+is_component_build = false
+is_clang = true
+symbol_level = 1
+use_remoteexec = false
+use_siso = false
+enable_rust = false
+enable_rust_cxx = false
+angle_build_tests = false
+angle_enable_d3d11 = true
+angle_enable_vulkan = true
+angle_enable_gl = false
+angle_enable_null = false
+angle_enable_wgpu = false
+angle_enable_cl = false
+angle_enable_swiftshader = false
+angle_use_custom_libvulkan = false

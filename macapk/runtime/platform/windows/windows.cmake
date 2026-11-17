@@ -99,6 +99,18 @@ target_compile_definitions(jni-probe PRIVATE UNICODE _UNICODE WIN32_LEAN_AND_MEA
 target_compile_options(jni-probe PRIVATE /W4 /EHsc -Wno-missing-field-initializers)
 target_link_libraries(jni-probe PRIVATE capstone::capstone mincore dxgi advapi32)
 
+# Optional P5a host experiment: absent ANGLE headers/DLLs never block the Java/native baseline.
+add_executable(angle-probe EXCLUDE_FROM_ALL
+  ${_win}/src/angle_probe.cpp
+  ${_win}/src/host_probe.cpp
+  ${_win}/winapk.manifest)
+target_include_directories(angle-probe PRIVATE
+  "${JAVA_HOME}/include" "${JAVA_HOME}/include/win32"
+  "${CMAKE_CURRENT_LIST_DIR}/../../../../build/windows-arm64/deps/angle/include")
+target_compile_definitions(angle-probe PRIVATE UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX)
+target_compile_options(angle-probe PRIVATE /W4 /EHsc -Wno-missing-field-initializers)
+target_link_libraries(angle-probe PRIVATE Vulkan::Headers user32 dxgi advapi32)
+
 if(WINAPK_BIN_DIR)
-  set_target_properties(winapk winapk-bridge native-probe jni-probe PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${WINAPK_BIN_DIR}")
+  set_target_properties(winapk winapk-bridge native-probe jni-probe angle-probe PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${WINAPK_BIN_DIR}")
 endif()

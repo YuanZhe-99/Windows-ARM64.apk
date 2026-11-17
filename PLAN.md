@@ -377,12 +377,19 @@ PASS（2026-11-17，所声明的 N1 C/JNI 子集）；以下全部由真实 APK/
 
 ## 12. P5 — ANGLE、EGL 与 GLES
 
+2026-11-17：用户明确允许现有 ARM64 Mesa Dozen（Vulkan→D3D12）实验，见 ADR-0004。
+该路径只记为转换层，不记为厂商 Vulkan 验证；后端与硬件/软件设备结果分别记录，G4 仍未验收。
+P5a 固定 ANGLE `801a1a5f6e00ed0028937067b7663fd7053bff31`，ARM64 源码构建通过。
+`GraphicsHost` 6 项 PASS（2.38 秒）：Adreno 8cx Gen 3 上分别验证 Vulkan/Dozen 和 D3D11，
+两路均完成真实窗口 resize、shader 回读和 EGL 销毁；屏蔽子进程 Vulkan ICD 后显式 Vulkan 退出 2，
+未回退到 D3D11。厂商 Vulkan 仍 BLOCKED，产品 `auto`、打包和 G4 均未验收。
+
 ### 12.1 P5a：先证明宿主后端可用
 
-- [ ] 固定 ANGLE commit、上游补丁及 GN 参数，构建 Windows ARM64 `libEGL.dll`/`libGLESv2.dll` 或该版本对应产物。
-- [ ] 只应用经审计且仍适用的上游补丁；Metal 专用补丁不机械迁移。
-- [ ] 原生 Windows 测试程序创建 Win32 窗口、EGL display/context/surface，通过 ANGLE/Vulkan 绘制图案。
-- [ ] 显式记录实际使用的 renderer/backend、GPU、驱动和 EGL/GLES capabilities。
+- [x] 固定 ANGLE commit、上游补丁及 GN 参数，构建 Windows ARM64 `libEGL.dll`/`libGLESv2.dll`。
+- [x] 只应用经审计的 Chromium 构建补丁；不迁移 Metal 补丁。
+- [x] 原生 Windows 测试程序创建 Win32 窗口、EGL display/context/surface，通过 ANGLE/Vulkan（Dozen）及 D3D11 绘制图案。
+- [x] 宿主验证记录实际 renderer/backend、GPU、驱动和 EGL/GLES capabilities，见双语图形能力文档。
 - [ ] Vulkan 不可用时，可在 `auto` 模式选择经测试的 D3D11；用户明确选择 Vulkan 时不得悄悄切换。
 - [ ] Windows DLL 搜索路径与包内依赖确定，不依赖开发机 PATH 中偶然存在的 DLL。
 

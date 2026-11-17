@@ -47,6 +47,8 @@ and Latin words only where it helps readability.
 | capability report | 能力报告 |
 | compatibility report | 兼容性报告 |
 | backend | 后端 |
+| readback | 回读 |
+| renderer (driver identity) | renderer（驱动标识） |
 | subtree | subtree |
 | upstream | 上游 |
 | port audit | 移植审计 |

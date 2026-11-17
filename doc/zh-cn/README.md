@@ -12,6 +12,7 @@ MyGo 前端在手机式窗格或独立窗口中打开每个应用，每个 APK �
 | [gui.md](gui.md) | 界面：窗口、窗格和组、面板、它的文件、运行时契约草案、示例数据 |
 | [abi-compatibility.md](abi-compatibility.md) | 宿主与客体代码之间哪些调用直通、哪些需要 thunk、哪些不受支持，以及证据 |
 | [native-profiles.md](native-profiles.md) | N0 及已声明的 P3 C/Bionic 子集（T07/T08）、准入、ABI 限制与拒绝 |
+| [graphics-capabilities.md](graphics-capabilities.md) | 图形验证路径、已选 ANGLE 源码构建及显式后端契约 |
 | [port-audit.md](port-audit.md) | P0：Mac.apk 中哪些部分与 macOS 绑定，以及在 Windows 上如何处理 |
 | [decisions.md](decisions.md) | 架构决策（ADR） |
 | [upstream.md](upstream.md) | 上游契约与特殊行为：Mac.apk、Windows ARM64 ABI、Android NDK、MyGo |
@@ -31,7 +32,7 @@ MyGo 前端在手机式窗格或独立窗口中打开每个应用，每个 APK �
 独立启用 CFG 的构建与恢复后的普通构建均通过完整回归。
 
 这不表示任意 NDK/C++/ELF-TLS 或图形兼容。P5/P6 图形及 G4/G5 仍未验证；
-本机仅有 Mesa Dozen 转换层 Vulkan、没有厂商驱动，该路径需要硬件或明确决定。
+用户已允许在本机 Mesa Dozen 转换层 Vulkan 上实验（ADR-0004），绝不算作厂商驱动验证。
 MyGo 界面仍使用 `winapk.Mock`，暂缓前端集成。当前为 Mac.apk `3f35611`、Go 1.27.4、MyGo v0.9.2。
 
 ## 上游版本
@@ -46,4 +47,5 @@ Go、MyGo 与 Mac.apk 不固定版本：始终跟随各自的最新版本。下�
 | Mac.apk | 最新 `main`，作为 `macapk/` subtree | `3f35611`，已合并 |
 | OpenJDK（ARM64）、clang-cl、MSVC、Windows SDK、CMake、Ninja、vcpkg、Vulkan 头文件 | 锁定在 `build-lock.json` | Microsoft OpenJDK 21.0.13；clang-cl 22.1.3；MSVC 14.51；SDK 10.0.26100；CMake 4.3.1；Ninja 1.13.2；vcpkg 基线 `afa249f`；Vulkan 头文件 1.4.363；Capstone 5.0.9 |
 | Android SDK/NDK、kotlinc、AOSP 框架资源 | 锁定在 `build-lock.json` | build-tools 36.0.0、android-36；NDK r30（30.0.16248370）；kotlinc 2.4.0；`android-16.0.0_r2` |
-| ANGLE、Skia | 在 P5a 和 P8 选定 | 尚未选定；Vulkan loader 使用 Windows 自带的 |
+| ANGLE | 在 P5a 锁定 | `801a1a5`，ARM64 源码构建及宿主 D3D11 / Vulkan 经 Dozen 通过；不等于客体图形关卡通过 |
+| Skia | 在 P8 选定 | 尚未选定；Vulkan loader 使用 Windows 自带的 |

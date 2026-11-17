@@ -19,6 +19,7 @@ themselves.
 | Capstone | 5.0.9 via vcpkg, `build-lock.json` | the guest loader's screen of ARM64 code (`elf_loader.cpp`, in `native-probe.exe`) | BSD-3-Clause | none | ships as `capstone.dll` beside `native-probe.exe`, a development tool not in any package yet; ships with the runtime once the loader does, with its notice |
 | Android's `org.apache.http.legacy` | through Mac.apk (`macapk/thirdparty/apache-http-legacy`, from an Android 14 system image, AOSP `platform/external/apache-http`) | Apache HttpClient and Android's legacy HTTP client, packed into `android-framework.jar` as the shared library on a device | Apache-2.0 | none (converted by upstream's DEX converter) | ships in the runtime; keep the license and Apache HttpComponents' NOTICE |
 | Kotlin compiler and standard library | 2.4.0, bundled with Android Studio, `build-lock.json` | compiling the Kotlin fixture T04; `kotlin-stdlib.jar` is dexed into that APK | Apache-2.0 | none | build time only; the fixture is generated, never committed or shipped |
+| ANGLE and its public DEPS | `google/angle`, `801a1a5`, `build-lock.json` | optional P5a ARM64 EGL/GLES source build with Vulkan and D3D11 | BSD-3-Clause; dependencies keep their licenses (including Apache-2.0/LLVM exception, MIT, zlib) | pinned Chromium build dependency adapted to the locked SDK/custom VS, not renderer changes | preserve ANGLE LICENSE and dependency notices; P7 must enumerate actually linked GN dependencies and include their full texts before distributing these DLLs; not packaged yet |
 | Mac.apk | `kksimp/Mac.apk`, latest `main`, git subtree under `macapk/` (at `3f35611`) | DEX translation, Android Framework, APK/resource parsing, loader and bridge code | AGPL-3.0 (upstream also offers a commercial license, not used here) | edited in place for Windows, recorded per commit | keep headers and notices; ship the complete corresponding source of `macapk/` with every release; its bundled components keep their own licenses (`macapk/THIRD_PARTY_NOTICES.txt`) |
 
 ## Trademarks
@@ -30,5 +31,5 @@ and icon accordingly. Android is a trademark of Google LLC.
 
 ## Planned components
 
-ANGLE and Skia enter this inventory when a phase first builds with them. The Vulkan loader is Windows' own and never ships. Mac.apk's macOS prebuilts (ANGLE, MoltenVK, Skia `.dylib`) are never shipped in
+Skia enters this inventory when a phase first builds with it. The Vulkan loader is Windows' own and never ships. Mac.apk's macOS prebuilts (ANGLE, MoltenVK, Skia `.dylib`) are never shipped in
 a Windows package.

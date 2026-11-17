@@ -101,3 +101,22 @@ broke both. With the UTF-8 active code page the option strings carry any path.
 
 **Revisit** when re-converting after framework-only changes costs enough to matter (then port the
 narrowed digest), or when the private runtime of P7 changes how the converter is started.
+
+## ADR-0004: explicitly labelled Dozen Vulkan experiments
+
+2026-11-17, P5/P6. Status: accepted by the user after G3.
+
+**Decision.** Use this machine's existing ARM64 Mesa Dozen Vulkan→Direct3D 12 implementation
+for graphics experiments. Report it as a translated Vulkan path, never as validation on a
+GPU-vendor Vulkan ICD. Do not install/copy a driver or change system ICD selection. Hardware
+and software devices remain distinct; a software result does not prove the Adreno GPU path.
+
+**Scope.** ANGLE/Vulkan, ANGLE/D3D11 and guest Vulkan results remain independent. An explicit
+Vulkan choice cannot silently become D3D11. Every graphics gate still requires its actual
+rendering/readback, lifetime and error contracts; approval of the driver path is not G4 passing,
+Khronos conformance or permission to advertise an unimplemented extension. ANGLE and guest
+Vulkan keep separate device/resource ownership.
+
+**Revisit** when vendor ARM64 Vulkan hardware is available, a required Dozen capability is
+missing, or an unexplained driver/bridge failure appears. Retain Java/G3 independently and
+report the affected graphics path as blocked rather than substituting another backend.

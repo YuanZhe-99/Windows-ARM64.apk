@@ -192,8 +192,33 @@ documentation mirror checks pass.
 G0–G3 / layers A and B: PASS for the stated profiles. G4 / layer C: NOT_RUN, with the
 vendor-Vulkan path BLOCKED by this PC's Dozen-only driver; G5 / layer D: NOT_RUN.
 macOS, suspend/second-device and cross-display DPI remain NOT_RUN. No design deviation,
-version bump, tag or push. Next blocker: vendor ARM64 Vulkan hardware or an explicit decision
-to exercise translated Vulkan; D3D11 never stands in for Vulkan.
+version bump, tag or push. After this G3 report the user approved explicitly labelled Dozen
+experiments (ADR-0004); vendor-driver verification still requires different hardware.
+D3D11 never stands in for Vulkan.
+
+## P5a host graphics
+
+The user approved the existing ARM64 Dozen path (ADR-0004). The source build of ANGLE
+`801a1a5` with depot_tools `ec77017` and ARM64 DLL staging pass. `GraphicsHost` passes
+6 checks in 2.38 s: Adreno 8cx Gen 3 D3D11 and Vulkan/Dozen draw, readback, resize and
+teardown, plus explicit Vulkan unavailability without fallback. See
+[graphics capabilities](graphics-capabilities.md) for the drivers and pixel evidence.
+Vendor Vulkan remains BLOCKED; Java GLES, guest GLES/Vulkan, product `auto`, G4/G5 and
+layers C/D remain NOT_RUN.
+
+The preparation regression passes requirements/build All and AngleProbe compilation, Host 24
+(the extra PE is angle-probe), Java 43, Native 58, Bionic 104, Jni 24 and ApkJni 8.
+Logs: `P5-baseline-*.log`; final APK run: `P5-baseline-ApkJni-final.log`, 23.11 s.
+An intermediate APK readiness check failed despite correct JNI values: focus notification
+was not a reliable first-frame signal, and CheckJNI/font rendering could reach the 15-second
+deadline. The test now waits for the real first bitmap frame with the existing 30-second
+deadline, without sleeps/retries or additional processes.
+
+The initial Go vet was cancelled while traversing the newly downloaded non-product build tree,
+not reported as PASS. After `ignore ./build` in go.mod, package discovery takes 2.51 s and
+covers the same six product packages; Go vet/tests, CGO-disabled tests, MyGo vet/i18n and
+documentation mirror checks pass. Version remains 0.1.0, unreleased; followed upstreams were
+checked unchanged, merged Mac.apk `3f35611`; only origin → `<local_gitea_address>` is configured.
 
 ## Known limitations
 

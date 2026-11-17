@@ -38,11 +38,11 @@ and hardware TLS/syscall/register access remain refused. Each probe has a
 60-second deadline. Build first: build.ps1 -Component NativeProbe.
 
 .PARAMETER Suite
-Host, Java, Native, Bionic, Jni, ApkJni, or a targeted Bionic subset.
+Host, Java, Native, Bionic, Jni, ApkJni, GraphicsHost, or a targeted Bionic subset.
 #>
 [CmdletBinding()]
 param(
-    [ValidateSet('Host', 'Java', 'Native', 'Bionic', 'Modules', 'Memory', 'Io', 'Faults', 'Format', 'Libraries', 'Jni', 'ApkJni')]
+    [ValidateSet('Host', 'Java', 'Native', 'Bionic', 'Modules', 'Memory', 'Io', 'Faults', 'Format', 'Libraries', 'Jni', 'ApkJni', 'GraphicsHost')]
     [string]$Suite = 'Host'
 )
 Set-StrictMode -Version Latest
@@ -831,7 +831,68 @@ function Test-ApkJni {
     Check 'T09.apk.unsafe-entry' ($LASTEXITCODE -eq 65 -and $text -match 'GUEST_ABI_UNSUPPORTED: portable ARM64' -and $text -notmatch 'stage boot|converting DEX') "exit $LASTEXITCODE; no DEX or guest execution"
 }
 
-switch ($Suite) { 'Host' { Test-Host } 'Java' { Test-Java } 'Native' { Test-Native } 'Bionic' { Test-Bionic } 'Modules' { Test-Modules } 'Memory' { Test-Bionic -Command memory } 'Io' { Test-Bionic -Command io } 'Faults' { Test-Bionic -Command faults } 'Format' { Test-Bionic -Command format } 'Libraries' { Test-Libraries } 'Jni' { Test-Jni } 'ApkJni' { Test-ApkJni } }
+<# Checks two explicit hardware ANGLE paths and one unavailable-Vulkan refusal; never counts as G4. #>
+function Test-GraphicsHost {
+    $probe = Join-Path $out 'bin\angle-probe.exe'
+    $directory = Join-Path $out 'bin\angle'
+    $logs = Join-Path $out 'test-data\logs'
+    New-Item -ItemType Directory -Force $logs | Out-Null
+    $record = Get-Content (Join-Path $directory 'angle.json') -Raw | ConvertFrom-Json
+    $fixture = Get-Content (Join-Path $out 'bin\angle-probe.json') -Raw | ConvertFrom-Json
+    Check 'T10.probe' ((Get-PeMachine $probe) -eq 'ARM64' -and
+        (Get-FileHash $probe -Algorithm SHA256).Hash.ToLower() -eq $fixture.sha256 -and
+        (Get-FileHash (Join-Path $repo $fixture.source) -Algorithm SHA256).Hash.ToLower() -eq $fixture.sourceSha256) 'ARM64 probe, source/build/expected-output record'
+    foreach ($name in 'libEGL.dll', 'libGLESv2.dll') {
+        $path = Join-Path $directory $name
+        Check "T10.$name" ((Get-PeMachine $path) -eq 'ARM64' -and
+            (Get-FileHash $path -Algorithm SHA256).Hash.ToLower() -eq $record.sha256.$name) 'ARM64 and recorded source-build hash'
+    }
+    foreach ($variant in @(
+        @{ Name = 'vulkan'; Backend = 'vulkan'; Unavailable = $false },
+        @{ Name = 'd3d11'; Backend = 'd3d11'; Unavailable = $false },
+        @{ Name = 'vulkan-unavailable'; Backend = 'vulkan'; Unavailable = $true }
+    )) {
+        $stdout = Join-Path $logs "T10-host-$($variant.Name).out"
+        $stderr = Join-Path $logs "T10-host-$($variant.Name).err"
+        $saved = @{}
+        foreach ($key in 'VK_DRIVER_FILES', 'VK_ICD_FILENAMES', 'VK_LOADER_DRIVERS_SELECT', 'PATH') {
+            $saved[$key] = [Environment]::GetEnvironmentVariable($key)
+        }
+        try {
+            # Prove the private DLL path does not rely on development-tool PATH entries.
+            $env:PATH = "$env:SystemRoot\System32;$env:SystemRoot"
+            if ($variant.Unavailable) {
+                $env:VK_DRIVER_FILES = Join-Path $logs 'not-an-installed-icd.json'
+                $env:VK_ICD_FILENAMES = $env:VK_DRIVER_FILES
+                $env:VK_LOADER_DRIVERS_SELECT = '*not-an-installed-icd*'
+            }
+            $p = Start-Process $probe -ArgumentList @($variant.Backend, "`"$directory`"") -NoNewWindow -PassThru `
+                -RedirectStandardOutput $stdout -RedirectStandardError $stderr
+        } finally {
+            foreach ($key in $saved.Keys) { [Environment]::SetEnvironmentVariable($key, $saved[$key]) }
+        }
+        try {
+            if (-not $p.WaitForExit(30000)) {
+                $p.Kill(); $p.WaitForExit()
+                Check "T10.host.$($variant.Name)" $false 'exceeded 30 seconds'
+                continue
+            }
+            $text = [string](Get-Content $stdout -Raw)
+            $errorText = [string](Get-Content $stderr -Raw)
+            if ($variant.Unavailable) {
+                $ok = $p.ExitCode -eq 2 -and $text -match 'GRAPHICS_CAPABILITY_MISSING backend=vulkan.*no fallback' -and
+                    $text -notmatch 'renderer backend=d3d11|result T10.host PASS'
+            } else {
+                $ok = $p.ExitCode -eq 0 -and $text.Contains("result T10.host PASS backend=$($variant.Backend)") -and
+                    $text -match 'software=no' -and [regex]::Matches($text, '(?m)^pixel ').Count -eq 4
+                $text -split "`n" | Where-Object { $_ -match '^renderer |^device |^pixel ' } | ForEach-Object { Write-Host $_ }
+            }
+            Check "T10.host.$($variant.Name)" $ok "exit $($p.ExitCode); host only, not G4$(if (-not $ok) { '; ' + $text + $errorText })"
+        } finally { $p.Dispose() }
+    }
+}
+
+switch ($Suite) { 'Host' { Test-Host } 'Java' { Test-Java } 'Native' { Test-Native } 'Bionic' { Test-Bionic } 'Modules' { Test-Modules } 'Memory' { Test-Bionic -Command memory } 'Io' { Test-Bionic -Command io } 'Faults' { Test-Bionic -Command faults } 'Format' { Test-Bionic -Command format } 'Libraries' { Test-Libraries } 'Jni' { Test-Jni } 'ApkJni' { Test-ApkJni } 'GraphicsHost' { Test-GraphicsHost } }
 if ($script:failed -gt 0) { Write-Host "$script:failed check(s) failed"; exit 1 }
 Write-Host 'all checks passed'
 exit 0

@@ -43,6 +43,8 @@ Microsoft），以及 API 与格式名称（JNI、ELF、PE、DEX、Bionic、EGL�
 | capability report | 能力报告 |
 | compatibility report | 兼容性报告 |
 | backend | 后端 |
+| readback | 回读 |
+| renderer (driver identity) | renderer（驱动标识） |
 | subtree | subtree |
 | upstream | 上游 |
 | port audit | 移植审计 |

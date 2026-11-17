@@ -9,3 +9,5 @@
 *.dylib binary
 *.svg text eol=lf
 *.patch text eol=lf
+# A unified diff requires a space on blank context lines.
+scripts/windows/angle-toolchain.patch whitespace=-blank-at-eol

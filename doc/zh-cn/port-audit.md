@@ -145,8 +145,8 @@ N0 加载器（`runtime/guest/loader`，[native-profiles.md](native-profiles.md)
 - **这台电脑上的 Vulkan 是转换层。** Adreno 8cx Gen 3 驱动没有安装 Vulkan ICD；loader 列出两个 Mesa
   Dozen 设备（基于 Direct3D 12 的 Vulkan 1.2：Adreno 和软件 Basic Render Driver）。在它们上面 Win32
   呈现测试通过。客体 Vulkan（P6）和 ANGLE 的 Vulkan 后端（P5）在这里会运行在转换层上；`doctor` 会报告
-  （`VULKAN_DRIVER_TRANSLATED`），G4 需要一台有厂商 Vulkan 驱动的电脑，或一项明确的决定
-  （[decisions.md](decisions.md)）。
+  （`VULKAN_DRIVER_TRANSLATED`）。用户已在 ADR-0004 中明确允许 Dozen 实验
+  （[decisions.md](decisions.md)）；这永不证明厂商驱动路径。
 - **Windows 和 SDK 都不带 Vulkan 头文件**：它们按锁定的基线从 vcpkg 获取（仅构建时使用）。
 - **Java 侧不需修改即可编译**于 Windows ARM64 JDK；它的平台耦合在运行时。
 

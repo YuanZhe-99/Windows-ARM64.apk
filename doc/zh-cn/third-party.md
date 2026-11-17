@@ -18,6 +18,7 @@ Windows-ARM64.apk 以 AGPL-3.0 授权。本清单列出它复用或嵌入的每�
 | Capstone | 5.0.9 via vcpkg，`build-lock.json` | 客体加载器对 ARM64 代码的筛查（`elf_loader.cpp`，`native-probe.exe` 中） | BSD-3-Clause | 无 | 随 `native-probe.exe` 以 `capstone.dll` 提供，这是一个开发工具，尚未进入任何包；加载器进入运行时后随之发布，保留其声明 |
 | Android 的 `org.apache.http.legacy` | 经 Mac.apk（`macapk/thirdparty/apache-http-legacy`，来自 Android 14 系统镜像、AOSP `platform/external/apache-http`） | 打包进 `android-framework.jar` 的 Apache HttpClient 及 Android 的旧 HTTP 客户端，如同设备上的共享库 | Apache-2.0 | 无（上游已用其 DEX 转换器转换） | 随运行时发布；保留许可证和 Apache HttpComponents 的 NOTICE |
 | Kotlin 编译器与标准库 | 2.4.0，Android Studio 自带，`build-lock.json` | 编译 Kotlin 夹具 T04；`kotlin-stdlib.jar` 转为 DEX 放入该 APK | Apache-2.0 | 无 | 仅构建时使用；夹具是生成的，从不提交，也不随包发布 |
+| ANGLE 及公开 DEPS | `google/angle`、`801a1a5`、`build-lock.json` | 可选 P5a ARM64 EGL/GLES 源码构建，含 Vulkan 与 D3D11 | BSD-3-Clause；依赖保留各自许可证（含 Apache-2.0/LLVM 例外、MIT、zlib） | 固定 Chromium build 依赖适配锁定 SDK/自定义 VS，不改 renderer | 保留 ANGLE LICENSE 与依赖声明；P7 分发这些 DLL 前必须枚举实际链接的 GN 依赖并附完整文本；尚未打包 |
 | Mac.apk | `kksimp/Mac.apk`，最新 `main`，`macapk/` 下的 git subtree（在 `3f35611`） | DEX 转换、Android Framework、APK/资源解析、加载器与桥代码 | AGPL-3.0（上游另提供商业许可，本项目不使用） | 为 Windows 原地修改，按提交记录 | 保留文件头和声明；每次发行附带 `macapk/` 的完整对应源码；其内含组件保留各自许可证（`macapk/THIRD_PARTY_NOTICES.txt`） |
 
 ## 商标
@@ -27,5 +28,5 @@ Windows-ARM64.apk 以 AGPL-3.0 授权。本清单列出它复用或嵌入的每�
 
 ## 计划中的组件
 
-ANGLE 和 Skia 在某个阶段首次用它们构建时加入本清单。
+Skia 在某个阶段首次用它构建时加入本清单。
 Vulkan loader 是 Windows 自带的，绝不随包发布。Mac.apk 的 macOS 预编译产物（ANGLE、MoltenVK、Skia `.dylib`）绝不进入 Windows 包。

@@ -22,3 +22,7 @@
 | `tests/windows-arm64/guest-elf` | 客体 ELF 源码：`n0`（T05）、`negative`（T06）、`modules`（T07）、`threads`（T08）、`jni`（T09 基础）；构建参数、依赖及期望结果/拒绝 | `fixtures.psd1`、`root_value`、`t08_case`、`t09_case` |
 | `internal/version` | 产品版本 | `Version`、`Older` |
 | `tools/checkdocs` | 文档镜像检查 | `main` |
+| `build-lock.json` | 跟随的上游记录及锁定的后端依赖；ANGLE P5a 宿主路径分别验证 | `followed`、`host.angle.hostVerification`、`deferred` |
+| `go.mod` | 前端/工具依赖；从 Go 通配符包发现中排除生成的后端下载目录 | `ignore ./build`、`tool`、`require` |
+| `scripts/windows/angle-args.gn` | P5a ARM64 ANGLE DLL 配方：Vulkan 与 D3D11、系统 loader，不启用可选软件/WebGPU/OpenCL 后端 | `Build-Angle`、`target_cpu`、`angle_enable_vulkan`、`angle_use_custom_libvulkan` |
+| `macapk/runtime/platform/windows/src/angle_probe.cpp` | 可选 T10 宿主 ANGLE 硬件实验、类型化设备标识、shader 回读/resize 及显式后端拒绝；不是 Java/客体 GLES | `Probe`、`Device`、`Shader`、`Draw`、`Test-GraphicsHost` |

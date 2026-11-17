@@ -149,8 +149,8 @@ What the N0 loader (`runtime/guest/loader`, [native-profiles.md](native-profiles
   loader lists two Mesa Dozen devices (Vulkan 1.2 on Direct3D 12: the Adreno and the software
   Basic Render Driver). The Win32 present test passes on them. Guest Vulkan (P6) and ANGLE's
   Vulkan backend (P5) would run on a translation layer here; `doctor` reports it
-  (`VULKAN_DRIVER_TRANSLATED`), and G4 needs a PC with a vendor Vulkan driver or an explicit
-  decision ([decisions.md](decisions.md)).
+  (`VULKAN_DRIVER_TRANSLATED`). The user explicitly approved Dozen experiments in ADR-0004
+  ([decisions.md](decisions.md)); this never proves the vendor-driver path.
 - **No Vulkan headers ship with Windows or the SDK**: they come from vcpkg at a locked baseline
   (build time only).
 - **The Java side needs no change to compile** on the Windows ARM64 JDK; its platform coupling is

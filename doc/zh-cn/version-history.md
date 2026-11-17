@@ -2,6 +2,7 @@
 
 ## 0.1.0（进行中）
 
+- 2026-11-17：构建固定的 Windows ARM64 ANGLE，验证宿主 D3D11 及用户批准的 Vulkan/Dozen（ADR-0004）。GraphicsHost 6 项通过，包括显式 Vulkan 不可用时不回退。厂商 Vulkan BLOCKED，G4/G5 NOT_RUN。准备阶段基线通过 Host 24、Java 43、Native 58、Bionic 104、Jni 24、ApkJni 8；APK 就绪改用真实首帧，Go 通配符排除生成的 build 下载目录。该基线使用 Go 1.27.4、MyGo v0.9.2 和已合并 Mac.apk `3f35611`；0.1.0 仍未发布。
 - 2026-11-17：以真实 hello-jni Activity 矩阵完成所声明 C/Bionic/JNI profile 的 G3：双向类型数值/异常、依赖 hook、无效版本缓存、worker/嵌套回调及窗口驱动的不支持 JNI 终止。默认及真实启用 CFG 的完整 ARM64 回归通过（Host 23、Java 43、Native 58、Bionic 104、Jni 24、ApkJni 8）；全部 64 个 PE JNI 入口具有对齐 GFID。默认 bin 已 clean 重建并复验 CFG=0。Go 1.27.4、MyGo v0.9.2 及已合并 Mac.apk `3f35611` 已检查、未变；G4/G5 尚未验证，版本 0.1.0 未发布。
 - 2026-11-17：将受限 APK 库提取、仅客体 DEX 重定向及应用类导出绑定接入 Windows 宿主桥。API-30 hello-jni Activity 通过六项精简检查（4.77 秒）；完整 ARM64 requirements/build All、Host 23、Java 43、Native 58、Bionic 104、Jni 24 通过。API-24 紧凑 RX 元数据仍被拒绝；完整 APK/G3 矩阵未完成。Go 1.27.4、MyGo v0.9.2 与已合并 Mac.apk `3f35611` 已检查、未变；版本 0.1.0 未发布。
 - 2026-11-17：新增显式根库专属/仅一次 JNI_OnLoad、失败缓存及失败 hook native 入口守卫；short/long/Unicode/描述符导出查询、注册优先及歧义转义拒绝在既有 T09 语义组通过。requirements/build All、Host 23、Java 43、Native 58、Bionic 104、Jni 24 通过；最终定向 Jni 运行 1.73 秒。Go 1.27.4、MyGo v0.9.2 与 Mac.apk `3f35611` 已检查、未变；APK 集成及 G3 仍未完成，0.1.0 未发布。

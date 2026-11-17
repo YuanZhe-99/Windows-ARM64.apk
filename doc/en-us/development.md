@@ -41,6 +41,9 @@ tree can contain large third-party checkouts; it is not product Go source. Root 
 ```powershell
 .\scripts\windows\check-requirements.ps1
 .\scripts\windows\build.ps1 -Component All          # or Java, FrameworkRes, Fixtures, Host, NativeProbe, JniProbe
+.\scripts\windows\build.ps1 -Component Angle        # optional P5a source build; separate from Java
+.\scripts\windows\build.ps1 -Component AngleProbe
+.\scripts\windows\test.ps1 -Suite GraphicsHost      # host-only; not G4
 .\scripts\windows\test.ps1 -Suite Host
 .\scripts\windows\test.ps1 -Suite Java
 .\scripts\windows\test.ps1 -Suite Native

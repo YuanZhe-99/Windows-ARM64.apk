@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "checked": "2026-11-16",
+  "checked": "2026-11-17",
   "notes": "PLAN.md §7: every dependency except Mac.apk, Go and MyGo is locked here. Those three follow their latest versions; their entries record what the last build used. 'status' is locked (in use and verified on the build machine), chosen (decided, not installed yet) or deferred (chosen in a later phase). doc/en-us/development.md explains how each is installed.",
   "followed": {
     "macapk": { "commit": "3f3561131af0f8d2db26fb181c32d76b830386dc", "source": "https://github.com/kksimp/Mac.apk main", "license": "AGPL-3.0-or-later (dual-licensed upstream)" },
@@ -8,6 +8,26 @@
     "mygo": { "version": "v0.9.2" }
   },
   "host": {
+    "angle": {
+      "status": "locked",
+      "commit": "801a1a5f6e00ed0028937067b7663fd7053bff31",
+      "depotToolsCommit": "ec77017fb3e090ff02bffb9c6980ebcdd3006ddc",
+      "gnArgs": "scripts/windows/angle-args.gn",
+      "compiler": "ANGLE DEPS llvmorg-24-init-17044-gc3223914-43; build tool only, distinct from the runtime host compiler",
+      "resourceCompilerSha256": "903769d98df8a005c79d52d7089fe34f23c0b7ada4cd0c42b6063526a5593e6a",
+      "source": "https://chromium.googlesource.com/angle/angle",
+      "license": "BSD-3-Clause (plus the licenses of its DEPS)",
+      "use": "P5a source build of ARM64 Windows libEGL.dll/libGLESv2.dll with Vulkan and D3D11; host experiment only, not packaged",
+      "hostVerification": {
+        "suite": "GraphicsHost",
+        "result": "PASS",
+        "device": "Qualcomm Adreno 8cx Gen 3",
+        "vulkan": "Dozen (Vulkan to D3D12), Mesa 26.3.0-devel git-e3fc7749c6, API 1.2.359; vendor ICD BLOCKED",
+        "d3d11": "hardware, driver 30.0.4122.4000",
+        "explicitVulkanUnavailable": "exit 2, no D3D11 fallback"
+      },
+      "patches": ["scripts/windows/angle-toolchain.patch"]
+    },
     "jdk": {
       "status": "locked",
       "name": "Microsoft Build of OpenJDK 21",
@@ -73,7 +93,6 @@
     }
   },
   "deferred": {
-    "angle": "P5a: an ARM64 Windows build of ANGLE (Vulkan and Direct3D 11 backends), built from source at a recorded commit",
     "skia": "P8: Skia for AGSL/RenderEffect; upstream's prebuilt is macOS-only"
   }
 }
