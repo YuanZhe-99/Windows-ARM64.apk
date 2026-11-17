@@ -37,8 +37,8 @@ yet. The current build uses Mac.apk `3f35611`, Go 1.27.4 and MyGo v0.9.2.
 Active work continues with `PLAN.md` §10 (P3: Bionic, threads, errno, TLS) and §11 (P4: JNI and
 loading an APK's libraries in `winapk run`). The independent T08 thread foundation now covers
 managed pthreads, errno, keys/destructors, explicitly emulated C TLS and untimed mutex/condition
-synchronization; it does not enable N1
-or APK native loading. Front-end integration is deferred while the backend progresses.
+synchronization. T07 adds transactional dependency graphs, constructors and guest dl APIs;
+neither enables full N1 or APK native loading. Front-end integration is deferred while the backend progresses.
 
 ## Upstream versions
 

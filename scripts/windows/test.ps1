@@ -42,7 +42,7 @@ Host, Java, Native or Bionic.
 #>
 [CmdletBinding()]
 param(
-    [ValidateSet('Host', 'Java', 'Native', 'Bionic')]
+    [ValidateSet('Host', 'Java', 'Native', 'Bionic', 'Modules')]
     [string]$Suite = 'Host'
 )
 Set-StrictMode -Version Latest
@@ -576,9 +576,43 @@ function Test-Bionic {
             }
         } finally { $p.Dispose() }
     }
+    Test-Modules
 }
 
-switch ($Suite) { 'Host' { Test-Host } 'Java' { Test-Java } 'Native' { Test-Native } 'Bionic' { Test-Bionic } }
+<# Runs T07 once as a compact transaction matrix, with manifest checks and a hard deadline. #>
+function Test-Modules {
+    $probe = Join-Path $out 'bin\native-probe.exe'
+    $dir = Join-Path $repo 'tests\fixtures\elf'
+    $built = (Get-Content (Join-Path $dir 'fixtures.json') -Raw | ConvertFrom-Json).fixtures
+    $table = Import-PowerShellDataFile (Join-Path $repo 'tests\windows-arm64\guest-elf\fixtures.psd1')
+    foreach ($f in $table.Fixtures | Where-Object Id -EQ 'T07') {
+        $record = $built | Where-Object name -EQ $f.Name
+        $file = Join-Path $dir $f.Name
+        $hash = if (Test-Path $file) { (Get-FileHash $file -Algorithm SHA256).Hash.ToLower() } else { 'missing' }
+        Check "T07.$($f.Name).hash" ($null -ne $record -and $record.sha256 -eq $hash) $hash
+        if (-not $record -or $record.sha256 -ne $hash) { return }
+    }
+    $logs = Join-Path $out 'test-data\logs'
+    New-Item -ItemType Directory -Force $logs | Out-Null
+    $stdout = Join-Path $logs 'T07-modules.out'
+    $stderr = Join-Path $logs 'T07-modules.err'
+    $p = Start-Process $probe -ArgumentList @('modules', "`"$dir`"") -NoNewWindow -PassThru -RedirectStandardOutput $stdout -RedirectStandardError $stderr
+    try {
+        if (-not $p.WaitForExit(30000)) {
+            $p.Kill()
+            $p.WaitForExit()
+            Check 'T07.deadline' $false 'module matrix exceeded 30 seconds'
+            return
+        }
+        $text = [string](Get-Content $stdout -Raw)
+        $cases = [regex]::Matches($text, '(?m)^case (T07\.\S+) (PASS|FAIL)')
+        foreach ($case in $cases) { Check $case.Groups[1].Value ($case.Groups[2].Value -eq 'PASS') $case.Groups[2].Value }
+        $ok = $p.ExitCode -eq 0 -and $cases.Count -eq 10 -and $text -match 'result T07 10/10 PASS'
+        Check 'T07.result' $ok "exit $($p.ExitCode), $($cases.Count) semantic cases$(if (-not $ok) { '; ' + $text + (Get-Content $stderr -Raw) })"
+    } finally { $p.Dispose() }
+}
+
+switch ($Suite) { 'Host' { Test-Host } 'Java' { Test-Java } 'Native' { Test-Native } 'Bionic' { Test-Bionic } 'Modules' { Test-Modules } }
 if ($script:failed -gt 0) { Write-Host "$script:failed check(s) failed"; exit 1 }
 Write-Host 'all checks passed'
 exit 0

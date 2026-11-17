@@ -1,11 +1,12 @@
-// elf_loader.h -- the guest ELF loader on the Windows host (PLAN.md §9.2), profile N0.
+// elf_loader.h -- N0 ELF loader and P3 managed module graphs on the Windows host.
 //
 // Maps an Android arm64-v8a shared object (ELF64, AArch64, ET_DYN) from its program headers
 // into memory the host reserves, applies its relocations, binds its imports to host symbols,
 // screens its code and sets the final page protections. Nothing of the module runs while it
-// loads: no constructor, no IFUNC resolver. Profile N0 (native-profiles.md) admits only a
+// loads through Load: no constructor, no IFUNC resolver. Profile N0 (native-profiles.md) admits only a
 // leaf library: no dependencies, no TLS, no constructors, no x18/TPIDR_EL0/svc instructions.
-// Host code: it never shares a type with the guest beyond the ELF file format itself.
+// ModuleSet additionally supports dependency/constructor transactions with process-lifetime
+// pinning. Host code: only explicit guest layouts and audited signatures cross the ABI.
 #pragma once
 
 #include <cstddef>
@@ -14,6 +15,8 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <utility>
+#include <vector>
 
 namespace winapk::guest {
 
@@ -57,7 +60,7 @@ struct LoadStats {
     uint64_t relroBytes = 0;        ///< bytes made read-only after relocation
 };
 
-/// A loaded module: mapped, relocated and protected; none of its code has run.
+/// A mapped guest image; Load returns it relocated/protected without executing guest code.
 /// Side effects: owns its address range, released when the Module is destroyed.
 class Module {
 public:
@@ -77,6 +80,14 @@ public:
     const std::string& Name() const { return name_; }
     /// Returns: what loading found.
     const LoadStats& Stats() const { return stats_; }
+    /// Returns declared dependency basenames.
+    const std::vector<std::string>& Needed() const { return needed_; }
+    /// Returns SONAME, or an empty string if the image does not declare one.
+    const std::string& Soname() const { return soname_; }
+    /// Returns validated initializers after managed linking, in DT_INIT/array order.
+    std::span<void (*const)()> Initializers() const { return initializers_; }
+    /// Reports whether an aligned address belongs to this image's executable segments.
+    bool Executable(uintptr_t address) const;
 
 private:
     friend class Loader;
@@ -94,6 +105,10 @@ private:
     const uint32_t* gnuHash_ = nullptr;
     const uint32_t* sysvHash_ = nullptr;
     LoadStats stats_;
+    std::vector<std::string> needed_;
+    std::string soname_;
+    std::vector<std::pair<uintptr_t, size_t>> executable_;
+    std::vector<void (*)()> initializers_;
 };
 
 /// Loads an ELF shared object from `path` within profile N0.
@@ -104,5 +119,32 @@ private:
 /// flushes the instruction cache over the module.
 std::unique_ptr<Module> Load(const std::wstring& path, std::span<const HostSymbol> imports,
                              LoadError* error);
+
+/// Owns a restricted C-library graph with transactional linking and process-lifetime pinning.
+/// Notes: no APK admission, JNI_OnLoad, ELF TLS, symbol versions or dynamic unload yet.
+/// The caller keeps this object alive until all guest threads/callbacks end and must enter
+/// a managed guest context before Open, because dependency constructors may call shims.
+class ModuleSet {
+public:
+    /// Creates a private library namespace under directory with audited fixed-signature imports.
+    ModuleSet(std::wstring directory, std::span<const HostSymbol> imports);
+    /// Releases mapped images after the caller has stopped every guest execution path.
+    ~ModuleSet();
+    ModuleSet(const ModuleSet&) = delete;
+    ModuleSet& operator=(const ModuleSet&) = delete;
+    /// Opens a portable .so basename, initializes dependency-first once, and adds one reference.
+    /// Returns: an opaque handle, or 0 and error; failures before initialization roll back.
+    uint64_t Open(std::string_view name, LoadError* error);
+    /// Decrements an explicit open reference; mappings stay pinned. Invalid/closed handles fail.
+    bool Close(uint64_t handle);
+    /// Looks up an export in an open handle and its breadth-first dependency scope.
+    void* Find(uint64_t handle, std::string_view symbol) const;
+    /// Returns the number of retained images, including closed-but-pinned dependencies.
+    size_t Mapped() const;
+
+private:
+    struct Impl;
+    std::unique_ptr<Impl> impl_;
+};
 
 }  // namespace winapk::guest

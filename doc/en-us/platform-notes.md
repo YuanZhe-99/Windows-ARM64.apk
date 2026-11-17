@@ -64,15 +64,17 @@ Verified on Windows 11 ARM64 (2026-11-16): build 26300.9974, Snapdragon Compute 
 | On real ARM64 | PASS | the machine above; `native-probe.exe` and `capstone.dll` ARM64 |
 | `abi-compatibility.md` | PASS | [abi-compatibility.md](abi-compatibility.md): direct, thunk and unsupported signatures with their cases |
 
-## P3 thread and synchronization checks
+## P3 thread, synchronization and module checks
 
-`test.ps1 -Suite Bionic`, 2026-11-16: 39/39 checks PASS on the Windows ARM64 machine above. This is T08, not G3;
+`test.ps1 -Suite Bionic`, 2026-11-16: 56/56 checks PASS on the Windows ARM64 machine above (T08: 39, T07: 17), not G3;
 the thread fixture is built with NDK r30, API 30, `-O2 -nostdlib -femulated-tls -fno-stack-protector`;
 the separate sync fixture uses `-O2 -nostdlib -fno-stack-protector` and no TLS.
 Its hash and exact flags are in `tests/fixtures/elf/fixtures.json`
 (generated, not committed); output is in `build/windows-arm64/test-data/logs/T08-*`.
 The thread probe has nine cases, the sync probe eight; their refusal/fatal files are not evidence
-that dependency or JNI integration works.
+that APK native or JNI integration works. The T07 graph uses six `-O2 -nostdlib` libraries;
+`-Suite Modules` independently passes its ten semantic cases, six hashes and summary check.
+Its output is in `build/windows-arm64/test-data/logs/T07-modules.*`.
 
 | Item (`PLAN.md` §10) | Result | Evidence |
 |---|---|---|
@@ -84,7 +86,10 @@ that dependency or JNI integration works.
 | Condition wait/signal/broadcast | PASS | 48-byte storage with sentinels; 256 request/ack signal handshakes; eight waiters broadcast; mutex owned on every return; busy condition/mutex destruction refused, including an unlocked mutex pinned by condition waits; a second mutex binding and recursive depth >1 refused |
 | Sync resource cleanup and refusals | PASS | 200 cycles / 1600 workers, handle delta +0, sync registries empty; 1916 host-state callbacks without violations; timed-wait import refused before entry, owned-mutex runtime teardown exits 3 with a diagnostic |
 | Out-of-scope native behavior | PASS | missing `pthread_detach` import refused before entry; ELF PT_TLS, raw `svc`, TPIDR_EL0 and x18 still refused with the P3 import table; malformed emutls descriptor and unjoined-worker teardown both terminate with a diagnostic and exit 3 |
-| N1 dependency loading and JNI integration | NOT_RUN | T07 and T09 not implemented; `winapk run` native loading remains disabled |
+| Module transactions and lookup (T07) | PASS | dependency-first trace `12`, root result `49`, own definitions, unresolved weak import, breadth-first dependency export lookup, repeat opens/refcounts and close/reopen without reinitialization |
+| Transaction refusal and callbacks (T07) | PASS | missing import and invalid initializer roll back all new mappings before any constructor; cycle, basename, SONAME and missing-file refusals; existing graph unchanged; same-thread constructor reentry and competing-thread refusal without holding the registry lock across callbacks |
+| Guest dl API (T07) | PASS | `dlopen` NOW/LOCAL, `dlsym`, `dlclose`, `dlerror` consumption; invalid flags, missing export and already-closed handle fail; runtime context cleanup |
+| APK native and JNI integration | NOT_RUN | T09 not implemented; `winapk run` native loading remains disabled |
 
 The same change set ran `check-requirements.ps1`, `build.ps1 -Component All` and
 `test.ps1 -Suite Host` (22 PASS), `-Suite Java` (43 PASS), `-Suite Native` (58 PASS).
@@ -100,7 +105,7 @@ by the build script. No new gate is claimed, no version bump, and no plan deviat
   `runtime/platform/windows` and `runtime/guest`. What of `NativeCocoa` and the other host natives Windows implements,
   and what stays unbound, is in [port-audit.md](port-audit.md).
 - The interface does not launch `winapk run` yet; it still uses `winapk.Mock`.
-- Guest native: profile N0 plus the separate P3 T08 thread foundation, only in `native-probe.exe`; `winapk run` loads no APK library (P4). A fault inside guest code is not caught yet (P3, `PLAN.md` §10.3): it ends the probe. Built with `winapk.exe`'s flags, Control Flow Guard off; a CFG build is NOT_RUN ([abi-compatibility.md](abi-compatibility.md)).
+- Guest native: profile N0 plus separate P3 T08 thread/sync and T07 module transactions, only in `native-probe.exe`; `winapk run` loads no APK library (P4). A fault inside guest code is not caught yet (P3, `PLAN.md` §10.3): it ends the probe. Built with `winapk.exe`'s flags, Control Flow Guard off; a CFG build is NOT_RUN ([abi-compatibility.md](abi-compatibility.md)).
 - This PC has no vendor Vulkan driver: Vulkan is Mesa Dozen on Direct3D 12 ([decisions.md](decisions.md)).
 - macOS build and smoke after the `CMakeLists.txt`, `AppClassLoader` and `native_sqlite.cpp` changes: NOT_RUN (no Mac here); the branch returns only under `WIN32`, the Java check is inert unless `winapk.guestNative` is set, and the CoreFoundation helpers are unchanged outside `_WIN32`.
 - DPI: the app's density is fixed when it starts. Moving its window to a display of another scale, or changing the scale while it runs, resizes the window to keep its size in points (`WM_DPICHANGED`) but the app keeps its first density: NOT_RUN, and not yet handled as Android's configuration change.

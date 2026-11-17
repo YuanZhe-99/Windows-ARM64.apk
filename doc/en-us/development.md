@@ -41,6 +41,7 @@ The runtime's commands are in the next section.
 .\scripts\windows\test.ps1 -Suite Java
 .\scripts\windows\test.ps1 -Suite Native
 .\scripts\windows\test.ps1 -Suite Bionic
+.\scripts\windows\test.ps1 -Suite Modules
 .\build\windows-arm64\bin\native-probe.exe suite .\tests\fixtures\elf\libn0abi.so
 .\build\windows-arm64\bin\native-probe.exe sync .\tests\fixtures\elf\libsync.so
 .\build\windows-arm64\bin\winapk.exe doctor --json
@@ -89,6 +90,12 @@ busy-destroy protection, stale/copied markers and unsupported attributes. It als
 sync cycles (1600 workers) and checks that timed-wait imports are refused and owned-object
 teardown terminates diagnostically. This no-dependency fixture does not enable N1 or JNI;
 timed waits/locks and attribute APIs remain unsupported ([native-profiles.md](native-profiles.md)).
+
+`-Suite Modules` runs only T07's compact graph matrix (`native-probe modules`), also included in
+`-Suite Bionic`. It validates fixture hashes and ten semantic cases in a single process with a
+30-second deadline: rollback, constructor order, weak imports, guest dl API/errors, lookup, reference/pinning and
+initializer reentry/concurrency. Use this targeted suite while developing module loading; run
+the full runtime regression once the capability is stable, not after every edit.
 
 `winapk run` keeps each app's data under `%LOCALAPPDATA%\Windows-ARM64.apk\Apps` (`--data-dir`
 moves it): `android\` is the Android root the app sees (`data\data\<package>`, `sdcard`),

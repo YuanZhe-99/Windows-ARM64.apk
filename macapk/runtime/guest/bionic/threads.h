@@ -12,14 +12,14 @@ struct ThreadState;
 /// Only default attributes and normal entry-point return are supported. No JNI attachment yet.
 class ThreadRuntime {
 public:
-    /// Creates an empty thread/key registry.
-    ThreadRuntime();
+    /// Creates an empty thread/key registry with an optional caller-owned guest module namespace.
+    explicit ThreadRuntime(ModuleSet* modules = nullptr);
     /// Releases the registry; terminates for unjoined workers, active contexts or busy synchronization.
     ~ThreadRuntime();
     ThreadRuntime(const ThreadRuntime&) = delete;
     ThreadRuntime& operator=(const ThreadRuntime&) = delete;
 
-    /// Returns audited thread/errno/emutls and compiler-required byte imports, not arbitrary CRT exports.
+    /// Returns audited thread/errno/emutls, dl API and compiler-required byte imports, not arbitrary CRT exports.
     static std::span<const HostSymbol> Imports();
 
     /// Calls a guest entry with a fresh context, then runs key destructors and frees emulated TLS.

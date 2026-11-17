@@ -12,6 +12,18 @@
 @{
     Common   = @('-shared', '-fPIC', '-fno-stack-protector', '-Wall', '-Wextra', '-Werror')
     Fixtures = @(
+        @{ Name = 'libdep.so'; Id = 'T07'; Source = 'modules/dependency.c'; Target = 'aarch64-linux-android30'
+           Flags = @('-O2', '-nostdlib'); Result = 'constructor trace 1, dependency_value=7' }
+        @{ Name = 'libroot.so'; Id = 'T07'; Source = 'modules/root.c'; Target = 'aarch64-linux-android30'
+           Flags = @('-O2', '-nostdlib'); Links = @('libdep.so'); Result = 'trace 12, root_value=49, repeat initialized once' }
+        @{ Name = 'libbadroot.so'; Id = 'T07'; Source = 'modules/root.c'; Target = 'aarch64-linux-android30'
+           Flags = @('-O2', '-nostdlib', '-DT07_MISSING'); Links = @('libdep.so'); Result = 'GUEST_SYMBOL_UNRESOLVED required_missing; no constructor' }
+        @{ Name = 'libbadinit.so'; Id = 'T07'; Source = 'modules/root.c'; Target = 'aarch64-linux-android30'
+           Flags = @('-O2', '-nostdlib', '-DT07_BAD_INIT'); Links = @('libdep.so'); Result = 'GUEST_ABI_UNSUPPORTED initializer; no constructor' }
+        @{ Name = 'libcycle-seed.so'; Id = 'T07'; Source = 'modules/dependency.c'; Target = 'aarch64-linux-android30'
+           Flags = @('-O2', '-nostdlib'); Soname = 'libcycle.so'; Result = 'GUEST_ABI_UNSUPPORTED SONAME mismatch' }
+        @{ Name = 'libcycle.so'; Id = 'T07'; Source = 'modules/cycle.c'; Target = 'aarch64-linux-android30'
+           Flags = @('-O2', '-nostdlib'); Links = @('libcycle-seed.so'); Result = 'GUEST_ABI_UNSUPPORTED dependency cycle; no constructor' }
         @{ Name = 'libsync.so'; Id = 'T08'; Source = 'threads/sync.c'; Target = 'aarch64-linux-android30'
            Flags = @('-O2', '-nostdlib'); Command = 'sync'; Cases = 8; Result = 'T08 PASS' }
         @{ Name = 'neg-sync-timedwait.so'; Id = 'T08'; Source = 'threads/sync.c'; Target = 'aarch64-linux-android30'

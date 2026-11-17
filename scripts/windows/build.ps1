@@ -359,7 +359,7 @@ function Write-ElfMutation([string]$src, [string]$dest, [string]$mutation) {
 }
 
 <#
-Builds the guest ELF fixtures (T05, T06, T08) that tests/windows-arm64/guest-elf/fixtures.psd1
+Builds the guest ELF fixtures (T05, T06, T07, T08) that tests/windows-arm64/guest-elf/fixtures.psd1
 lists into tests\fixtures\elf with the NDK, and records their build parameters and hashes in
 fixtures.json there. Notes: generated, never committed (AGENTS.md).
 #>
@@ -381,10 +381,12 @@ function Build-ElfFixtures {
             $rec.from = $f.From
             $rec.mutation = $f.Mutation
         } else {
-            $cargs = @("--target=$($f.Target)") + $table.Common + $f.Flags + @("-Wl,-soname,$($f.Name)", '-o', $dest, (Join-Path $src $f.Source))
+            $soname = if ($f.ContainsKey('Soname')) { $f.Soname } else { $f.Name }
+            $cargs = @("--target=$($f.Target)") + $table.Common + $f.Flags + @("-Wl,-soname,$soname", '-o', $dest, (Join-Path $src $f.Source))
+            if ($f.ContainsKey('Links')) { $cargs += @($f.Links | ForEach-Object { Join-Path $dir $_ }) }
             Invoke-Checked $clang $cargs
             $rec.source = "tests/windows-arm64/guest-elf/$($f.Source)"
-            $rec.clang = ($cargs[0..($cargs.Count - 4)] -join ' ')
+            $rec.clang = ($cargs -join ' ')
         }
         if ($f.ContainsKey('Expect')) { $rec.expect = "$($f.Expect): $($f.Reason)" }
         if ($f.ContainsKey('Result')) { $rec.expect = $f.Result }

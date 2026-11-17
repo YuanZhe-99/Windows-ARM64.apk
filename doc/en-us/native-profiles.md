@@ -8,7 +8,7 @@ Guest native code is off by default and runs only within a declared, tested prof
 | Profile | State |
 |---|---|
 | N0, an auditable leaf ELF | implemented; G2 passes on this PC ([platform-notes.md](platform-notes.md)) |
-| N1, a restricted C/JNI ELF (dependencies, imports, constructors, JNI) | P3 thread foundation implemented separately (T08); dependencies and JNI not implemented, G3 NOT_RUN |
+| N1, a restricted C/JNI ELF (dependencies, imports, constructors, JNI) | P3 thread/sync foundation (T08) and module transactions (T07); remaining Bionic groups and JNI incomplete, G3 NOT_RUN |
 | N2, graphics samples | not started (P5, P6) |
 
 ## N0
@@ -84,7 +84,7 @@ ordinary NDK output works. N0's original ABI suite and imports are unchanged.
   descriptor or an allocation failure in the compiler TLS resolver terminates the probe with
   a diagnostic, never a fabricated TLS address. No exception is unwound through guest code.
   Guest fault-range handling, `pthread_exit`, detach/cancellation, file/time/log
-  shims and dependency loading remain P3 work; JNI remains P4.
+  shims and full native-profile integration remain P3 work; JNI remains P4.
 
 The P3 synchronization subset is exercised separately by `native-probe sync` (T08):
 
@@ -118,6 +118,36 @@ T08 checks fatal refusal of malformed descriptors and unjoined-worker teardown, 
 8 and 32 simultaneous guest threads, exact join pointers, main-thread
 state, initialized/zero/aligned TLS, destructor re-arming and limits, deleted keys, key exhaustion,
 unsupported attributes, invalid/self join, and read-only x18/sp host-state checks.
+
+## P3 module transactions (T07)
+
+`ModuleSet` extends the loader for audited C-library graphs; the original N0 `Load` API still
+refuses dependencies and constructors. This is not APK native admission or G3 completion.
+
+- Names are portable `.so` basenames under one supplied library directory, never search paths,
+  Windows DLL names or arbitrary host exports. A declared SONAME must equal the requested name.
+  Cycles, versioned symbols and guest ELF TLS are explicitly refused in this subset.
+- Prepare every new image and dependency, screen instructions, resolve eager imports, apply
+  relocations and protections, then validate every initializer before running any guest code.
+  A failure rolls back all new images; already committed images are unchanged.
+- Definitions bind to their own image; undefined imports search direct dependencies breadth-first,
+  then the explicitly audited host imports. Missing weak imports bind to zero. Guest code never
+  runs to discover an IFUNC address.
+- Constructors run dependency-first, once per mapped image, using DT_INIT then DT_INIT_ARRAY.
+  The caller enters a managed guest context before opening a graph. Lookups and reopen from an
+  initializing thread are allowed; a competing open during initialization fails explicitly
+  rather than exposing incomplete state or blocking across a guest callback.
+- Opaque 64-bit handles carry explicit open references. Close decrements a reference; the graph
+  remains pinned until the ModuleSet is destroyed after all guest execution has ended.
+  Finalizers and JNI_OnUnload are not invoked; this is the documented process-lifetime policy,
+  not full dynamic unload. Initialization does not call JNI_OnLoad.
+- `ThreadRuntime` can receive the namespace and bind guest `dlopen`, `dlsym`, `dlclose`,
+  `dlerror` to it. Only RTLD_NOW|RTLD_LOCAL and explicit handles are supported; lazy/global/default
+  scopes fail. A pending error is per guest context and consumed by dlerror, separate from errno.
+
+T07 uses one positive dependency pair and a small refusal matrix to assert initialization
+order/values, guest dl API/error consumption, lookup scope, repeat-open/close, unresolved weak imports, cycle/name rejection,
+invalid constructor targets, and no constructor execution on a failed transaction.
 
 ## Screening
 
@@ -161,6 +191,7 @@ and expected refusal; `build.ps1 -Component NativeProbe` builds them into `tests
 | T08 negative files | same source, missing `pthread_detach` (load refusal), malformed emutls descriptor and unjoined-worker teardown (diagnostic, exit 3) | `T08_MISSING`, `T08_BAD_EMUTLS`, `T08_UNJOINED`; exact recipes/results in `fixtures.psd1` |
 | T08 `libsync.so` | `threads/sync.c`: six mutex/condition cases, stress and host-state checks | API 30, `-O2 -nostdlib`, common flags as T05; NDK header layout assertions |
 | T08 sync negative files | same source: missing `pthread_cond_timedwait` (load refusal), owned-mutex teardown (diagnostic, exit 3) | `T08_SYNC_MISSING`, `T08_SYNC_OWNED`; exact recipes/results in `fixtures.psd1` |
+| T07 module graph | `modules/dependency.c`, `root.c`, `cycle.c`: positive pair, missing import, invalid initializer, SONAME/cycle seed | API 30, `-O2 -nostdlib`, common flags as T05; explicit linked fixture dependencies and expected values in `fixtures.psd1` |
 
 Every fixture is built by the NDK's own clang and linker; none is a special build that would stand
 for ordinary NDK output beyond what its flags say (`PLAN.md` §5.3).

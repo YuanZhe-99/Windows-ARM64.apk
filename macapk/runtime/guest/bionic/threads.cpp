@@ -105,6 +105,7 @@ struct ConditionState {
 
 /// Holds one runtime's synchronized token tables and exact cleanup counters.
 struct ThreadState {
+    ModuleSet* modules = nullptr;  // Caller-owned; mappings outlive this runtime's guest threads.
     std::mutex mutex;
     std::map<GuestThread, std::unique_ptr<Worker>> workers;
     std::array<Key, kKeys> keys{};
@@ -123,6 +124,7 @@ struct GuestThreadContext {
     ThreadState& runtime;
     GuestThread token;
     int32_t error = 0;
+    std::string dlError, dlReturned;
     std::array<Value, kKeys> values{};
     std::vector<TlsBlock> tls;
 
@@ -184,6 +186,51 @@ int Equal(GuestThread a, GuestThread b) { return a == b; }
 /// Fills guest bytes through an audited fixed signature (Android size_t is 64-bit).
 void* BytesSet(void* destination, int32_t value, uint64_t size) {
     return std::memset(destination, value, static_cast<size_t>(size));
+}
+
+/// Opens an audited guest library with RTLD_NOW|RTLD_LOCAL only; never calls the Windows loader.
+void* DlOpen(const char* name, int32_t flags) {
+    auto& context = Context();
+    try {
+        if (!context.runtime.modules || !name || flags != 2) {
+            context.dlError = "GUEST_ABI_UNSUPPORTED: dlopen requires a module namespace, basename and RTLD_NOW|RTLD_LOCAL";
+            return nullptr;
+        }
+        LoadError error;
+        const uint64_t handle = context.runtime.modules->Open(name, &error);
+        if (!handle) context.dlError = std::string(CategoryName(error.category)) + ": " + error.where + ": " + error.reason;
+        return reinterpret_cast<void*>(static_cast<uintptr_t>(handle));
+    } catch (const std::bad_alloc&) { Fatal("dynamic linker diagnostic allocation failed"); }
+}
+
+/// Looks up a guest handle's own/dependency scope; default/global host scopes are not exposed.
+void* DlSym(void* handle, const char* name) {
+    auto& context = Context();
+    try {
+        void* result = context.runtime.modules && name ?
+            context.runtime.modules->Find(reinterpret_cast<uintptr_t>(handle), name) : nullptr;
+        if (!result) context.dlError = "GUEST_SYMBOL_UNRESOLVED: invalid guest handle or export not found";
+        return result;
+    } catch (const std::bad_alloc&) { Fatal("dynamic linker diagnostic allocation failed"); }
+}
+
+/// Drops one explicit guest open reference while retaining code for process-lifetime safety.
+int DlClose(void* handle) {
+    auto& context = Context();
+    try {
+        if (context.runtime.modules && context.runtime.modules->Close(reinterpret_cast<uintptr_t>(handle))) return 0;
+        context.dlError = "GUEST_ABI_UNSUPPORTED: invalid or already closed guest library handle";
+        return -1;
+    } catch (const std::bad_alloc&) { Fatal("dynamic linker diagnostic allocation failed"); }
+}
+
+/// Returns and clears only this guest thread's pending dynamic-linker diagnostic.
+char* DlError() {
+    auto& context = Context();
+    if (context.dlError.empty()) return nullptr;
+    context.dlReturned = std::move(context.dlError);
+    context.dlError.clear();
+    return context.dlReturned.data();
 }
 
 /// Enters a new guest context on a CRT-initialized host worker and publishes its return value.
@@ -582,7 +629,7 @@ int ConditionDestroy(void* object) {
 
 }  // namespace
 
-ThreadRuntime::ThreadRuntime() : state_(std::make_unique<ThreadState>()) {}
+ThreadRuntime::ThreadRuntime(ModuleSet* modules) : state_(std::make_unique<ThreadState>()) { state_->modules = modules; }
 
 ThreadRuntime::~ThreadRuntime() {
     std::lock_guard lock(state_->mutex);
@@ -612,6 +659,10 @@ std::span<const HostSymbol> ThreadRuntime::Imports() {
         {"pthread_getspecific", reinterpret_cast<void*>(&GetSpecific)},
         {"__emutls_get_address", reinterpret_cast<void*>(&EmutlsAddress)},
         {"memset", reinterpret_cast<void*>(&BytesSet)},
+        {"dlopen", reinterpret_cast<void*>(&DlOpen)},
+        {"dlsym", reinterpret_cast<void*>(&DlSym)},
+        {"dlclose", reinterpret_cast<void*>(&DlClose)},
+        {"dlerror", reinterpret_cast<void*>(&DlError)},
         {"pthread_mutex_init", reinterpret_cast<void*>(&MutexInit)},
         {"pthread_mutex_lock", reinterpret_cast<void*>(&MutexLock)},
         {"pthread_mutex_trylock", reinterpret_cast<void*>(&MutexTryLock)},

@@ -16,6 +16,7 @@
 
 #include "elf_loader.h"
 #include "threads.h"
+#include "modules.h"
 
 #include <windows.h>
 #include <psapi.h>
@@ -458,6 +459,7 @@ int UsageError() {
                "       native-probe suite <elf>\n"
                "       native-probe threads <elf>             T08: managed pthread/errno/emutls\n"
                "       native-probe sync <elf>                T08: mutex/condition synchronization\n"
+               "       native-probe modules <directory>      T07: dependency/constructor transactions\n"
                "       native-probe stress <elf> [--iterations N] [--copies K] [--rejected <elf>]\n", stderr);
     return 1;
 }
@@ -474,6 +476,7 @@ int wmain(int argc, wchar_t** argv) {
     PrintHost();
     if (cmd == L"threads" && argc == 3) return ProbeThreads(path);
     if (cmd == L"sync" && argc == 3) return ProbeThreads(path, true);
+    if (cmd == L"modules" && argc == 3) return ProbeModules(path);
     if (cmd == L"load" || cmd == L"suite") {
         auto m = LoadOrReport(path);
         if (!m) return 2;

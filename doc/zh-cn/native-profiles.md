@@ -7,7 +7,7 @@
 | Profile | 状态 |
 |---|---|
 | N0，可审计的 leaf ELF | 已实现；G2 在本机通过（[platform-notes.md](platform-notes.md)） |
-| N1，受限的 C/JNI ELF（依赖、导入、构造函数、JNI） | 已独立实现 P3 线程基础（T08）；依赖与 JNI 尚未实现，G3 NOT_RUN |
+| N1，受限的 C/JNI ELF（依赖、导入、构造函数、JNI） | P3 线程/同步基础（T08）和模块事务（T07）；其余 Bionic 功能组与 JNI 未完成，G3 NOT_RUN |
 | N2，图形样例 | 未开始（P5、P6） |
 
 ## N0
@@ -70,7 +70,7 @@
 - 调用方必须保持所有模块映射，直到上下文与回调结束。运行时销毁时仍有未 join 的 worker、从未管理线程调用有状态 shim、
   emutls 描述符损坏或编译器 TLS resolver 分配失败时，探测进程带诊断终止，绝不伪造 TLS 地址。
   不允许异常经客体代码展开。客体故障范围处理、`pthread_exit`、detach/取消、文件/时间/日志 shim
-  和依赖加载仍是 P3 后续工作；JNI 属于 P4。
+  和完整原生 profile 集成仍是 P3 后续工作；JNI 属于 P4。
 
 P3 同步子集通过独立的 `native-probe sync`（T08）测试：
 
@@ -96,6 +96,30 @@ P3 同步子集通过独立的 `native-probe sync`（T08）测试：
 T08 检查损坏描述符与仍有未 join worker 时销毁运行时导致的终止、8 与 32 个同时存在的客体线程的隔离、精确 join
 指针、主线程状态、初始值/零值/对齐 TLS、析构重设值与轮数
 上限、已删除 key、key 耗尽、不支持的属性、无效/自身 join，以及只读 x18/sp 宿主状态检查。
+
+## P3 模块事务（T07）
+
+`ModuleSet` 为经审计的 C 库依赖图扩展加载器；原有 N0 `Load` API 仍拒绝依赖与构造函数。
+这不开放 APK 原生准入，也不表示 G3 完成。
+
+- 名称限于指定库目录下可移植的 `.so` 基名，绝不使用搜索路径、Windows DLL 名称或任意宿主导出。
+  声明的 SONAME 必须等于请求名称。本子集明确拒绝依赖环、带版本的符号及客体 ELF TLS。
+- 准备所有新映像和依赖，筛查指令、立即解析导入、应用重定位及保护，最后验证全部初始化入口，
+  然后才运行任何客体代码。失败会回滚所有新映像，已提交映像保持不变。
+- 定义绑定到自身映像；未定义导入先按广度优先搜索直接依赖，再搜索显式审计的宿主导入。
+  缺失的弱导入绑定为零，绝不通过执行客体代码获取 IFUNC 地址。
+- 构造函数按依赖优先顺序运行，每个映像仅一次，先 DT_INIT 后 DT_INIT_ARRAY。
+  调用方须在打开依赖图前进入受管理客体上下文。允许初始化线程查询和重复打开；
+  初始化期间其他线程竞争打开会明确失败，既不暴露半初始化状态，也不跨客体回调阻塞等待。
+- 不透明的 64 位句柄维护显式打开引用。Close 减少引用，依赖图保持映射，直到所有客体执行结束后销毁 ModuleSet。
+  不调用 finalizer 或 JNI_OnUnload；这是已声明的进程级生命周期策略，并非完整动态卸载。
+  初始化不会调用 JNI_OnLoad。
+- `ThreadRuntime` 可接收该命名空间，将客体 `dlopen`、`dlsym`、`dlclose`、`dlerror` 绑定到它。
+  只支持 RTLD_NOW|RTLD_LOCAL 和显式句柄；lazy/global/default 范围明确失败。
+  待取出的错误属于各客体上下文，由 dlerror 读取并清除，与 errno 分离。
+
+T07 使用一对正例依赖库和少量拒绝样例，断言初始化顺序/值、客体 dl API/错误读取清除、查询范围、重复打开/关闭、未解析弱导入、
+依赖环/名称拒绝、无效构造入口，以及失败事务绝不运行构造函数。
 
 ## 筛查
 
@@ -135,6 +159,7 @@ NativeProbe` 把它们构建到 `tests/fixtures/elf`（生成产物，从不提�
 | T08 负例文件 | 同一源码：缺失 `pthread_detach`（加载时拒绝）、损坏的仿真 TLS 描述符和仍有未 join worker 时销毁运行时（诊断，退出码 3） | `T08_MISSING`、`T08_BAD_EMUTLS`、`T08_UNJOINED`；完整配方/结果在 `fixtures.psd1` |
 | T08 `libsync.so` | `threads/sync.c`：六个 mutex/condition 用例、压力测试与宿主状态检查 | API 30、`-O2 -nostdlib`，公共选项与 T05 相同；断言 NDK 头文件布局 |
 | T08 同步负例文件 | 同一源码：缺失 `pthread_cond_timedwait`（加载时拒绝），仍持有 mutex 时销毁运行时（诊断，退出码 3） | `T08_SYNC_MISSING`、`T08_SYNC_OWNED`；完整配方/结果在 `fixtures.psd1` |
+| T07 模块依赖图 | `modules/dependency.c`、`root.c`、`cycle.c`：正例库对、缺失导入、无效初始化入口、SONAME/依赖环种子 | API 30、`-O2 -nostdlib`，公共选项与 T05 相同；显式链接的夹具依赖及期望值在 `fixtures.psd1` |
 
 每个夹具都由 NDK 自带的 clang 和链接器构建；除其选项所表明的以外，没有哪个是可以代表普通 NDK 产物的特制构建
 （`PLAN.md` §5.3）。

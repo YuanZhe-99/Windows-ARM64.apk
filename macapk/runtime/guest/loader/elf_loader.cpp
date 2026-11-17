@@ -1,4 +1,4 @@
-// elf_loader.cpp -- the N0 guest ELF loader on the Windows host (elf_loader.h).
+// elf_loader.cpp -- N0 ELF loading and managed dependency transactions (elf_loader.h).
 //
 // Order (PLAN.md §9.2): read the file; check the ELF header and program headers; plan the
 // pages; reserve and commit read-write; copy the segments; read PT_DYNAMIC and refuse what N0
@@ -8,6 +8,8 @@
 // is ever returned. The ELF record layouts come from upstream's reader
 // (macapk/elf64_reader.h); upstream's parser itself is not used, because it needs section
 // headers and POSIX file calls (port-audit.md).
+// ModuleSet prepares/links/protects an entire new graph before dependency-first constructors;
+// its close operation preserves mappings until teardown, unlike a standalone N0 Module.
 
 #include "elf_loader.h"
 
@@ -21,10 +23,15 @@
 #include <algorithm>
 #include <cstdarg>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <map>
+#include <mutex>
+#include <set>
+#include <thread>
 #include <vector>
 
 namespace winapk::guest {
@@ -144,6 +151,13 @@ Module::~Module() {
     if (base_) VirtualFree(reinterpret_cast<void*>(base_), 0, MEM_RELEASE);
 }
 
+bool Module::Executable(uintptr_t address) const {
+    if (address & 3) return false;
+    for (const auto& [start, length] : executable_)
+        if (address >= start && address - start < length) return true;
+    return false;
+}
+
 namespace {
 
 /// The GNU hash of a symbol name (dl_new_hash).
@@ -211,16 +225,34 @@ public:
     Loader(std::span<const HostSymbol> imports, LoadError* error) : imports_(imports), error_(error) {}
 
     std::unique_ptr<Module> Run(const std::wstring& path) {
+        if (!Prepare(path, false) || !Finish({})) return nullptr;
+        return Take();
+    }
+
+    /// Prepares and screens an image without resolving imports or running initializers.
+    bool Prepare(const std::wstring& path, bool managed) {
+        managed_ = managed;
         mod_.reset(new Module);
         const std::u8string name = std::filesystem::path(path).filename().u8string();
         mod_->name_.assign(name.begin(), name.end());
         if (!ReadFile(path) || !CheckHeaders() || !PlanPages() || !Map() || !ReadDynamic() ||
-            !CheckSymbols() || !Screen() || !Relocate(false) || !Relocate(true) || !Protect()) {
+            !CheckSymbols() || !Screen()) {
             mod_.reset();  // releases whatever was reserved
-            return nullptr;
+            return false;
         }
-        return std::move(mod_);
+        return true;
     }
+
+    /// Resolves eager relocations, validates initialization targets, and sets final protections.
+    bool Finish(std::function<void*(std::string_view)> resolver) {
+        resolver_ = std::move(resolver);
+        return Relocate(false) && Relocate(true) && Initializers() && Protect();
+    }
+
+    /// Returns the prepared image for dependency/export discovery, never execution before Finish.
+    const Module& Image() const { return *mod_; }
+    /// Transfers the fully linked image after Finish succeeds.
+    std::unique_ptr<Module> Take() { return std::move(mod_); }
 
 private:
     bool Fail(Category c, std::string where, std::string reason) {
@@ -392,6 +424,8 @@ private:
             }
             // Fresh pages are zero: BSS past p_filesz needs nothing more.
             std::memcpy(At(p.p_vaddr), file_.data() + p.p_offset, p.p_filesz);
+            if (p.p_flags & macapk::translator::PF_X)
+                mod_->executable_.push_back({reinterpret_cast<uintptr_t>(At(p.p_vaddr)), static_cast<size_t>(p.p_memsz)});
         }
         return true;
     }
@@ -418,8 +452,10 @@ private:
         mod_->strsz_ = strsz;
         for (const Elf64Dyn& e : entries) {
             if (e.tag == DT_NEEDED) {
-                return Fail(Category::AbiUnsupported, "",
-                            Fmt("DT_NEEDED %s: profile N0 has no library dependencies", Str(e.val)));
+                if (!managed_) return Fail(Category::AbiUnsupported, "",
+                                          Fmt("DT_NEEDED %s: profile N0 has no library dependencies", Str(e.val)));
+                if (e.val >= mod_->strsz_) return Malformed(dynamic_.p_offset, "DT_NEEDED string outside DT_STRTAB");
+                mod_->needed_.emplace_back(Str(e.val));
             }
         }
         std::map<int64_t, uint64_t> d;
@@ -427,13 +463,25 @@ private:
             const Elf64Dyn& e = entries[i];
             const std::string where = "vaddr " + Hex(dynamic_.p_vaddr + i * sizeof e);
             switch (e.tag) {
-            case DT_INIT: case DT_INIT_ARRAY: case DT_PREINIT_ARRAY:
-                return Fail(Category::AbiUnsupported, where,
-                            "constructors (DT_INIT, DT_INIT_ARRAY): profile N0 runs no guest code while loading");
+            case DT_INIT: case DT_INIT_ARRAY:
+                if (!managed_) return Fail(Category::AbiUnsupported, where,
+                                          "constructors (DT_INIT, DT_INIT_ARRAY): profile N0 runs no guest code while loading");
+                d[e.tag] = e.val;
+                continue;
+            case DT_PREINIT_ARRAY: case DT_PREINIT_ARRAYSZ:
+                return Fail(Category::AbiUnsupported, where, "pre-initializers are not supported in shared libraries");
             case DT_FINI: case DT_FINI_ARRAY:
-                return Fail(Category::AbiUnsupported, where, "destructors (DT_FINI, DT_FINI_ARRAY) are not in profile N0");
+                if (!managed_) return Fail(Category::AbiUnsupported, where, "destructors (DT_FINI, DT_FINI_ARRAY) are not in profile N0");
+                d[e.tag] = e.val;
+                continue;
             case DT_VERNEED:
                 return Fail(Category::AbiUnsupported, where, "versioned imports (DT_VERNEED) need libraries, not in profile N0");
+            case DT_VERDEF: case DT_VERSYM:
+                if (managed_) return Fail(Category::AbiUnsupported, where, "symbol version tables are not supported in this module profile");
+                continue;
+            case DT_RPATH: case DT_RUNPATH:
+                if (managed_) return Fail(Category::AbiUnsupported, where, "library search paths are not supported in this module profile");
+                continue;
             case DT_TEXTREL:
                 return Fail(Category::ElfUnsupported, where, "text relocations (DT_TEXTREL), which Android refuses too");
             case DT_REL: case DT_ANDROID_REL:
@@ -454,20 +502,31 @@ private:
             case DT_RELAENT: case DT_SYMENT: case DT_PLTREL: case DT_JMPREL: case DT_RELR:
             case DT_RELRSZ: case DT_RELRENT: case DT_ANDROID_RELR: case DT_ANDROID_RELRSZ:
             case DT_ANDROID_RELRENT: case DT_GNU_HASH: case DT_SONAME:
+            case DT_INIT_ARRAYSZ: case DT_FINI_ARRAYSZ:
                 d[e.tag] = e.val;
                 continue;
             // Known and harmless here: eager binding is the only binding; versions of the
             // module's own definitions are not checked (it has no importers but the host).
-            case DT_PLTGOT: case DT_RPATH: case DT_RUNPATH: case DT_SYMBOLIC: case DT_DEBUG: case DT_BIND_NOW:
-            case DT_INIT_ARRAYSZ: case DT_FINI_ARRAYSZ: case DT_PREINIT_ARRAYSZ: case DT_RELSZ: case DT_RELENT:
-            case DT_ANDROID_RELSZ: case DT_ANDROID_RELASZ: case DT_ANDROID_RELRCOUNT: case DT_VERSYM:
-            case DT_RELACOUNT: case DT_RELCOUNT: case DT_FLAGS_1: case DT_VERDEF: case DT_VERDEFNUM:
+            case DT_PLTGOT: case DT_SYMBOLIC: case DT_DEBUG: case DT_BIND_NOW:
+            case DT_RELSZ: case DT_RELENT:
+            case DT_ANDROID_RELSZ: case DT_ANDROID_RELASZ: case DT_ANDROID_RELRCOUNT:
+            case DT_RELACOUNT: case DT_RELCOUNT: case DT_FLAGS_1: case DT_VERDEFNUM:
             case DT_VERNEEDNUM: case DT_AARCH64_BTI_PLT: case DT_AARCH64_PAC_PLT:
                 continue;
             default:
                 return Fail(Category::ElfUnsupported, where, Fmt("dynamic tag %s unknown", Hex(e.tag).c_str()));
             }
         }
+        if (d.count(DT_SONAME)) {
+            if (d[DT_SONAME] >= mod_->strsz_) return Malformed(dynamic_.p_offset, "DT_SONAME string outside DT_STRTAB");
+            mod_->soname_ = Str(d[DT_SONAME]);
+        }
+        init_ = d[DT_INIT];
+        fini_ = d[DT_FINI];
+        initArray_ = d[DT_INIT_ARRAY]; initSize_ = d[DT_INIT_ARRAYSZ];
+        finiArray_ = d[DT_FINI_ARRAY]; finiSize_ = d[DT_FINI_ARRAYSZ];
+        if ((initSize_ && !initArray_) || (finiSize_ && !finiArray_))
+            return Malformed(dynamic_.p_offset, "initializer/finalizer size without an array");
         if (!d.count(DT_SYMTAB)) return Malformed(dynamic_.p_offset, "PT_DYNAMIC lacks DT_SYMTAB");
         if (d.count(DT_SYMENT) && d[DT_SYMENT] != sizeof(Elf64Sym)) return Malformed(dynamic_.p_offset, "DT_SYMENT is not 24");
         if (d.count(DT_RELAENT) && d[DT_RELAENT] != sizeof(Elf64Rela)) return Malformed(dynamic_.p_offset, "DT_RELAENT is not 24");
@@ -719,8 +778,34 @@ private:
     }
 
     void* Import(const char* name) const {
+        if (resolver_) if (void* address = resolver_(name)) return address;
         for (const HostSymbol& h : imports_) if (std::strcmp(h.name, name) == 0) return h.address;
         return nullptr;
+    }
+
+    /// Validates every initializer/finalizer against the image's executable segments before any call.
+    bool Initializers() {
+        auto target = [&](uint64_t address, bool keep) {
+            if (!address || address == UINT64_MAX) return true;
+            if (!mod_->Executable(static_cast<uintptr_t>(address)))
+                return Fail(Category::AbiUnsupported, "initializer/finalizer", "target is not aligned executable code in its image");
+            if (keep) mod_->initializers_.push_back(reinterpret_cast<void (*)()>(address));
+            return true;
+        };
+        if (init_ && !target(reinterpret_cast<uintptr_t>(At(init_)), true)) return false;
+        if (fini_ && !target(reinterpret_cast<uintptr_t>(At(fini_)), false)) return false;
+        for (const bool keep : {true, false}) {
+            const uint64_t array = keep ? initArray_ : finiArray_, size = keep ? initSize_ : finiSize_;
+            if (!array && !size) continue;
+            if (size % 8 || !SegmentOf(array, size))
+                return Malformed(dynamic_.p_offset, "initializer/finalizer array outside the image or mis-sized");
+            for (uint64_t offset = 0; offset < size; offset += 8) {
+                uint64_t address;
+                std::memcpy(&address, At(array + offset), 8);
+                if (!target(address, keep)) return false;
+            }
+        }
+        return true;
     }
 
     // Final permissions, then RELRO read-only over whole pages inside it.
@@ -765,7 +850,214 @@ private:
     Elf64Phdr dynamic_{}, relro_{};
     std::vector<Table> tables_;
     uint64_t page_ = 4096, lo_ = 0, hi_ = 0;
+    bool managed_ = false;
+    uint64_t init_ = 0, fini_ = 0, initArray_ = 0, initSize_ = 0, finiArray_ = 0, finiSize_ = 0;
+    std::function<void*(std::string_view)> resolver_;
 };
+
+/// Retains one graph node independently of explicit open references until process teardown.
+struct LibraryRecord {
+    std::string name;
+    uint64_t handle = 0, references = 0;
+    std::unique_ptr<Loader> preparation;
+    std::unique_ptr<Module> module;
+    std::vector<LibraryRecord*> dependencies;
+    bool initializing = false, initialized = false;
+
+    /// Returns the image in either transactional preparation or committed state.
+    const Module& Image() const { return preparation ? preparation->Image() : *module; }
+};
+
+/// Implements one bounded library namespace and its initialization transaction.
+struct ModuleSet::Impl {
+    std::filesystem::path directory;
+    std::vector<HostSymbol> imports;
+    mutable std::recursive_mutex mutex;
+    std::map<std::string, std::unique_ptr<LibraryRecord>, std::less<>> records;
+    uint64_t nextHandle = 1;
+    std::thread::id initializingThread;
+    size_t initializationDepth = 0;
+
+    /// Restricts dependency names to portable basenames, avoiding host search paths and aliases.
+    static bool Name(std::string_view name) {
+        if (name.size() < 4 || name.size() > 255 || !name.ends_with(".so") || name.front() == '.') return false;
+        for (unsigned char c : name)
+            if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') ||
+                  c == '_' || c == '-' || c == '+' || c == '.')) return false;
+        return true;
+    }
+
+    /// Stores a stable load error scoped to the responsible module.
+    static uint64_t Error(LoadError* error, Category category, std::string name, std::string reason) {
+        *error = {category, "module " + name, std::move(reason)};
+        return 0;
+    }
+
+    /// Looks up an export in self then breadth-first dependency order; no host export fallback.
+    static void* Lookup(const LibraryRecord& root, std::string_view symbol) {
+        std::vector<const LibraryRecord*> queue{&root};
+        std::set<const LibraryRecord*> seen;
+        for (size_t i = 0; i < queue.size(); i++) {
+            const auto* record = queue[i];
+            if (!seen.insert(record).second) continue;
+            if (void* result = record->Image().Find(symbol)) return result;
+            for (const auto* dependency : record->dependencies) queue.push_back(dependency);
+        }
+        return nullptr;
+    }
+
+    /// Finds a retained handle without interpreting guest data as a host pointer.
+    LibraryRecord* Handle(uint64_t handle) const {
+        if (!handle) return nullptr;
+        for (const auto& [name, record] : records) {
+            (void)name;
+            if (record->handle == handle) return record.get();
+        }
+        return nullptr;
+    }
+
+    /// Prepares a whole new graph, rolls back on failure, then commits and initializes it.
+    uint64_t Open(std::string_view name, LoadError* error, bool* committed) {
+        std::unique_lock lock(mutex);
+        if (!Name(name)) return Error(error, Category::AbiUnsupported, std::string(name), "expected a portable .so basename");
+        if (initializationDepth && initializingThread != std::this_thread::get_id())
+            return Error(error, Category::AbiUnsupported, std::string(name), "concurrent module initialization is not supported");
+        if (auto found = records.find(name); found != records.end()) {
+            if (found->second->references == UINT64_MAX)
+                return Error(error, Category::AbiUnsupported, std::string(name), "library reference limit reached");
+            found->second->references++;
+            return found->second->handle;
+        }
+        // This map has the same allocator/type as records, so merge commits without allocating.
+        decltype(records) staged;
+        std::set<std::string, std::less<>> visiting;
+        std::vector<LibraryRecord*> order;
+        std::function<LibraryRecord*(std::string_view)> prepare = [&](std::string_view next) -> LibraryRecord* {
+            if (!Name(next)) {
+                Error(error, Category::AbiUnsupported, std::string(next), "dependency is not a portable .so basename");
+                return nullptr;
+            }
+            if (visiting.contains(next)) {
+                Error(error, Category::AbiUnsupported, std::string(next), "dependency cycles are not supported");
+                return nullptr;
+            }
+            if (auto found = records.find(next); found != records.end()) return found->second.get();
+            if (auto found = staged.find(next); found != staged.end()) return found->second.get();
+            if (records.size() + staged.size() >= 256 || nextHandle == UINT64_MAX) {
+                Error(error, Category::AbiUnsupported, std::string(next), "library graph limit reached");
+                return nullptr;
+            }
+            const auto path = directory / std::filesystem::path(std::string(next));
+            std::error_code ec;
+            const auto status = std::filesystem::symlink_status(path, ec);
+            if (ec || !std::filesystem::is_regular_file(status)) {
+                Error(error, Category::SymbolUnresolved, std::string(next), "dependency file missing or not a regular library");
+                return nullptr;
+            }
+            auto record = std::make_unique<LibraryRecord>();
+            record->name = next;
+            record->handle = nextHandle++;
+            record->preparation = std::make_unique<Loader>(imports, error);
+            if (!record->preparation->Prepare(path.wstring(), true)) {
+                error->where = "module " + record->name + " " + error->where;
+                return nullptr;
+            }
+            if (!record->Image().Soname().empty() && record->Image().Soname() != next) {
+                Error(error, Category::AbiUnsupported, std::string(next), "SONAME does not match the requested basename");
+                return nullptr;
+            }
+            auto* result = record.get();
+            staged.emplace(record->name, std::move(record));
+            visiting.emplace(next);
+            for (const auto& needed : result->Image().Needed()) {
+                auto* dependency = prepare(needed);
+                if (!dependency) return nullptr;
+                result->dependencies.push_back(dependency);
+            }
+            visiting.erase(std::string(next));
+            order.push_back(result);
+            return result;
+        };
+        LibraryRecord* root = prepare(name);
+        if (!root) return 0;
+        for (auto* record : order) {
+            if (!record->preparation->Finish([record](std::string_view symbol) { return Lookup(*record, symbol); })) {
+                error->where = "module " + record->name + " " + error->where;
+                return 0;
+            }
+        }
+        for (auto* record : order) {
+            record->module = record->preparation->Take();
+            record->preparation.reset();
+        }
+        records.merge(staged);
+        *committed = true;
+        root->references++;
+        initializingThread = std::this_thread::get_id();
+        initializationDepth++;
+        // Never hold the registry lock across arbitrary guest callbacks.
+        lock.unlock();
+        for (auto* record : order) {
+            {
+                std::lock_guard guard(mutex);
+                if (record->initialized || record->initializing) continue;
+                record->initializing = true;
+            }
+            for (auto initializer : record->module->Initializers()) initializer();
+            {
+                std::lock_guard guard(mutex);
+                record->initializing = false;
+                record->initialized = true;
+            }
+        }
+        lock.lock();
+        if (--initializationDepth == 0) initializingThread = {};
+        return root->handle;
+    }
+};
+
+ModuleSet::ModuleSet(std::wstring directory, std::span<const HostSymbol> imports) : impl_(std::make_unique<Impl>()) {
+    impl_->directory = std::move(directory);
+    impl_->imports.assign(imports.begin(), imports.end());
+}
+
+ModuleSet::~ModuleSet() = default;
+
+uint64_t ModuleSet::Open(std::string_view name, LoadError* error) {
+    bool committed = false;
+    try {
+        return impl_->Open(name, error, &committed);
+    } catch (const std::bad_alloc&) {
+        if (committed) {
+            std::fputs("HOST_MEMORY_FAILED module initialization: allocation failed after commit\n", stderr);
+            std::fflush(stderr);
+            TerminateProcess(GetCurrentProcess(), 3);
+            std::abort();
+        }
+        return Impl::Error(error, Category::HostMemory, std::string(name), "library transaction allocation failed");
+    }
+}
+
+bool ModuleSet::Close(uint64_t handle) {
+    std::lock_guard lock(impl_->mutex);
+    auto* record = impl_->Handle(handle);
+    if (!record || !record->references) return false;
+    record->references--;
+    return true;
+}
+
+void* ModuleSet::Find(uint64_t handle, std::string_view symbol) const {
+    std::lock_guard lock(impl_->mutex);
+    auto* record = impl_->Handle(handle);
+    if (!record || !record->references ||
+        (impl_->initializationDepth && impl_->initializingThread != std::this_thread::get_id())) return nullptr;
+    return Impl::Lookup(*record, symbol);
+}
+
+size_t ModuleSet::Mapped() const {
+    std::lock_guard lock(impl_->mutex);
+    return impl_->records.size();
+}
 
 std::unique_ptr<Module> Load(const std::wstring& path, std::span<const HostSymbol> imports, LoadError* error) {
     return Loader(imports, error).Run(path);

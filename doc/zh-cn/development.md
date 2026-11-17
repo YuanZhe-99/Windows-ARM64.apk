@@ -34,6 +34,7 @@ go run ./tools/checkdocs           # doc/en-us and doc/zh-cn mirror each other
 .\scripts\windows\test.ps1 -Suite Java
 .\scripts\windows\test.ps1 -Suite Native
 .\scripts\windows\test.ps1 -Suite Bionic
+.\scripts\windows\test.ps1 -Suite Modules
 .\build\windows-arm64\bin\native-probe.exe suite .\tests\fixtures\elf\libn0abi.so
 .\build\windows-arm64\bin\native-probe.exe sync .\tests\fixtures\elf\libsync.so
 .\build\windows-arm64\bin\winapk.exe doctor --json
@@ -70,6 +71,10 @@ clang-cl 把 `winapk.exe`、`winapk-bridge.dll`、`native-probe.exe` 和 `winapk
 八线程竞争、带谓词循环的 signal/broadcast、等待/重锁与忙碌销毁保护、过期/复制标记和不支持的属性。
 还运行 200 轮同步循环（1600 个 worker），检查超时等待导入被拒绝、仍持有对象时销毁运行时会带诊断终止。
 这个无依赖夹具不开放 N1 或 JNI；超时等待/加锁及属性 API 仍不支持（[native-profiles.md](native-profiles.md)）。
+
+`-Suite Modules` 只运行精简的 T07 依赖图矩阵（`native-probe modules`），也包含在 `-Suite Bionic` 中。
+它验证夹具哈希，并在单进程、30 秒期限内检查十项语义：回滚、构造顺序、弱导入、客体 dl API/错误、查询、引用/保留映射及初始化重入/并发。
+开发模块加载时使用该定向套件，能力稳定后再执行完整运行时回归，不在每次编辑后重复全量测试。
 
 `winapk run` 把每个应用的数据放在 `%LOCALAPPDATA%\Windows-ARM64.apk\Apps` 下（`--data-dir` 可改）：`android\`
 是应用看到的 Android 根目录（`data\data\<package>`、`sdcard`），`code\<package>\` 是转换后的代码及缓存戳，
