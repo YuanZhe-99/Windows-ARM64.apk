@@ -2,6 +2,7 @@
 
 ## 0.1.0 (in progress)
 
+- 2026-11-17: staged and smoke-tested a local ARM64 Release CLI ZIP with external Java/VC++ prerequisites and a separate source snapshot. This is not a release or G5 acceptance. Go 1.27.4, MyGo v0.10.0 and merged Mac.apk `3f35611` checked, unchanged.
 - 2026-11-17: verified a guest Vulkan transfer-clear profile in the real T13 APK: three FIFO presents through Dozen, including swapchain recreation after resize. Shader/buffer work, callbacks and G4/G5 remain unverified. Go 1.27.4, MyGo v0.10.0 and merged Mac.apk `3f35611` checked, unchanged.
 - 2026-11-17: added the independent guest Vulkan instance/WSI profile (T13.wsi) and verified it on Dozen, including window resize/replacement and child-only ICD unavailability. Guest Vulkan drawing and G4/G5 remain NOT_RUN. Go 1.27.4, MyGo v0.10.0 and merged Mac.apk `3f35611` checked, unchanged.
 - 2026-11-17: added bounded guest EGL/GLES (T11). The real NDK API-30 APK verifies ANGLE on explicit D3D11 and Vulkan/Dozen, including texture/FBO and blended shader readback, surface replacement, and no fallback for unavailable explicit Vulkan. Guest Vulkan and G4/G5 remain NOT_RUN. Go 1.27.4, MyGo v0.10.0 and merged Mac.apk `3f35611` checked, unchanged.

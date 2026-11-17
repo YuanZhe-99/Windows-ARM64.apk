@@ -25,6 +25,26 @@ go run ./tools/checkdocs           # doc/en-us and doc/zh-cn mirror each other
 
 运行时的命令见下一节。
 
+### 本地后端包
+
+```powershell
+.\scripts\windows\build.ps1 -Component All
+.\scripts\windows\build.ps1 -Configuration Release -Component Host
+$zip = .\scripts\windows\package.ps1
+.\scripts\windows\test.ps1 -Suite Package -PackageZip $zip
+```
+
+Release 宿主产物与 Debug 测试二进制隔离。脚本使用已有产物，生成带 SHA-256 清单和许可证声明
+的本地 CLI ZIP，以及独立源码 ZIP。源码快照来自 Git 暂存区，不含上游 macOS `.dylib` 预编译件。
+修改源码后须重新构建再打包：清单同时记录源码快照与产物哈希，但不证明构建可重现。
+不安装、不发布。需已有包含 `java.desktop` 的 ARM64 OpenJDK 21
+及 ARM64 Microsoft Visual C++ v14 Redistributable。可传入 `--java-home <绝对路径>`，
+或仅在当前 shell 设置 `WINAPK_JAVA_HOME`。基础包不包含 ANGLE、GPU 驱动、Vulkan loader、
+doctor JAR 之外的探测产物或夹具 APK。ANGLE 分发仍需审核实际链接组件的许可。
+客体 Vulkan 清屏使用系统 loader，仍属实验。
+包测试使用全新的数据/配置根目录、中文和空格路径及仅含 Windows 目录的进程级 `PATH`；
+不关闭系统网络，不能代替第二台机器验证。
+
 ## 构建和测试运行时
 
 Go 模块展开包通配符时忽略 `./build`。该生成/下载目录可能包含大型第三方 checkout，

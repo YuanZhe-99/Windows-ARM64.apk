@@ -474,13 +474,13 @@ Android Surface 是 `ANativeWindow` 对应的图形端点；AHardwareBuffer 扩�
 ### 14.1 运行入口与部署
 
 - [ ] 提供 `doctor`、`inspect`、`run` 和 fixture test 入口；早期用 CLI 验证，实验版接入 MyGo 前端，实现主窗口内手机式窗格与独立窗口两种打开方式。
-- [ ] 打包 runtime、JRE 或清晰的外部 JRE 配置、Framework JAR、module patches、资源、宿主 DLL 和依赖说明。
-- [ ] 检查所有进程内 DLL 都是目标 ARM64 架构；不打包 `.dylib`/Mach-O 产物充当 Windows 依赖。
-- [ ] GPU ICD 由驱动安装提供，不随意复制开发机驱动 DLL；Vulkan Loader 等可分发组件遵循其实际分发方式。
+- [x] 本地 CLI 包包含 Release runtime、Framework JAR、module patches、资源、宿主 DLL 和外部 ARM64 JRE/VC++ 依赖说明；不含 ANGLE。
+- [x] 验证包内 PE 为 ARM64，并拒绝 Debug CRT 导入；源码 ZIP 也排除 macOS `.dylib` 预编译件。
+- [x] 本地 CLI 包不携带 GPU ICD 或 Vulkan loader。
 - [ ] 运行时子进程交给启动器管理；需要时用 Job Object 清理子进程，退出码明确。
-- [ ] 干净用户配置、离线已有依赖、空格/中文安装路径下验证。
-- [ ] 保存上游许可证、第三方 notices、源码与补丁来源；核对新增分发组件要求，不推断商业授权结论。
-- [ ] 不把本次实验包注册为系统默认 APK 打开程序，不自动修改全局环境。
+- [x] 在含空格/中文的解压路径和全新数据/配置根目录用已有依赖执行 T14.package；打包不下载。
+- [ ] 公开分发前完成许可审核，含 ANGLE 实际链接依赖；本地包已有许可证、notices、源码快照和哈希。
+- [x] 不注册默认 APK 打开程序，不自动修改全局环境。
 
 ### 14.2 日志与错误模型
 
@@ -616,7 +616,7 @@ Next blocking issue:
 
 ## 18. 构建与命令接口契约
 
-P0–P4 已实现的命令（含 `FrameworkRes`、`Fixtures`、`Host`、`Jni`、`ApkJni`、`winapk dex`、`native-probe`、`--native=restricted`）以 `doc/en-us/development.md` 为准；下面列出完整阶段的命令接口契约（其中 `Graphics`、`--gles-backend`、`--guest-vulkan`、`package.ps1` 随 P5–P7 实现）：
+已实现的命令以 `doc/en-us/development.md` 为准。下面列出后端的构建、运行和定向验证示例；受限图形及本地 CLI 包不等于 G4/G5 验收：
 
 ```powershell
 # 盘点环境；只检查，不默默安装或修改系统配置。
@@ -626,7 +626,8 @@ P0–P4 已实现的命令（含 `FrameworkRes`、`Fixtures`、`Host`、`Jni`、
 .\scripts\windows\build.ps1 -Configuration Debug -Component Java
 .\scripts\windows\build.ps1 -Configuration Debug -Component Host
 .\scripts\windows\build.ps1 -Configuration Debug -Component NativeProbe
-.\scripts\windows\build.ps1 -Configuration Debug -Component Graphics
+.\scripts\windows\build.ps1 -Component Angle
+.\scripts\windows\build.ps1 -Component AngleProbe
 
 # 运行探测和包分析；inspect 不执行 APK 代码。
 .\build\windows-arm64\bin\winapk.exe doctor --json
@@ -635,14 +636,23 @@ P0–P4 已实现的命令（含 `FrameworkRes`、`Fixtures`、`Host`、`Jni`、
 # guest native 与 graphics 后端必须可显式选择。
 .\build\windows-arm64\bin\winapk.exe run .\tests\fixtures\hello-java.apk --native=off
 .\build\windows-arm64\bin\winapk.exe run .\tests\fixtures\hello-jni.apk --native=restricted
-.\build\windows-arm64\bin\winapk.exe run .\tests\fixtures\hello-gles.apk --native=restricted --gles-backend=vulkan
-.\build\windows-arm64\bin\winapk.exe run .\tests\fixtures\hello-vulkan.apk --native=restricted --guest-vulkan=on
+.\build\windows-arm64\bin\winapk.exe run .\tests\fixtures\hello-gles.apk --native=off --graphics=vulkan
+.\build\windows-arm64\bin\winapk.exe run .\tests\fixtures\hello-vulkan-wsi.apk --native=restricted --graphics=vulkan
 
-# 按能力分组验收；脚本生成报告和复现命令。
+# 按能力分组验证。
 .\scripts\windows\test.ps1 -Suite Java
 .\scripts\windows\test.ps1 -Suite Native
-.\scripts\windows\test.ps1 -Suite Graphics
-.\scripts\windows\package.ps1 -Configuration Release
+.\scripts\windows\test.ps1 -Suite GraphicsHost
+.\scripts\windows\test.ps1 -Suite GraphicsJava
+.\scripts\windows\test.ps1 -Suite Surface
+.\scripts\windows\test.ps1 -Suite GraphicsGuest
+.\scripts\windows\test.ps1 -Suite VulkanWsi
+
+# 本地 CLI 包；先暂存或提交预期源码，包不发布。
+.\scripts\windows\build.ps1 -Component All
+.\scripts\windows\build.ps1 -Configuration Release -Component Host
+$zip = .\scripts\windows\package.ps1
+.\scripts\windows\test.ps1 -Suite Package -PackageZip $zip
 ```
 
 脚本要求：

@@ -275,6 +275,14 @@ System32 loader 未枚举 `VK_LAYER_KHRONOS_validation`，validation 为 `NOT_RU
 ApkJni 8、GraphicsHost 6、GraphicsJava 4、Surface 4、GraphicsGuest 4 均通过。
 日志为 `P6-clear-*.log`。
 
+## P7 本地 CLI 包
+
+Release CLI 及四个 DLL 均为 ARM64，不导入 Debug CRT。`Package` 四项通过：产物和源码清单、
+无 JVM 时可检查 APK 但拒绝启动、doctor 配合外部 ARM64 JVM，以及真实 JNI APK 冷启动、
+绘制位图后正常退出。测试解压到含中文和空格的新路径，使用全新的配置根目录及仅含 Windows
+目录的 `PATH`。这验证了使用已有依赖的本地后端 ZIP，不代表干净机器或 G5 验收。
+不捆绑前端、ANGLE DLL、ICD 或 JVM。发布、ANGLE 链接许可审核和独立 ARM64 机器复现仍待完成。
+
 ## 已知限制
 
 - 共享 Windows hook 包括平台条件化的 CMake/SQLite 改动及 Windows 客体 DEX、Boot、AppClassLoader

@@ -32,6 +32,29 @@ go run ./tools/checkdocs           # doc/en-us and doc/zh-cn mirror each other
 
 The runtime's commands are in the next section.
 
+### Local backend package
+
+```powershell
+.\scripts\windows\build.ps1 -Component All
+.\scripts\windows\build.ps1 -Configuration Release -Component Host
+$zip = .\scripts\windows\package.ps1
+.\scripts\windows\test.ps1 -Suite Package -PackageZip $zip
+```
+
+Release host outputs are isolated from the Debug test binaries. The package consumes existing
+artifacts and writes a local CLI ZIP with a SHA-256 inventory, notices and a separate source ZIP.
+The source snapshot uses the Git index and omits upstream macOS `.dylib` prebuilts. Rebuild
+after source edits before packaging: the inventory pairs a source snapshot with artifact
+hashes, but does not prove a reproducible build.
+It does not install or publish anything. It requires an existing ARM64 OpenJDK 21 with
+`java.desktop` and the ARM64 Microsoft Visual C++ v14 Redistributable. Pass
+`--java-home <absolute-path>` or set `WINAPK_JAVA_HOME` for the current shell only.
+This baseline package omits ANGLE, GPU drivers, the Vulkan loader, probes other than the
+doctor JAR, and fixture APKs. ANGLE redistribution still needs its linked-license audit.
+Guest Vulkan transfer-clear uses the system loader and remains experimental.
+The package test uses a fresh data/profile root, Chinese/space paths and a process-local
+Windows-only `PATH`; it does not disable networking system-wide or stand in for a second PC.
+
 ## Building and testing the runtime
 
 The Go module ignores `./build` when expanding package wildcards. This generated/download

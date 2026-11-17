@@ -10,13 +10,13 @@ themselves.
 |---|---|---|---|---|---|
 | MyGo | `egoist/mygo`, latest tag | UI framework, packaging | MIT | none | keep the copyright notice; its embedded Kage compiler and MingCute icon are Apache-2.0 |
 | Kyokai, Easytier-MyGo and Nextcloud-MyGo files | `YuanZhe-99/Kyokai`, `YuanZhe-99/Easytier-MyGo`, `YuanZhe-99/Nextcloud-MyGo` | `tools/checkdocs`, the `internal/version` pattern, the MyGo maintenance skill, the conventions; Kyokai is the design reference | AGPL-3.0 / GPL-3.0, relicensed under AGPL-3.0 by their author | adapted names and comments | none beyond Windows-ARM64.apk's own license |
-| Microsoft Build of OpenJDK 21 | 21.0.13, `build-lock.json` | building the Java side; the JVM `winapk` embeds in development | GPL-2.0 with the Classpath Exception | none | not shipped yet; the private runtime of P7 ships with its license and notices |
+| Microsoft Build of OpenJDK 21 | 21.0.13, `build-lock.json` | building the Java side; the JVM `winapk` embeds | GPL-2.0 with the Classpath Exception | none | external prerequisite for the local CLI package, not bundled |
 | Vulkan-Headers | 1.4.363.0 via vcpkg, `build-lock.json` | compiling `winapk`'s Vulkan probe | Apache-2.0 | none | build time only; nothing ships |
 | zlib | 1.3.2 via vcpkg, `build-lock.json` | inflating APK entries in `winapk` (`apk.cpp`) | zlib | none | ships as a DLL beside `winapk.exe`; keep its notice |
 | SQLite | 3.54.1 via vcpkg, `build-lock.json` | `android.database.sqlite` through upstream's `NativeSqlite` (`native_sqlite.cpp` in `winapk-bridge.dll`) | public domain | none | ships as a DLL beside `winapk.exe`; no notice required |
 | AOSP `frameworks/base/core/res` | tag `android-16.0.0_r2`, `build-lock.json` | compiled into `bin/tools/framework-res.apk`, the platform resources apps resolve `@android:` against | Apache-2.0 | none (compiled with every feature flag read-only true, as upstream) | ships in the runtime; keep the license and NOTICE |
 | Android SDK build-tools, platform and NDK | build-tools 36.0.0, android-36, NDK r30, `build-lock.json` | `aapt2` for the platform resources; building the fixture APKs, their libraries and the guest ELF fixtures | Android Software Development Kit License | none | build time only; nothing ships, and the fixtures are generated, never committed |
-| Capstone | 5.0.9 via vcpkg, `build-lock.json` | the guest loader's screen of ARM64 code (`elf_loader.cpp`, in `native-probe.exe`) | BSD-3-Clause | none | ships as `capstone.dll` beside `native-probe.exe`, a development tool not in any package yet; ships with the runtime once the loader does, with its notice |
+| Capstone | 5.0.9 via vcpkg, `build-lock.json` | the guest loader's screen of ARM64 code (`elf_loader.cpp`) | BSD-3-Clause | none | local runtime ZIP contains `capstone.dll` and its notice, not the native probe |
 | Android's `org.apache.http.legacy` | through Mac.apk (`macapk/thirdparty/apache-http-legacy`, from an Android 14 system image, AOSP `platform/external/apache-http`) | Apache HttpClient and Android's legacy HTTP client, packed into `android-framework.jar` as the shared library on a device | Apache-2.0 | none (converted by upstream's DEX converter) | ships in the runtime; keep the license and Apache HttpComponents' NOTICE |
 | Kotlin compiler and standard library | 2.4.0, bundled with Android Studio, `build-lock.json` | compiling the Kotlin fixture T04; `kotlin-stdlib.jar` is dexed into that APK | Apache-2.0 | none | build time only; the fixture is generated, never committed or shipped |
 | ANGLE and its public DEPS | `google/angle`, `801a1a5`, `build-lock.json` | optional P5a ARM64 EGL/GLES source build with Vulkan and D3D11 | BSD-3-Clause; dependencies keep their licenses (including Apache-2.0/LLVM exception, MIT, zlib) | pinned Chromium build dependency adapted to the locked SDK/custom VS, not renderer changes | preserve ANGLE LICENSE and dependency notices; P7 must enumerate actually linked GN dependencies and include their full texts before distributing these DLLs; not packaged yet |
@@ -30,6 +30,10 @@ Mac.apk", and must not present itself as official or endorsed. Windows-ARM64.apk
 and icon accordingly. Android is a trademark of Google LLC.
 
 ## Planned components
+
+The local CLI package depends on the external ARM64 Microsoft Visual C++ v14 Redistributable.
+It includes the checked-in notices, vcpkg notices, the AOSP resource notice and a separate
+source snapshot. It is not a public redistribution audit or a release.
 
 Skia enters this inventory when a phase first builds with it. The Vulkan loader is Windows' own and never ships. Mac.apk's macOS prebuilts (ANGLE, MoltenVK, Skia `.dylib`) are never shipped in
 a Windows package.

@@ -644,8 +644,8 @@ solutions = [
 function Build-Host([string]$Target = '') {
     $vs = Find-VisualStudio
     $jdk = Find-Jdk
-    $bin = Join-Path $out 'bin'
     $native = Join-Path $out "native\$Configuration"
+    $bin = if ($Configuration -eq 'Release') { Join-Path $native 'bin' } else { Join-Path $out 'bin' }
     New-Item -ItemType Directory -Force $bin, $native | Out-Null
 
     Write-Step 'Compiling the Java probe (winapk-probe.jar)'

@@ -293,6 +293,16 @@ Requirements and Build All passed. Host 27, Java 43, Native 58, Bionic 104, Jni 
 ApkJni 8, GraphicsHost 6, GraphicsJava 4, Surface 4 and GraphicsGuest 4 also passed.
 Logs: `P6-clear-*.log`.
 
+## P7 local CLI package
+
+The Release CLI and its four DLLs are ARM64, with no Debug CRT imports. `Package` passed
+four checks: payload and source inventory, JVM-free inspection and missing-JVM refusal,
+doctor with the external ARM64 JVM, and a cold real JNI APK launch ending normally after a
+bitmap frame. The package was unpacked to a fresh path with Chinese characters and spaces,
+with a fresh profile root and Windows-only `PATH`. This verifies a local backend ZIP with
+existing dependencies, not a clean machine or G5. No frontend, ANGLE DLLs, ICD or JVM is
+bundled. The release, linked ANGLE license audit and independent ARM64 replication remain open.
+
 ## Known limitations
 
 - Shared Windows hooks are platform-gated CMake/SQLite changes and the Windows guest DEX,

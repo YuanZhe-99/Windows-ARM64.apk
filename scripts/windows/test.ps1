@@ -39,12 +39,15 @@ and hardware TLS/syscall/register access remain refused. Each probe has a
 
 .PARAMETER Suite
 Host, Java, Native, Bionic, Jni, ApkJni, GraphicsHost, GraphicsJava, Surface, GraphicsGuest,
-VulkanWsi, or a targeted Bionic subset.
+VulkanWsi, Package, or a targeted Bionic subset.
+.PARAMETER PackageZip
+Local runtime ZIP from package.ps1, required for Package.
 #>
 [CmdletBinding()]
 param(
-    [ValidateSet('Host', 'Java', 'Native', 'Bionic', 'Modules', 'Memory', 'Io', 'Faults', 'Format', 'Libraries', 'Jni', 'ApkJni', 'GraphicsHost', 'GraphicsJava', 'Surface', 'GraphicsGuest', 'VulkanWsi')]
-    [string]$Suite = 'Host'
+    [ValidateSet('Host', 'Java', 'Native', 'Bionic', 'Modules', 'Memory', 'Io', 'Faults', 'Format', 'Libraries', 'Jni', 'ApkJni', 'GraphicsHost', 'GraphicsJava', 'Surface', 'GraphicsGuest', 'VulkanWsi', 'Package')]
+    [string]$Suite = 'Host',
+    [string]$PackageZip
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
@@ -1159,7 +1162,79 @@ function Test-VulkanWsi {
     }
 }
 
-switch ($Suite) { 'Host' { Test-Host } 'Java' { Test-Java } 'Native' { Test-Native } 'Bionic' { Test-Bionic } 'Modules' { Test-Modules } 'Memory' { Test-Bionic -Command memory } 'Io' { Test-Bionic -Command io } 'Faults' { Test-Bionic -Command faults } 'Format' { Test-Bionic -Command format } 'Libraries' { Test-Libraries } 'Jni' { Test-Jni } 'ApkJni' { Test-ApkJni } 'GraphicsHost' { Test-GraphicsHost } 'GraphicsJava' { Test-GraphicsJava } 'Surface' { Test-Surface } 'GraphicsGuest' { Test-GraphicsGuest } 'VulkanWsi' { Test-VulkanWsi } }
+<# Verifies the staged archive and runs one real APK from a fresh Unicode package path. #>
+function Test-Package {
+    if (!$PackageZip) { throw 'Package requires -PackageZip (output from scripts/windows/package.ps1)' }
+    $zip = (Resolve-Path -LiteralPath $PackageZip).Path
+    $root = Join-Path $out ("test-data\CLI 包 " + [guid]::NewGuid().ToString('N').Substring(0,8))
+    $install = Join-Path $root '安装 文件'
+    [IO.Compression.ZipFile]::ExtractToDirectory($zip, $install)
+    $manifest = Get-Content -LiteralPath (Join-Path $install 'package.json') -Raw | ConvertFrom-Json
+    $files = @(Get-ChildItem -LiteralPath $install -Recurse -File)
+    $hashes = @{}
+    foreach ($file in $files) {
+        $relative = [IO.Path]::GetRelativePath($install, $file.FullName).Replace('\','/')
+        if ($relative -ne 'package.json') { $hashes[$relative] = (Get-FileHash -LiteralPath $file.FullName).Hash.ToLowerInvariant() }
+    }
+    $listed = @{}
+    foreach ($entry in $manifest.files) { $listed.Add($entry.path, $entry.sha256) }
+    $source = Join-Path (Split-Path -Parent $zip) $manifest.source.archive
+    $bad = @($listed.Keys | Where-Object { !$hashes.ContainsKey($_) -or $listed[$_] -ne $hashes[$_] })
+    $pe = @($files | Where-Object Extension -in '.dll','.exe')
+    $badPe = @($pe | Where-Object { (Get-PeMachine $_.FullName) -ne 'ARM64' })
+    $archived = $manifest.arch -eq 'arm64' -and $manifest.configuration -eq 'Release' -and
+        $hashes.Count -eq $listed.Count -and $bad.Count -eq 0 -and $badPe.Count -eq 0 -and $pe.Count -eq 5 -and
+        (Get-FileHash -LiteralPath $source).Hash.ToLowerInvariant() -eq $manifest.source.sha256
+    if ($archived) {
+        $snapshot = [IO.Compression.ZipFile]::OpenRead($source)
+        try {
+            $entries = @($snapshot.Entries | ForEach-Object FullName)
+            $archived = -not ($entries -match '\.dylib$') -and
+                [bool]($entries -match '/macapk/runtime/platform/windows/src/run\.cpp$')
+        } finally { $snapshot.Dispose() }
+    }
+    Check 'T14.package.inventory' $archived "$($hashes.Count) payload files, five ARM64 PEs, source ZIP hash"
+    if (!$archived) { return }
+
+    $winapk = Join-Path $install 'bin\winapk.exe'
+    $fixture = Join-Path $root '样例 APK.apk'
+    Copy-Item -LiteralPath (Join-Path $repo 'tests\fixtures\hello-jni.apk') -Destination $fixture
+    $jdk = Find-Jdk
+    $keys = 'PATH','JAVA_HOME','WINAPK_JAVA_HOME','LOCALAPPDATA','JAVA_TOOL_OPTIONS'
+    $saved = @{}
+    foreach ($key in $keys) { $saved[$key] = [Environment]::GetEnvironmentVariable($key) }
+    $env:LOCALAPPDATA = Join-Path $root '干净 用户'
+    New-Item -ItemType Directory $env:LOCALAPPDATA | Out-Null
+    Set-TestEnv @{ PATH = "$env:SystemRoot\System32;$env:SystemRoot"; JAVA_HOME = $null; WINAPK_JAVA_HOME = $null; JAVA_TOOL_OPTIONS = $null }
+    try {
+        $inspect = & $winapk inspect $fixture --json
+        $inspectExit = $LASTEXITCODE
+        $missing = & $winapk run $fixture --native=restricted --data-dir (Join-Path $root '缺少 JVM') 2>&1
+        Check 'T14.package.dependencies' ($inspectExit -eq 0 -and ($inspect -join "`n") -match 'org\.winapk\.fixture\.jni' -and
+            $LASTEXITCODE -eq 69 -and ($missing -join "`n") -match 'DEPENDENCY_MISSING: no JVM found') 'inspect works without Java; run refuses missing JVM before boot'
+        $env:WINAPK_JAVA_HOME = $jdk
+        $doctor = & $winapk doctor --json | ConvertFrom-Json
+        Check 'T14.package.doctor' ($LASTEXITCODE -eq 0 -and $doctor.jvm.started -eq 'ok' -and
+            $doctor.jvm.arch -eq 'arm64' -and $doctor.jvm.source -eq 'WINAPK_JAVA_HOME' -and
+            -not $doctor.graphics.angleFilesArm64) 'external ARM64 JVM; private ANGLE explicitly absent'
+        $script:appSize = '360x720'
+        $log = Join-Path $root 'run.log'
+        $p = Start-App $fixture (Join-Path $root '应用 数据') $log 'restricted'
+        try {
+            $h = Find-AppWindow $p.Id 'Hello JNI' 15 $p
+            $frame = Wait-Log $log 'ViewCanvasDriver: macapkDrawFrame fire #1 present \d+x\d+ nonzero=[1-9]\d*/' 30 $p
+            $code = if ($h) { Close-App $h $p }
+            $text = Read-Log $log
+            Check 'T14.package.run' ($h -and $frame -and $code -eq 0 -and $text -match 'stage dex-converted' -and
+                $text -match 'JNI: native\.value=43 checks=PASS matrix=PASS') 'cold DEX, JNI values, real bitmap frame and normal close from unpacked ZIP'
+        } finally {
+            if (!$p.HasExited) { $p.Kill(); $p.WaitForExit() }
+            $p.Dispose()
+        }
+    } finally { Set-TestEnv $saved }
+}
+
+switch ($Suite) { 'Host' { Test-Host } 'Java' { Test-Java } 'Native' { Test-Native } 'Bionic' { Test-Bionic } 'Modules' { Test-Modules } 'Memory' { Test-Bionic -Command memory } 'Io' { Test-Bionic -Command io } 'Faults' { Test-Bionic -Command faults } 'Format' { Test-Bionic -Command format } 'Libraries' { Test-Libraries } 'Jni' { Test-Jni } 'ApkJni' { Test-ApkJni } 'GraphicsHost' { Test-GraphicsHost } 'GraphicsJava' { Test-GraphicsJava } 'Surface' { Test-Surface } 'GraphicsGuest' { Test-GraphicsGuest } 'VulkanWsi' { Test-VulkanWsi } 'Package' { Test-Package } }
 if ($script:failed -gt 0) { Write-Host "$script:failed check(s) failed"; exit 1 }
 Write-Host 'all checks passed'
 exit 0
