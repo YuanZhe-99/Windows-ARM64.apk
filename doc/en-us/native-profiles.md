@@ -248,8 +248,22 @@ would additionally initialize the class. Failed JVM batches keep their reserved 
 references until shutdown because the JVM may have bound part of the batch; no atomic rollback
 is claimed. The process quota includes these reservations and replacement registrations.
 
-This is still standalone T09, not APK admission: `JNI_OnLoad`, export-name binding and
-APK/ClassLoader loading remain subsequent work. No G3 claim follows from registration alone.
+Explicit JNI library loading is separate from ELF dependency loading. Only the requested
+image's own `JNI_OnLoad` runs, once per bridge, in its persistent thread/ClassLoader context.
+Supported versions are 1.1/1.2/1.4/1.6. Invalid versions, pending Java exceptions and recursive
+or competing loads fail explicitly; failed loads remain failed and their mappings stay pinned.
+Registrations made by a hook are callable during that hook on its owner thread, but cannot be
+entered after the hook fails. Initialization side effects are not rolled back; failure is not
+reported as success merely because an ELF remained mapped.
+Dependency constructors still run, but loading a dependency does not automatically call its
+JNI hook. Export binding searches short names before long names across successful explicit
+roots and their dependency scopes; UTF-16 JNI escaping and overload argument descriptors apply.
+JNI escape failure (an unescaped `0`–`3` at the start or after a mapped slash) leaves the
+method unresolved even if a matching ELF export exists; explicit registration remains valid.
+Successful explicit registrations take precedence over export-name binding.
+
+This is still standalone T09, not APK admission: APK/ClassLoader call-site integration remains
+subsequent work. No G3 claim follows from these library contracts alone.
 
 ## P3 module transactions (T07)
 

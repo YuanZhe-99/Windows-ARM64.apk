@@ -2,6 +2,7 @@
 #include "doctor.h"
 #include "../../../guest/jni/bridge.h"
 #include "../../../guest/bionic/threads.h"
+#include "../../../guest/bionic/libraries.h"
 
 #include <windows.h>
 #include <cstdio>
@@ -13,6 +14,25 @@ jobject expectedLoader = nullptr;
 winapk::guest::JniBridge* activeBridge = nullptr;
 int (*guestCase)(void*, void*, int) = nullptr;
 int contextExits = 0;
+std::vector<int> loadEvents;
+
+/// Records actual dependency constructors and JNI hooks, not inferred library state.
+void LoadEvent(int event) { loadEvents.push_back(event); }
+
+/// Owns the probe's initial explicit ELF reference independently of the JNI library registry.
+struct Fixture {
+    winapk::guest::ModuleSet& modules;
+    std::string name;
+    uint64_t handle = 0;
+    winapk::guest::LoadError error;
+};
+
+/// Opens the test entry image under a managed guest context, without invoking any JNI hook.
+void* OpenFixture(void* argument) {
+    auto& fixture = *static_cast<Fixture*>(argument);
+    fixture.handle = fixture.modules.Open(fixture.name, &fixture.error);
+    return nullptr;
+}
 
 /// Checks x18/sp read-only and the actual isolated loader reached through guest FindClass.
 int HostState(jclass type) {
@@ -65,7 +85,7 @@ int wmain(int argc, wchar_t** argv) {
     using namespace winapk;
     using namespace winapk::guest;
     if (argc != 4 && argc != 5) return 1;
-    if (argc == 5 && (argv[4][0] < L'0' || argv[4][0] > L'7' || argv[4][1])) return 1;
+    if (argc == 5 && (argv[4][0] < L'0' || argv[4][0] > L'8' || argv[4][1])) return 1;
     const int selected = argc == 5 ? argv[4][0] - L'0' : -1;
     SetDefaultDllDirectories(LOAD_LIBRARY_SEARCH_DEFAULT_DIRS | LOAD_LIBRARY_SEARCH_USER_DIRS);
     if (PeArch(std::wstring(argv[1]) + L"\\bin\\server\\jvm.dll") != "arm64") return 2;
@@ -83,6 +103,7 @@ int wmain(int argc, wchar_t** argv) {
     JNIEnv* env = CreateJvm(argv[1], std::move(options), &vm, reason);
     if (!env) { std::printf("reject %s\n", reason.c_str()); return 2; }
     hostVm = vm;
+    loadEvents.reserve(32);  // Guest callbacks append bounded fixture events without host allocation.
     int result = 0;
     {
         jclass type = env->FindClass("com/winapk/probe/GuestJniProbe");
@@ -91,23 +112,39 @@ int wmain(int argc, wchar_t** argv) {
         if (env->ExceptionCheck() || !loader) return 2;
         expectedLoader = env->NewGlobalRef(loader);
         LoadError error;
-        auto fixed = ThreadRuntime::Imports();
-        std::vector<HostSymbol> imports(fixed.begin(), fixed.end());
+        auto support = BionicLibraries::Load((std::filesystem::path(argv[3]).parent_path() / L"libwinapk-bionic.so").wstring(), &error);
+        if (!support) { std::printf("reject %s %s\n", CategoryName(error.category), error.reason.c_str()); return 2; }
+        std::vector<HostSymbol> imports(support->Imports().begin(), support->Imports().end());
         imports.push_back({"t09_host_state", reinterpret_cast<void*>(&HostState)});
         imports.push_back({"t09_nested", reinterpret_cast<void*>(&Nested)});
         imports.push_back({"t09_context_exit", reinterpret_cast<void*>(&ContextExit)});
-        auto module = guest::Load(argv[2], imports, &error);
-        if (!module) { std::printf("reject %s %s\n", CategoryName(error.category), error.reason.c_str()); return 2; }
-        ThreadRuntime threads;
-        auto bridge = JniBridge::Load(env, loader, threads, argv[3], &error);
+        imports.push_back({"t09_load_event", reinterpret_cast<void*>(&LoadEvent)});
+        ModuleSet modules(std::filesystem::path(argv[2]).parent_path().wstring(), imports, support->Libraries());
+        ThreadRuntime threads(&modules);
+        Fixture fixture{modules, Utf8(std::filesystem::path(argv[2]).filename().wstring())};
+        threads.Call(OpenFixture, &fixture);
+        if (!fixture.handle) { std::printf("reject %s %s\n", CategoryName(fixture.error.category), fixture.error.reason.c_str()); return 2; }
+        auto bridge = JniBridge::Load(env, loader, threads, modules, argv[3], &error);
         if (!bridge) { std::printf("reject %s %s\n", CategoryName(error.category), error.reason.c_str()); return 2; }
-        bridge->Admit(*module);
-        auto entry = reinterpret_cast<int (*)(void*, void*, int)>(module->Find("t09_case"));
+        if (!bridge->OpenLibrary(env, fixture.name, &error)) return 2;
+        auto entry = reinterpret_cast<int (*)(void*, void*, int)>(modules.Find(fixture.handle, "t09_case"));
         if (!entry) return 2;
         activeBridge = bridge.get();
         guestCase = entry;
         void* proxy = bridge->Environment(env);
         if (!proxy || proxy == env || bridge->Vm() == vm) return 3;
+        if (selected == 8) {
+            if (bridge->OpenLibrary(env, "libjni-version.so", &error) || env->ExceptionCheck()) return 2;
+            jclass cls = env->FindClass("java/lang/ClassLoader");
+            jmethodID load = env->GetMethodID(cls, "loadClass", "(Ljava/lang/String;)Ljava/lang/Class;");
+            jstring name = env->NewStringUTF("com.winapk.probe.GuestJniProbe");
+            jvalue arg{}; arg.l = name;
+            auto guest = static_cast<jclass>(env->CallObjectMethodA(loader, load, &arg));
+            if (env->ExceptionCheck() || !guest) return 2;
+            jmethodID method = env->GetStaticMethodID(guest, "badVersionRegistered", "()I");
+            env->CallStaticIntMethodA(guest, method, nullptr);  // Must terminate before entering failed guest code.
+            return 3;
+        }
         const char* names[] = {"calls", "references", "exceptions", "workers"};
         const int first = argc == 5 ? selected : 0;
         const int last = argc == 5 ? first + 1 : 4;
@@ -141,6 +178,51 @@ int wmain(int argc, wchar_t** argv) {
                         ok ? "PASS" : "FAIL", test.result, bridge->Environments());
             if (exception) { env->ExceptionDescribe(); env->ExceptionClear(); }
             if (!ok) { result = 3; break; }
+        }
+        if (argc == 4 && !result) {
+            bool ok = bridge->OpenLibrary(env, "libjni-load.so", &error);
+            ok = ok && loadEvents == std::vector<int>({2, 1, 3}) &&
+                 bridge->OpenLibrary(env, "libjni-load.so", &error) &&
+                 bridge->OpenLibrary(env, "libjni-noinit.so", &error) &&
+                 loadEvents == std::vector<int>({2, 1, 3, 1});
+            ok = ok && bridge->BindExports(env, nativeType) && bridge->BindExports(env, nativeType);
+            jmethodID exports = ok ? env->GetStaticMethodID(nativeType, "runExports", "()Z") : nullptr;
+            jboolean value = exports ? env->CallStaticBooleanMethodA(nativeType, exports, nullptr) : JNI_FALSE;
+            ok = !env->ExceptionCheck() && ok && value;
+            std::printf("case T09.libraries %s\n", ok ? "PASS" : "FAIL");
+            if (!ok) {
+                std::printf("diagnostic %s %s events:", CategoryName(error.category), error.reason.c_str());
+                for (int event : loadEvents) std::printf(" %d", event);
+                std::printf("\n");
+                if (env->ExceptionCheck()) { env->ExceptionDescribe(); env->ExceptionClear(); }
+                result = 3;
+            }
+        }
+        if (argc == 4 && !result) {
+            bool ok = !bridge->OpenLibrary(env, "libjni-version.so", &error) &&
+                      error.category == Category::AbiUnsupported && error.reason.find("version") != std::string::npos &&
+                      !env->ExceptionCheck();
+            const auto afterVersion = loadEvents;
+            ok = ok && !bridge->OpenLibrary(env, "libjni-version.so", &error) && loadEvents == afterVersion;
+            ok = ok && !bridge->OpenLibrary(env, "libjni-pending.so", &error) && env->ExceptionCheck();
+            jthrowable pending = env->ExceptionOccurred();
+            env->ExceptionClear();
+            jclass illegal = env->FindClass("java/lang/IllegalStateException");
+            ok = ok && pending && illegal && env->IsInstanceOf(pending, illegal);
+            if (pending) env->DeleteLocalRef(pending);
+            if (illegal) env->DeleteLocalRef(illegal);
+            const auto afterPending = loadEvents;
+            ok = ok && !bridge->OpenLibrary(env, "libjni-pending.so", &error) && loadEvents == afterPending &&
+                 !env->ExceptionCheck();
+            ok = ok && !bridge->OpenLibrary(env, "libjni-datahook.so", &error) &&
+                 error.category == Category::AbiUnsupported &&
+                 error.reason.find("not a guest executable entry") != std::string::npos && !env->ExceptionCheck();
+            std::printf("case T09.onload-refusal %s\n", ok ? "PASS" : "FAIL");
+            if (!ok) {
+                std::printf("diagnostic %s %s\n", CategoryName(error.category), error.reason.c_str());
+                if (env->ExceptionCheck()) { env->ExceptionDescribe(); env->ExceptionClear(); }
+                result = 3;
+            }
         }
         if (argc == 4 && !result) {
             Case begin{entry, proxy, bridge->Vm(), 8}, verify{entry, proxy, bridge->Vm(), 9};

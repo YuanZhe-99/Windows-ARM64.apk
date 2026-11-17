@@ -1177,6 +1177,23 @@ void* ModuleSet::Find(uint64_t handle, std::string_view symbol) const {
     return Impl::Lookup(*record, symbol);
 }
 
+void* ModuleSet::FindOwn(uint64_t handle, std::string_view symbol) const {
+    std::lock_guard lock(impl_->mutex);
+    auto* record = impl_->Handle(handle);
+    if (!record || !record->references ||
+        (impl_->initializationDepth && impl_->initializingThread != std::this_thread::get_id())) return nullptr;
+    return record->Export(symbol);
+}
+
+bool ModuleSet::Executable(uintptr_t address) const {
+    std::lock_guard lock(impl_->mutex);
+    for (const auto& [name, record] : impl_->records) {
+        (void)name;
+        if (!record->builtin && record->Image().Executable(address)) return true;
+    }
+    return false;
+}
+
 size_t ModuleSet::Mapped() const {
     std::lock_guard lock(impl_->mutex);
     return std::count_if(impl_->records.begin(), impl_->records.end(),

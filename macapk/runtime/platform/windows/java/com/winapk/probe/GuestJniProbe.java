@@ -16,7 +16,28 @@ public class GuestJniProbe {
     /** Creates an isolated loader so worker FindClass cannot pass via the system loader by accident. */
     public static ClassLoader isolatedLoader() {
         return new java.net.URLClassLoader(new java.net.URL[]{
-                GuestJniProbe.class.getProtectionDomain().getCodeSource().getLocation()}, null);
+                GuestJniProbe.class.getProtectionDomain().getCodeSource().getLocation()}, null) {
+            /** Defines one valid JVM-only identifier that Java source syntax cannot express. */
+            @Override protected Class<?> findClass(String name) throws ClassNotFoundException {
+                if (!name.equals("com.winapk.probe.GuestJniProbe")) return super.findClass(name);
+                try (java.io.InputStream input = GuestJniProbe.class.getResourceAsStream("GuestJniProbe.class")) {
+                    byte[] bytes = input.readAllBytes();
+                    int changed = 0;
+                    // CONSTANT_Utf8 "Zbad" is shared by the declaration and invocation's NameAndType.
+                    for (int i = 0; i + 7 <= bytes.length; i++)
+                        if (bytes[i] == 1 && bytes[i + 1] == 0 && bytes[i + 2] == 4 &&
+                                bytes[i + 3] == 'Z' && bytes[i + 4] == 'b' &&
+                                bytes[i + 5] == 'a' && bytes[i + 6] == 'd') {
+                            bytes[i + 3] = '1';
+                            changed++;
+                        }
+                    if (changed != 1) throw new ClassNotFoundException("T09 name mutation count");
+                    return defineClass(name, bytes, 0, bytes.length);
+                } catch (java.io.IOException error) {
+                    throw new ClassNotFoundException(name, error);
+                }
+            }
+        };
     }
 
     /** Retains a long and promoted float/double values for constructor validation. */
@@ -74,6 +95,38 @@ public class GuestJniProbe {
     public static native float nativeFloat(float value);
     /** Leaves a pending Java exception in a guest native method. */
     public static native void nativeThrow();
+    /** Resolves the normal JNI short name from an explicitly loaded root. */
+    public static native long exportSimple(long value);
+    /** Resolves the int overload's JNI long name. */
+    public static native int exportOverload(int value);
+    /** Resolves the long overload's distinct JNI long name. */
+    public static native long exportOverload(long value);
+    /** Resolves UTF-16 JNI escaping for an underscore and a non-ASCII method name. */
+    public static native long export_中(long value);
+    /** Resolves a native export in the root's dependency scope without calling that dependency's JNI hook. */
+    public static native int exportDependency();
+    /** Resolves array/object descriptor escaping in a long JNI name. */
+    public static native Object exportDescriptor(int[] values, String text);
+    /** Keeps the explicit JNI_OnLoad registration instead of a conflicting Java_* export. */
+    public static native int loadRegistered(int value);
+    /** Must be refused by the bridge if its JNI_OnLoad returned an invalid version. */
+    public static native int badVersionRegistered();
+    /** Becomes JVM-valid "1bad" in the isolated fixture; JNI escaping must refuse symbol lookup. */
+    private static native int Zbad();
+
+    /** Checks short/long/Unicode names, dependency scope, and registration precedence with real JVM calls. */
+    public static boolean runExports() {
+        if (exportSimple(-4294967297L) != -4294967298L || exportOverload(7) != 107 ||
+                exportOverload(4294967297L) != 8589934593L || export_中(4294967297L) != 4294967300L ||
+                exportDependency() != 3141 || loadRegistered(9) != 16 ||
+                exportDescriptor(new int[]{7}, "descriptor") != "descriptor") return false;
+        try {
+            Zbad();
+            return false;
+        } catch (UnsatisfiedLinkError expected) {
+            return true;
+        }
+    }
 
     /** Completes a nested JVM/guest chain with a deterministic result. */
     public static int roundtrip(int depth) { return depth == 0 ? 7 : nativeReenter(depth - 1) + 1; }

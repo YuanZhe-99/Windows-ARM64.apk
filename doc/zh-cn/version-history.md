@@ -2,6 +2,7 @@
 
 ## 0.1.0（进行中）
 
+- 2026-11-17：新增显式根库专属/仅一次 JNI_OnLoad、失败缓存及失败 hook native 入口守卫；short/long/Unicode/描述符导出查询、注册优先及歧义转义拒绝在既有 T09 语义组通过。requirements/build All、Host 23、Java 43、Native 58、Bionic 104、Jni 24 通过；最终定向 Jni 运行 1.73 秒。Go 1.27.4、MyGo v0.9.2 与 Mac.apk `3f35611` 已检查、未变；APK 集成及 G3 仍未完成，0.1.0 未发布。
 - 仓库脚手架：工作规范（`AGENTS.md`）、计划（`PLAN.md`）、镜像文档、文档镜像检查和 Go 模块。
 - Go 1.27.3、MyGo v0.7.4、Mac.apk `main` 位于 `367fd1a`（2026-11-03 检查），原样引入为 `macapk/` subtree。
 - 2026-11-04：Mac.apk `main` 合并到 `8b45e48`（上游 v1.0.2377 同步）；Go 1.27.3 和 MyGo v0.7.4 已检查，未变。

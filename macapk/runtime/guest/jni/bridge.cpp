@@ -11,6 +11,9 @@
 #include <cstring>
 #include <map>
 #include <mutex>
+#include <optional>
+#include <set>
+#include <tuple>
 #include <utility>
 
 namespace winapk::guest {
@@ -85,11 +88,13 @@ thread_local ThreadEnvironments environments;
 std::mutex vmsMutex;
 std::map<void*, JniState*> vms;
 
+struct JniLibrary;
 /// Retains one process-lifetime PE slot's screened target and descriptor-derived stack extent.
 struct NativeSlot {
     JniState* state = nullptr;
     void* target = nullptr;
     uint64_t stackSlots = 0;
+    JniLibrary* initialization = nullptr;
 };
 std::mutex nativesMutex;
 std::array<NativeSlot, 64> natives;
@@ -157,12 +162,58 @@ char Result(const std::string& descriptor) {
     return type == '[' ? 'L' : type;
 }
 
+/// Copies modified UTF-8 bytes while releasing JVM-owned string storage even on host allocation failure.
+std::string Text(JNIEnv* env, jstring value) {
+    if (!value) return {};
+    const char* bytes = env->GetStringUTFChars(value, nullptr);
+    if (!bytes) return {};
+    try {
+        std::string result(bytes);
+        env->ReleaseStringUTFChars(value, bytes);
+        return result;
+    } catch (...) { env->ReleaseStringUTFChars(value, bytes); throw; }
+}
+
+/// Bounds reflection's local references without clearing a pending Java exception.
+struct LocalFrame {
+    JNIEnv* env;
+    bool active;
+    /// Opens a host JNI frame whose references never become guest persistent state.
+    explicit LocalFrame(JNIEnv* value) : env(value), active(env->PushLocalFrame(64) == JNI_OK) {}
+    /// Releases reflection temporaries while preserving pending exceptions.
+    ~LocalFrame() { if (active) env->PopLocalFrame(nullptr); }
+};
+
+/// Reads a Class object's binary name without initializing that represented class.
+std::string ClassName(JNIEnv* env, jclass type) {
+    LocalFrame frame(env);
+    if (!frame.active) return {};
+    jclass cls = env->FindClass("java/lang/Class");
+    jmethodID name = cls ? env->GetMethodID(cls, "getName", "()Ljava/lang/String;") : nullptr;
+    auto text = name ? static_cast<jstring>(env->CallObjectMethodA(type, name, nullptr)) : nullptr;
+    return env->ExceptionCheck() ? std::string{} : Text(env, text);
+}
+
+/// Identifies one declared native method within this bridge's unique ClassLoader.
+using NativeKey = std::tuple<std::string, std::string, std::string>;
+
+/// Separates explicit Java loading/JNI initialization from the ELF graph's constructor state.
+struct JniLibrary {
+    enum class Phase { Loading, Loaded, Failed };
+    std::atomic<Phase> phase = Phase::Loading;
+    DWORD owner = GetCurrentThreadId();
+    uint64_t handle = 0;
+    LoadError error;
+};
+thread_local std::pair<JniState*, JniLibrary*> initializingLibrary;
+
 }  // namespace
 
 /// Owns one loader's tables, stable method metadata and screened guest helper mapping.
 struct JniState {
     JavaVM* vm = nullptr;
     ThreadRuntime* threads = nullptr;
+    ModuleSet* modules = nullptr;
     jobject loader = nullptr;
     std::array<void*, kSlots> table = Refusals(std::make_index_sequence<kSlots>{});
     std::array<void*, 8> invocation = Refusals(std::make_index_sequence<8>{});
@@ -171,7 +222,9 @@ struct JniState {
     std::mutex mutex;
     std::map<jmethodID, Method> methods;
     std::atomic<size_t> proxies = 0;
-    std::vector<const Module*> images;
+    std::set<NativeKey> nativeKeys;
+    std::map<std::string, JniLibrary> libraries;
+    std::vector<uint64_t> roots;
     std::vector<size_t> nativeSlots;
     std::vector<jclass> nativeClasses;
     std::atomic<size_t> nativeCalls = 0;
@@ -436,11 +489,7 @@ jint Register(void* guest, jclass type, const GuestNativeMethod* methods, jint c
         for (jint i = 0; i < count; i++) {
             const auto& method = methods[i];
             bool executable = false;
-            {
-                std::lock_guard lock(state.mutex);
-                for (const auto* image : state.images)
-                    if (image->Executable(reinterpret_cast<uintptr_t>(method.target))) { executable = true; break; }
-            }
+            executable = state.modules->Executable(reinterpret_cast<uintptr_t>(method.target));
             if (!executable || !method.name || strnlen(method.name, 4097) > 4096 ||
                 method.name[0] == '<' || !Descriptor(method.signature)) {
                 Error(env, "GUEST_ABI_UNSUPPORTED JNI native entry or descriptor");
@@ -459,7 +508,8 @@ jint Register(void* guest, jclass type, const GuestNativeMethod* methods, jint c
                 state.nativeClasses.reserve(state.nativeClasses.size() + 1);
                 for (jint i = 0; i < count; i++) {
                     const size_t slot = nextNative++;
-                    natives[slot] = {&state, methods[i].target, stackSlots[i]};
+                    natives[slot] = {&state, methods[i].target, stackSlots[i],
+                        initializingLibrary.first == &state ? initializingLibrary.second : nullptr};
                     state.nativeSlots.push_back(slot);
                     host[i].fnPtr = winapk_jni_entries[slot];
                 }
@@ -471,6 +521,13 @@ jint Register(void* guest, jclass type, const GuestNativeMethod* methods, jint c
             env->DeleteGlobalRef(pinned);
             Error(env, "GUEST_ABI_UNSUPPORTED JNI native slot capacity or shutdown");
             return JNI_ERR;
+        }
+        const auto className = ClassName(env, type);
+        if (env->ExceptionCheck()) return JNI_ERR;
+        {
+            std::lock_guard lock(state.mutex);
+            for (jint i = 0; i < count; i++)
+                state.nativeKeys.emplace(className, methods[i].name, methods[i].signature);
         }
         // The JVM validates existence/native modifiers without extra GetMethodID initialization.
         // Keep slots/classes pinned even on JVM failure: JNI may have bound part of the batch.
@@ -490,6 +547,120 @@ void* InvokeNative(void* argument) {
     winapk_jni_invoke(call.slot.target, call.frame, call.slot.stackSlots);
     return nullptr;
 }
+
+/// Holds one explicit library request while the JNI bridge activates its persistent guest context.
+struct LibraryCall {
+    JniState& state;
+    JNIEnv* env;
+    std::string name;
+    LoadError* error;
+    bool ok = false;
+};
+
+/// Opens the ELF graph, then calls only the root's own JNI hook without holding any state lock.
+void* InitializeLibrary(void* argument) {
+    auto& call = *static_cast<LibraryCall*>(argument);
+    auto& state = call.state;
+    {
+        std::lock_guard lock(state.mutex);
+        auto found = state.libraries.find(call.name);
+        if (found != state.libraries.end()) {
+            if (found->second.phase == JniLibrary::Phase::Loaded) { call.ok = true; return nullptr; }
+            *call.error = found->second.phase == JniLibrary::Phase::Failed ? found->second.error :
+                LoadError{Category::AbiUnsupported, call.name, "recursive or competing JNI library initialization"};
+            return nullptr;
+        }
+        state.libraries.try_emplace(call.name);
+    }
+    LoadError error;
+    const uint64_t handle = state.modules->Open(call.name, &error);
+    bool ok = handle != 0;
+    if (ok) {
+        {
+            std::lock_guard lock(state.mutex);
+            state.libraries.at(call.name).handle = handle;
+        }
+        auto onLoad = reinterpret_cast<jint (*)(void*, void*)>(state.modules->FindOwn(handle, "JNI_OnLoad"));
+        if (onLoad && !state.modules->Executable(reinterpret_cast<uintptr_t>(onLoad))) {
+            ok = false;
+            error = {Category::AbiUnsupported, call.name, "JNI_OnLoad is not a guest executable entry"};
+        } else if (onLoad) {
+            /// Restores the outer explicit-load context after nested JNI hooks or callbacks.
+            struct Initialization {
+                std::pair<JniState*, JniLibrary*> previous = initializingLibrary;
+                /// Associates registrations with this hook's final success/failure state.
+                Initialization(JniState& state, const std::string& name) {
+                    std::lock_guard lock(state.mutex);
+                    initializingLibrary = {&state, &state.libraries.at(name)};
+                }
+                /// Restores any enclosing library's registration ownership.
+                ~Initialization() { initializingLibrary = previous; }
+            } initialization(state, call.name);
+            jint version = onLoad(&state.proxy, nullptr);
+            if (call.env->ExceptionCheck()) {
+                ok = false;
+                error = {Category::AbiUnsupported, call.name, "JNI_OnLoad left a pending Java exception"};
+            } else if (!VmVersion(version)) {
+                ok = false;
+                error = {Category::AbiUnsupported, call.name, "unsupported JNI_OnLoad version " + std::to_string(version)};
+            }
+        }
+    }
+    {
+        std::lock_guard lock(state.mutex);
+        auto& library = state.libraries.at(call.name);
+        library.phase = ok ? JniLibrary::Phase::Loaded : JniLibrary::Phase::Failed;
+        library.error = error;
+        if (ok) state.roots.push_back(handle);
+    }
+    call.ok = ok;
+    if (!ok) *call.error = std::move(error);
+    return nullptr;
+}
+
+/// Converts a reflected type name into a JNI descriptor without causing class initialization.
+std::string TypeDescriptor(std::string name) {
+    for (const auto& [primitive, code] : {
+            std::pair{"void", "V"}, {"boolean", "Z"}, {"byte", "B"}, {"char", "C"},
+            {"short", "S"}, {"int", "I"}, {"long", "J"}, {"float", "F"}, {"double", "D"}})
+        if (name == primitive) return code;
+    for (char& c : name) if (c == '.') c = '/';
+    return name.starts_with('[') ? name : "L" + name + ";";
+}
+
+/// Escapes UTF-16 units exactly as JNI symbol names require, including individual surrogate units.
+std::optional<std::string> Mangle(JNIEnv* env, jstring value, bool className = false) {
+    const jsize length = env->GetStringLength(value);
+    const jchar* text = env->GetStringChars(value, nullptr);
+    if (!text) return std::nullopt;
+    try {
+        std::string result;
+        constexpr char hex[] = "0123456789abcdef";
+        for (jsize i = 0; i < length; i++) {
+            jchar c = text[i];
+            if (className && c == '.') c = '/';
+            if (c >= '0' && c <= '3' && (result.empty() || result.back() == '_')) {
+                env->ReleaseStringChars(value, text);
+                return std::nullopt;  // JNI escape failure: do not search or bind an ambiguous name.
+            }
+            if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9'))
+                result += static_cast<char>(c);
+            else if (c == '/') result += '_';
+            else if (c == '_') result += "_1";
+            else if (c == ';') result += "_2";
+            else if (c == '[') result += "_3";
+            else {
+                result += "_0";
+                for (int shift : {12, 8, 4, 0}) result += hex[(c >> shift) & 15];
+            }
+        }
+        env->ReleaseStringChars(value, text);
+        return result;
+    } catch (...) { env->ReleaseStringChars(value, text); throw; }
+}
+
+/// Retains native export metadata until one fixed-signature registration batch consumes it.
+struct ExportMethod { std::string name, signature; void* target; };
 
 /// Invokes an object constructor through the JVM A entry after validating its recorded signature.
 jobject NewObject(void* guest, jclass type, jmethodID method, const jvalue* arguments) {
@@ -596,11 +767,12 @@ void Install(JniState& state) {
 JniBridge::JniBridge() : state_(std::make_unique<JniState>()) {}
 
 std::unique_ptr<JniBridge> JniBridge::Load(JNIEnv* env, jobject loader, ThreadRuntime& threads,
-                                           const std::wstring& helper, LoadError* error) {
+                                           ModuleSet& modules, const std::wstring& helper, LoadError* error) {
     try {
         auto bridge = std::unique_ptr<JniBridge>(new JniBridge);
         auto& state = *bridge->state_;
         state.threads = &threads;
+        state.modules = &modules;
         if (env->GetJavaVM(&state.vm) != JNI_OK) return nullptr;
         state.loader = loader ? env->NewGlobalRef(loader) : nullptr;
         if (loader && !state.loader) return nullptr;
@@ -655,6 +827,10 @@ JniBridge::~JniBridge() {
             Fatal("bridge destruction requires an attached owner");
         env->DeleteGlobalRef(state_->loader);
     }
+    for (const auto& [name, library] : state_->libraries) {
+        (void)name;
+        if (library.handle) state_->modules->Close(library.handle);
+    }
     std::lock_guard lock(vmsMutex);
     vms.erase(&state_->proxy);
 }
@@ -672,9 +848,107 @@ void* JniBridge::Call(JNIEnv* env, void* (*entry)(void*), void* argument) {
     return Checked(proxy).binding->Call(entry, argument);
 }
 
-void JniBridge::Admit(const Module& module) {
-    std::lock_guard lock(state_->mutex);
-    state_->images.push_back(&module);
+bool JniBridge::OpenLibrary(JNIEnv* env, std::string_view name, LoadError* error) {
+    try {
+        LibraryCall call{*state_, env, std::string(name), error};
+        Call(env, InitializeLibrary, &call);
+        return call.ok;
+    } catch (const std::bad_alloc&) {
+        std::lock_guard lock(state_->mutex);
+        for (auto& [libraryName, library] : state_->libraries) {
+            if (libraryName != name) continue;
+            library.error = {Category::HostMemory, "", "out of memory"};
+            library.phase = JniLibrary::Phase::Failed;
+        }
+        *error = {Category::HostMemory, "JNI library", "library lifecycle allocation failed"};
+        return false;
+    }
+}
+
+bool JniBridge::BindExports(JNIEnv* env, jclass type) {
+    try {
+        auto* proxy = static_cast<EnvProxy*>(Environment(env));
+        if (!proxy || !NativeClass(*proxy, type)) return false;
+        LocalFrame frame(env);
+        if (!frame.active) return false;
+        jclass cls = env->FindClass("java/lang/Class"), methodType = env->FindClass("java/lang/reflect/Method");
+        if (!cls || !methodType) return false;
+        jmethodID className = env->GetMethodID(cls, "getName", "()Ljava/lang/String;");
+        jmethodID declared = env->GetMethodID(cls, "getDeclaredMethods", "()[Ljava/lang/reflect/Method;");
+        jmethodID modifiers = env->GetMethodID(methodType, "getModifiers", "()I");
+        jmethodID methodName = env->GetMethodID(methodType, "getName", "()Ljava/lang/String;");
+        jmethodID parameters = env->GetMethodID(methodType, "getParameterTypes", "()[Ljava/lang/Class;");
+        jmethodID resultType = env->GetMethodID(methodType, "getReturnType", "()Ljava/lang/Class;");
+        if (env->ExceptionCheck()) return false;
+        auto javaName = static_cast<jstring>(env->CallObjectMethodA(type, className, nullptr));
+        if (env->ExceptionCheck() || !javaName) return false;
+        const auto binaryName = Text(env, javaName);
+        const auto encodedClass = Mangle(env, javaName, true);
+        if (env->ExceptionCheck()) return false;
+        if (!encodedClass) return true;  // Explicit registrations remain valid; unresolved methods stay unbound.
+        const auto prefix = "Java_" + *encodedClass + "_";
+        auto methods = static_cast<jobjectArray>(env->CallObjectMethodA(type, declared, nullptr));
+        if (env->ExceptionCheck() || !methods) return false;
+        std::vector<uint64_t> roots;
+        { std::lock_guard lock(state_->mutex); roots = state_->roots; }
+        std::vector<ExportMethod> exports;
+        const jsize count = env->GetArrayLength(methods);
+        for (jsize i = 0; i < count; i++) {
+            LocalFrame item(env);
+            if (!item.active) return false;
+            jobject method = env->GetObjectArrayElement(methods, i);
+            if (env->ExceptionCheck() || !method) return false;
+            jint flags = env->CallIntMethodA(method, modifiers, nullptr);
+            if (env->ExceptionCheck()) return false;
+            if (!(flags & 0x0100)) continue;
+            auto name = static_cast<jstring>(env->CallObjectMethodA(method, methodName, nullptr));
+            if (env->ExceptionCheck()) return false;
+            auto args = static_cast<jobjectArray>(env->CallObjectMethodA(method, parameters, nullptr));
+            if (env->ExceptionCheck()) return false;
+            auto result = static_cast<jclass>(env->CallObjectMethodA(method, resultType, nullptr));
+            if (env->ExceptionCheck()) return false;
+            std::string signature = "(";
+            for (jsize n = 0, end = env->GetArrayLength(args); n < end; n++) {
+                auto argumentType = static_cast<jclass>(env->GetObjectArrayElement(args, n));
+                if (env->ExceptionCheck() || !argumentType) return false;
+                signature += TypeDescriptor(ClassName(env, argumentType));
+                env->DeleteLocalRef(argumentType);
+                if (env->ExceptionCheck()) return false;
+            }
+            const std::string arguments = signature.substr(1);
+            signature += ")" + TypeDescriptor(ClassName(env, result));
+            const auto plainName = Text(env, name);
+            if (env->ExceptionCheck()) return false;
+            {
+                std::lock_guard lock(state_->mutex);
+                if (state_->nativeKeys.contains({binaryName, plainName, signature})) continue;
+            }
+            const auto encodedMethod = Mangle(env, name);
+            if (env->ExceptionCheck()) return false;
+            if (!encodedMethod) continue;
+            const auto shortName = prefix + *encodedMethod;
+            jstring descriptor = env->NewStringUTF(arguments.c_str());
+            if (!descriptor) return false;
+            const auto encodedArguments = Mangle(env, descriptor);
+            if (env->ExceptionCheck()) return false;
+            if (!encodedArguments) continue;
+            const auto longName = shortName + "__" + *encodedArguments;
+            void* target = nullptr;
+            for (const auto& symbol : {shortName, longName}) {
+                for (uint64_t root : roots)
+                    if ((target = state_->modules->Find(root, symbol))) break;
+                if (target) break;
+            }
+            if (env->ExceptionCheck()) return false;
+            if (target) exports.push_back({plainName, std::move(signature), target});
+        }
+        std::vector<GuestNativeMethod> natives;
+        for (const auto& method : exports) natives.push_back({method.name.c_str(), method.signature.c_str(), method.target});
+        return natives.empty() || Register(proxy, type, natives.data(), static_cast<jint>(natives.size())) == JNI_OK;
+    } catch (const std::bad_alloc&) {
+        Error(env, "GUEST_ABI_UNSUPPORTED JNI export metadata allocation");
+        return false;
+    }
 }
 
 void* JniBridge::Vm() const { return &state_->proxy; }
@@ -689,6 +963,11 @@ extern "C" void winapk_jni_dispatch(uint32_t slot, EntryFrame* frame) {
         if (target.state->nativeClosing &&
             (target.state->closingThread != GetCurrentThreadId() || !target.state->proxies))
             Fatal("native call during shutdown", slot);
+        if (target.initialization &&
+            (target.initialization->phase == JniLibrary::Phase::Failed ||
+             (target.initialization->phase == JniLibrary::Phase::Loading &&
+              target.initialization->owner != GetCurrentThreadId())))
+            Fatal("native entry from failed or competing JNI_OnLoad", slot);
         target.state->nativeCalls++;
     }
     /// Keeps a dispatcher reservation alive until all nested guest and JNI calls have returned.

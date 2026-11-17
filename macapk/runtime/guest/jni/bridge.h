@@ -9,13 +9,13 @@ namespace winapk::guest {
 struct JniState;
 
 /// Owns audited guest JNI tables and the Android-ABI varargs helper for one ClassLoader.
-/// Notes: host-only API; thread runtime/mappings outlive it; destroy after workers, before the JVM.
+/// Notes: host-only API; thread runtime/namespace/mappings outlive it; destroy after workers, before the JVM.
 class JniBridge {
 public:
     /// Loads the screened helper and retains loader as a global reference.
     /// Returns: nullptr with loader error or a pending JVM exception on failure.
     static std::unique_ptr<JniBridge> Load(JNIEnv* env, jobject loader, ThreadRuntime& threads,
-                                         const std::wstring& helper, LoadError* error);
+                                         ModuleSet& modules, const std::wstring& helper, LoadError* error);
     /// Releases this thread's proxy and the loader; active proxies on other threads are fatal.
     ~JniBridge();
 
@@ -25,8 +25,12 @@ public:
     /// Calls a proven fixed-signature entry under this host thread's persistent/reentrant binding.
     /// Notes: returns to the host without clearing guest errno/key/TLS state; bridge outlives Call.
     void* Call(JNIEnv* env, void* (*entry)(void*), void* argument);
-    /// Admits native entry addresses only from this screened image, which must outlive the bridge.
-    void Admit(const Module& module);
+    /// Loads an explicit library and invokes only its own JNI_OnLoad once, checking version/exceptions.
+    /// Notes: failed initialization remains failed and pinned; no lock crosses a guest/JVM call.
+    bool OpenLibrary(JNIEnv* env, std::string_view name, LoadError* error);
+    /// Binds a class's native exports by JNI short/long names, preserving prior explicit registrations.
+    /// Returns: false with a pending Java exception on failure; missing exports remain unbound.
+    bool BindExports(JNIEnv* env, jclass type);
     /// Returns the private guest JavaVM object, never the host JavaVM address.
     void* Vm() const;
     /// Counts live proxies, including borrowed JVM threads, for lifecycle assertions.

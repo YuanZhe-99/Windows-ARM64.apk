@@ -78,6 +78,9 @@ and Latin words only where it helps readability.
 | static entry bank | 静态入口表 |
 | native registration | 原生方法注册 |
 | stack slot | 栈槽 |
+| JNI short name | JNI 短名称 |
+| JNI long name | JNI 长名称 |
+| name mangling | 名称编码 |
 
 ## 6. Review checklist
 

@@ -112,20 +112,27 @@ N0 的 `Native` 回归也在已有加载/卸载循环中覆盖新的可执行范
 不修改源夹具。
 
 `-Component JniProbe` 只构建 `jni-probe.exe`、其 Java 探测 jar、Android ABI 的
-`libwinapk-jni.so` 辅助库及 ELF 夹具配方。`-Suite Jni` 运行 T09 基础，不是 G3：
+JNI/Bionic 辅助库及 ELF 夹具配方。`-Suite Jni` 运行 T09 基础，不是 G3：
 一个带 `-Xcheck:jni` 的真实 ARM64 JVM 检查构造/静态/实例/非虚 .../V/A 调用、
 引用/字符串/数组、pending exception，以及普通/daemon worker 附着。
-七组语义共用一个进程，包含真实 JVM native 注册/调用、持久/嵌套入口状态及销毁；
-四个短终止进程检查不支持的 JNI、跨线程环境误用、客体 trap 和访问违规。
-每个进程限时 15 秒。两个内容哈希及汇总构成 14 项检查。CheckJNI 警告会使正例失败。
+九组语义共用一个进程，包含真实 JVM native 注册/调用、持久/嵌套入口状态及销毁；
+五个短终止进程检查不支持的 JNI、跨线程环境误用、客体 trap、访问违规及失败 JNI hook 注册的方法入口。
+每个进程限时 15 秒。七项夹具哈希、两项辅助库哈希及语义/汇总/终止结果构成 24 项检查。
+CheckJNI 警告会使正例失败。
 正例使用 `-Xbatch`，并检查 `T09-compilation.xml` 中是否安装了 Java 隐式故障方法的编译，
 而不假定热循环就一定运行了 JIT 代码。
-辅助库和夹具使用 `-O2 -nostdlib -fno-builtin -fno-stack-protector`；
-这是显式 JNI 实验，不证明普通 NDK APK 加载。夹具另用 `-femulated-tls`
-测试真实、已显式支持的 TLS model。独立的 `native-probe` 仍不含 JVM。
+JNI 辅助库和核心夹具使用 `-O2 -nostdlib -fno-builtin -fno-stack-protector`；
+核心夹具另用 `-femulated-tls` 测试已声明的 TLS model。独立库家族使用普通 NDK API-30
+共享库链接、CRT 及 libc/libdl 依赖，不带这些特殊参数。只证明这些配方，不证明任意 NDK APK 加载。
+独立的 `native-probe` 仍不含 JVM。
 日志及 JVM 错误文件保存在被忽略的 `test-data/logs/T09-*` 和 `hs_err_pid*.log`。
 native 组注册六个固定签名方法，拒绝数据地址、非 native Java 方法、超额槽位保留及其他类加载器。
 随后 JVM 直接调用 PE 适配入口，不使用宿主控制的客体测试入口。销毁检查真实注销。
+另两组语义覆盖显式 JNI 库生命周期及导出绑定：依赖优先构造、根库专属/仅一次 JNI_OnLoad、
+无 hook 的根库、short name 优先、重载 long/Unicode/数组对象描述符名称、依赖导出及显式注册优先。
+JVM 专属 `1bad` 声明即使有匹配导出也保持未解析，符合 JNI 歧义转义规则。
+拒绝错误版本、pending exception、数据型 hook 及重复失败加载。
+独立终止 hook 用例证明无效版本 hook 不能留下可用的 native 绑定。
 
 `winapk run` 把每个应用的数据放在 `%LOCALAPPDATA%\Windows-ARM64.apk\Apps` 下（`--data-dir` 可改）：`android\`
 是应用看到的 Android 根目录（`data\data\<package>`、`sdcard`），`code\<package>\` 是转换后的代码及缓存戳，

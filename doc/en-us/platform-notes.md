@@ -122,10 +122,10 @@ by the build script. No new gate is claimed, no version bump, and no plan deviat
 ## P4 JNI foundation checks
 
 2026-11-17 on the ARM64 machine above, Microsoft JVM `21.0.13.0.2+1-LTS`:
-`build.ps1 -Component All`, then `test.ps1 -Suite Jni`: 14/14 PASS, with `-Xcheck:jni` and no
+`build.ps1 -Component All`, then `test.ps1 -Suite Jni`: 24/24 PASS, with `-Xcheck:jni` and no
 warnings; a final rerun uses `-Xbatch` and verifies the installed Java implicit-fault method
-in `T09-compilation.xml`. One NDK-built fixture, one product guest helper, seven semantic groups and four short
-fatal processes; no additional pressure loop. The final 14-check suite took 1.36 seconds on this
+in `T09-compilation.xml`. Seven NDK-built fixtures, two product guest helpers, nine semantic groups and five short
+fatal processes; no additional pressure loop. The 24-check suite took 1.53 seconds on this
 machine (one run, not a performance guarantee). This is not G3.
 
 | Item | Result | Evidence |
@@ -135,8 +135,10 @@ machine (one run, not a performance guarantee). This is not G3.
 | JVM worker lifecycle | PASS | detached GetEnv and refused version; normal/daemon Attach, repeated Attach identity, explicit Detach or automatic host-thread-exit Detach after a Bionic key destructor that still calls JNI; borrowed main thread is not detached; exactly one main proxy after joins |
 | Persistent host-thread binding | PASS | guest pthread identity, key value and emutls address/value survive returning to the host; nested host-controlled guest entry changes the same errno/TLS; the last binding's key destructor still calls JNI and reenters that binding, then TLS is freed and the runtime is idle; this does not prove Java native entry thunks |
 | JVM → guest native registration | PASS | six fixed-signature methods entered through actual JVM RegisterNatives PE entries: mixed 25 arguments, long/float/double/object/void results, instance/static calls, object/array mutation and Java exception propagation; depth-five Java↔guest callbacks and normal/daemon worker native calls; data target, non-native Java method, slot quota and foreign loader refused; native reentry during key cleanup and UnsatisfiedLinkError after real unregistration |
+| Explicit JNI library lifecycle | PASS | normal NDK CRT/libc/libdl links; dependency/root/hook trace `2 1 3`, repeated root load unchanged, root without a hook appends only constructor `1` and never calls dependency hook `9`; bad version and pending IllegalStateException return failure once, retries do not rerun; data-valued JNI_OnLoad refused; a method registered during the bad-version hook works inside that hook but terminates explicitly if invoked after its failure |
+| JNI export lookup | PASS | short name wins over a conflicting long name; int/long overloads, array/object descriptors, underscore/Chinese UTF-16 escaping and a DT_NEEDED dependency export return exact values through the JVM; explicit registration wins; repeated binding allocates no duplicate entries; JVM-only `1bad` throws UnsatisfiedLinkError despite a matching export |
 | Fault and misuse boundary | PASS | unsupported slot 217 and cross-thread JNIEnv: exit 3 with explicit category; guest trap/access violation: registered module/offset and exit 3; hot Java null-pointer/division exceptions remain JVM-owned and complete normally; x18/sp checked read-only on main/workers |
-| Export-name binding and APK integration | NOT_RUN | no mangled-name binding or JNI_OnLoad yet; winapk run native admission remains off |
+| APK call-site integration | NOT_RUN | DEX/ClassLoader System.loadLibrary/load redirection, APK extraction and Activity/G3 acceptance not integrated; winapk run native admission remains off |
 
 The regression also passes requirements, Host 23, Native 58, Bionic 104 and Java 43;
 Go formatting/vet/tests (including CGO-disabled), MyGo vet/i18n and docs mirror pass.
@@ -146,6 +148,9 @@ persistence and teardown semantic checks to the existing positive process, not a
 The static-native-entry increment's regression is in `P4-native-*.log`, adding one semantic group
 to that same process. `llvm-readobj --unwind` also decodes both assembly functions' Windows
 save/restore records; this is not a guest-unwinding or CFG-enabled test.
+The explicit-load increment's complete requirements/build All and Host 23, Java 43, Native 58,
+Bionic 104, Jni 24 regression is in `P4-load-*.log`. Its six library variants use normal NDK
+shared-library links, not the core probe's `-nostdlib`/emulated-TLS flags; no arbitrary APK claim.
 The first mixed trap experiment failed: the JVM exited 1 before the tail guest handler ran.
 The repair installs a strictly guest-PC-scoped first handler, never replaces HotSpot's handlers
 and leaves every non-guest PC in its original chain. The retained T09 cases guard that boundary.

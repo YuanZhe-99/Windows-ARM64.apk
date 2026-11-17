@@ -693,16 +693,21 @@ function Test-Libraries {
 <# Runs T09's compact real-JVM JNI foundation and fatal boundary variants; never reports G3. #>
 function Test-Jni {
     $fixture = Join-Path $repo 'tests\fixtures\elf\libjni-probe.so'
-    $record = (Get-Content (Join-Path $repo 'tests\fixtures\elf\fixtures.json') -Raw | ConvertFrom-Json).fixtures |
-        Where-Object name -EQ 'libjni-probe.so'
-    $hash = (Get-FileHash $fixture -Algorithm SHA256).Hash.ToLower()
-    Check 'T09.fixture.hash' ($null -ne $record -and $record.sha256 -eq $hash) $hash
-    if (-not $record -or $record.sha256 -ne $hash) { return }
+    $records = (Get-Content (Join-Path $repo 'tests\fixtures\elf\fixtures.json') -Raw | ConvertFrom-Json).fixtures
+    $table = Import-PowerShellDataFile (Join-Path $repo 'tests\windows-arm64\guest-elf\fixtures.psd1')
+    foreach ($recipe in $table.Fixtures | Where-Object Id -EQ 'T09') {
+        $record = $records | Where-Object name -EQ $recipe.Name
+        $hash = (Get-FileHash (Join-Path $repo "tests\fixtures\elf\$($recipe.Name)") -Algorithm SHA256).Hash.ToLower()
+        Check "T09.$($recipe.Name).hash" ($null -ne $record -and $record.sha256 -eq $hash) $hash
+        if (-not $record -or $record.sha256 -ne $hash) { return }
+    }
     $helper = Join-Path $out 'bin\guest\libwinapk-jni.so'
-    $helperRecord = Get-Content (Join-Path $out 'bin\guest\jni.json') -Raw | ConvertFrom-Json
-    $helperHash = (Get-FileHash $helper -Algorithm SHA256).Hash.ToLower()
-    Check 'T09.helper.hash' ($helperHash -eq $helperRecord.sha256) $helperHash
-    if ($helperHash -ne $helperRecord.sha256) { return }
+    foreach ($name in 'jni', 'bionic') {
+        $helperRecord = Get-Content (Join-Path $out "bin\guest\$name.json") -Raw | ConvertFrom-Json
+        $helperHash = (Get-FileHash (Join-Path $out "bin\guest\libwinapk-$name.so") -Algorithm SHA256).Hash.ToLower()
+        Check "T09.$name.helper.hash" ($helperHash -eq $helperRecord.sha256) $helperHash
+        if ($helperHash -ne $helperRecord.sha256) { return }
+    }
     $logs = Join-Path $out 'test-data\logs'
     New-Item -ItemType Directory -Force $logs | Out-Null
     $jdk = Find-Jdk
@@ -711,7 +716,8 @@ function Test-Jni {
         @{ Name = 'unsupported'; Extra = @('4'); Reason = 'GUEST_ABI_UNSUPPORTED JNI: unsupported entry \(slot 217\)'; Exit = 3 },
         @{ Name = 'thread'; Extra = @('5'); Reason = 'GUEST_ABI_UNSUPPORTED JNI: foreign, detached or cross-thread JNIEnv'; Exit = 3 },
         @{ Name = 'trap'; Extra = @('6'); Reason = 'GUEST_EXECUTION_FAULT libjni-probe.so vaddr 0x.*Windows exception 0xc000001d'; Exit = 3 },
-        @{ Name = 'access'; Extra = @('7'); Reason = 'GUEST_EXECUTION_FAULT libjni-probe.so vaddr 0x.*Windows exception 0xc0000005'; Exit = 3 }
+        @{ Name = 'access'; Extra = @('7'); Reason = 'GUEST_EXECUTION_FAULT libjni-probe.so vaddr 0x.*Windows exception 0xc0000005'; Exit = 3 },
+        @{ Name = 'onload-escape'; Extra = @('8'); Reason = 'GUEST_ABI_UNSUPPORTED JNI: native entry from failed or competing JNI_OnLoad'; Exit = 3 }
     )) {
         $stdout = Join-Path $logs "T09-$($variant.Name).out"
         $stderr = Join-Path $logs "T09-$($variant.Name).err"
@@ -729,7 +735,7 @@ function Test-Jni {
                 $cases = [regex]::Matches($text, '(?m)^case (T09\.\S+) (PASS|FAIL)')
                 foreach ($c in $cases) { Check $c.Groups[1].Value ($c.Groups[2].Value -eq 'PASS') $c.Groups[2].Value }
                 $compilation = [IO.File]::ReadAllText((Join-Path $logs 'T09-compilation.xml'))
-                $ok = $p.ExitCode -eq 0 -and $cases.Count -eq 7 -and $text -match 'result T09.foundation PASS \(not G3\)' -and
+                $ok = $p.ExitCode -eq 0 -and $cases.Count -eq 9 -and $text -match 'result T09.foundation PASS \(not G3\)' -and
                       [string]::IsNullOrWhiteSpace($err) -and $text -notmatch '(?i)WARNING|FATAL ERROR' -and
                       $compilation -match "<nmethod\b[^>]*method='com.winapk.probe.GuestJniProbe implicit \(I\)I'"
             } else {

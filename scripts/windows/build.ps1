@@ -12,7 +12,7 @@ bcprov. Component Host builds the native host (winapk.exe, native-probe.exe) and
 Java probe with CMake, Ninja and clang-cl from Visual Studio, for ARM64. Component
 NativeProbe builds native-probe.exe, the guest formatting helper and ELF fixtures (T05–T08)
 with the NDK.
-JniProbe builds the separate real-JVM JNI foundation probe, Android varargs helper and T09 fixture.
+JniProbe builds the real-JVM JNI probe, Android JNI/Bionic helpers and T09 fixture recipes.
 
 Output goes to build/windows-arm64/ (lib/ and bin/). Nothing outside the
 repository is changed, and nothing is installed.
@@ -540,6 +540,6 @@ switch ($Component) {
     'Fixtures' { Build-Fixtures }
     'Host' { Build-Host }
     'NativeProbe' { Build-Host 'native-probe'; Build-GuestBionic; Build-ElfFixtures }
-    'JniProbe' { Build-Host 'jni-probe'; Build-GuestJni; Build-ElfFixtures }
+    'JniProbe' { Build-Host 'jni-probe'; Build-GuestBionic; Build-GuestJni; Build-ElfFixtures }
     'All' { Build-Java; Build-FrameworkRes; Build-Fixtures; Build-Host; Build-GuestBionic; Build-GuestJni; Build-ElfFixtures }
 }

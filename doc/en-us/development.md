@@ -136,23 +136,33 @@ shutdown. `fixtures.json` records the exact normal-link flags; copies staged und
 `test-data/n1-libraries` keep each variant's original SONAME without modifying source fixtures.
 
 `-Component JniProbe` builds only `jni-probe.exe`, its Java probe jar, the Android-ABI
-`libwinapk-jni.so` helper and the ELF fixture recipes. `-Suite Jni` runs T09's foundation,
+JNI/Bionic helpers and the ELF fixture recipes. `-Suite Jni` runs T09's foundation,
 not G3: one real ARM64 JVM with `-Xcheck:jni` checks constructor/static/instance/nonvirtual
 .../V/A calls, references/strings/arrays, pending exceptions, and normal/daemon worker attachment.
-Seven semantic groups share one process, including actual JVM native registration/calls,
+Nine semantic groups share one process, including actual JVM native registration/calls,
 persistent/nested entry state and teardown;
-four short fatal processes check unsupported JNI,
-cross-thread environment misuse, guest trap and access violation. Each has a 15-second deadline.
-Two content hashes and a summary make 14 checks. Warnings from CheckJNI fail the positive run.
+five short fatal processes check unsupported JNI, cross-thread environment misuse, guest trap,
+access violation and entry into a method registered by a failed JNI hook. Each has a 15-second deadline.
+Seven fixture hashes, two helper hashes and the semantic/summary/fatal results make 24 checks.
+Warnings from CheckJNI fail the positive run.
 The positive run uses `-Xbatch` and checks `T09-compilation.xml` for an installed compilation
 of the Java implicit-fault method, rather than assuming a hot loop necessarily ran JIT code.
-The helper and fixture use `-O2 -nostdlib -fno-builtin -fno-stack-protector`; this is an explicit
-JNI experiment, not proof of ordinary NDK APK loading. The fixture also uses `-femulated-tls`
-to test a real, explicitly supported TLS model. The separate `native-probe` remains
+The JNI helper and core fixture use `-O2 -nostdlib -fno-builtin -fno-stack-protector`;
+the core fixture also uses `-femulated-tls` to test the declared TLS model. The separate
+library family uses normal NDK API-30 shared-library links, CRT and libc/libdl dependencies
+without those special flags. This proves those recipes, not arbitrary NDK APK loading.
+The separate `native-probe` remains
 JVM-free. Logs and JVM error files stay under ignored `test-data/logs/T09-*` and `hs_err_pid*.log`.
 The native group registers six fixed-signature methods and rejects a data address, a non-native
 Java method, an oversized slot reservation and a foreign class loader. The JVM then calls the
 PE adapters directly, not a host-controlled guest test entry. Teardown verifies real unregistration.
+Two additional semantic groups cover explicit JNI library lifecycle and export binding:
+dependency-first constructors, root-only/once-only JNI_OnLoad, a root without a hook,
+short-name precedence, overloaded-long/Unicode/array-object descriptor names, dependency exports
+and explicit-registration precedence. A JVM-only `1bad` declaration remains unresolved despite
+a matching export, as required by JNI's ambiguous-escape rule.
+Wrong versions, pending exceptions, data-valued hooks and repeated failed loads are refused.
+The separate fatal hook case proves that an invalid-version hook cannot leave a usable native binding.
 
 `winapk run` keeps each app's data under `%LOCALAPPDATA%\Windows-ARM64.apk\Apps` (`--data-dir`
 moves it): `android\` is the Android root the app sees (`data\data\<package>`, `sdcard`),

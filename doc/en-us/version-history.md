@@ -2,6 +2,7 @@
 
 ## 0.1.0 (in progress)
 
+- 2026-11-17: added explicit root-only/once-only JNI_OnLoad, cached failures and failed-hook native-entry guards; short/long/Unicode/descriptor export lookup, registration precedence and ambiguous-escape refusal pass in the existing T09 groups. Requirements/build All, Host 23, Java 43, Native 58, Bionic 104 and Jni 24 pass; final targeted Jni run 1.73 s. Go 1.27.4, MyGo v0.9.2 and Mac.apk `3f35611` checked, unchanged; APK integration and G3 remain unfinished, version 0.1.0 unreleased.
 - Repository scaffold: working conventions (`AGENTS.md`), the plan (`PLAN.md`), mirrored
   documentation, the documentation mirror check and the Go module.
 - Go 1.27.3, MyGo v0.7.4, Mac.apk `main` at `367fd1a` (checked 2026-11-03), imported unchanged as the `macapk/` subtree.

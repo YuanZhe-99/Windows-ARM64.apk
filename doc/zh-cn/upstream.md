@@ -67,6 +67,8 @@ Windows 11 ARM64 上构建或运行过（[port-audit.md](port-audit.md)）。
 | [JNI 函数](https://docs.oracle.com/en/java/javase/21/docs/specs/jni/functions.html)：稳定槽号、每线程环境、不透明引用/ID；jvalue 是 JNI 原生类型/引用的 union | 显式私有表、固定签名包装器及线程归属检查；绝不复制 JVM 表 | 已阅读规范；NDK/宿主静态布局断言及 T09 真实 JVM 调用、引用和误用用例 |
 | FindClass 使用原生库的 loader 并初始化类；查询缺失报告 NoClassDefFoundError | 使用带初始化的 Class.forName 及配置的 loader，仅转换 ClassNotFoundException；worker 使用同一 loader | T09 隔离 URLClassLoader、FindClass 副作用及缺失类 |
 | .../V 方法调用使用 C 默认参数提升；A 调用接受 jvalue 数组 | 客体按记录的方法签名 va_copy/va_arg，然后进入固定宿主 A 入口 | T09 混合寄存器/栈值、重复 V、构造及虚/非虚分派 |
+| JNI native 符号查询先尝试 short name，再尝试带参数描述符编码的 long name；名称转义 UTF-16 单元，歧义转义失败 | 编码下划线、数组/对象描述符及 Unicode；拒绝开头或映射的斜杠后未经转义的 `0`–`3`；不替换已记录的注册 | T09 short/int-long 重载/Unicode/依赖导出、显式注册优先及 JVM 专属 `1bad` 查询拒绝 |
+| JNI_OnLoad 是 Java 库初始化 hook，不是 ELF 依赖构造 | 只调用显式根库自身导出一次，检查返回版本及 pending exception；保留失败映像但拒绝其注册的 native 入口 | T09 普通 NDK 根/依赖、无 hook 根库、错误版本、pending exception、数据 hook 及失败后入口拒绝 |
 
 ## MyGo
 

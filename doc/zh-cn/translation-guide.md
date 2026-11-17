@@ -74,6 +74,9 @@ Microsoft），以及 API 与格式名称（JNI、ELF、PE、DEX、Bionic、EGL�
 | static entry bank | 静态入口表 |
 | native registration | 原生方法注册 |
 | stack slot | 栈槽 |
+| JNI short name | JNI 短名称 |
+| JNI long name | JNI 长名称 |
+| name mangling | 名称编码 |
 
 ## 6. 审阅清单
 

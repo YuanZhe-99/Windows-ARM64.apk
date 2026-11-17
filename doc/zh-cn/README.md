@@ -37,7 +37,8 @@ T08 还覆盖私有堆分配、字节/字符串及映射常规文件/时间 API�
 P3 已声明的 C/Bionic 准入现已通过普通 NDK 链接的 C 夹具，包含逻辑系统库、版本与真实 CRT 生命周期回调。
 完整 N1/JNI 及 APK 原生库加载仍属于 P4/G3。
 独立的真实 JVM `jni-probe.exe` 已通过 T09 双向 JNI 调用，包含显式注册的静态 PE 入口、
-引用/异常、嵌套回调及 worker 附着。导出名绑定、JNI_OnLoad 及 APK 集成仍未完成。
+引用/异常、嵌套回调及 worker 附着。独立 JNI_OnLoad 和 short/long/Unicode 导出绑定也已通过；
+APK 加载调用点集成及其 Activity/G3 验收仍未完成。
 优先推进后端，暂缓前端集成。
 
 ## 上游版本

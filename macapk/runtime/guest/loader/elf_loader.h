@@ -132,7 +132,7 @@ std::unique_ptr<Module> Load(const std::wstring& path, std::span<const HostSymbo
                              LoadError* error);
 
 /// Owns a restricted C-library graph with transactional linking and process-lifetime pinning.
-/// Notes: no APK admission, JNI_OnLoad, ELF TLS, versioned guest exports or dynamic unload yet.
+/// Notes: JNI lifecycle belongs to the JNI bridge, not this graph; no ELF TLS or dynamic unload.
 /// The caller keeps this object alive until all guest threads/callbacks end and must enter
 /// a managed guest context before Open, because dependency constructors may call shims.
 class ModuleSet {
@@ -151,6 +151,10 @@ public:
     bool Close(uint64_t handle);
     /// Looks up an export in an open handle and its breadth-first dependency scope.
     void* Find(uint64_t handle, std::string_view symbol) const;
+    /// Looks up only this open image/provider, excluding dependencies (for its own JNI_OnLoad).
+    void* FindOwn(uint64_t handle, std::string_view symbol) const;
+    /// Checks whether an address belongs to a retained, screened guest executable image.
+    bool Executable(uintptr_t address) const;
     /// Returns retained ELF images, including closed-but-pinned dependencies, excluding logical records.
     size_t Mapped() const;
 

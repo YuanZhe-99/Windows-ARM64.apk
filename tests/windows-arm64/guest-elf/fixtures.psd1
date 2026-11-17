@@ -13,6 +13,24 @@
 @{
     Common   = @('-shared', '-fPIC', '-fno-stack-protector', '-Wall', '-Wextra', '-Werror')
     Fixtures = @(
+        @{ Name = 'libjni-dep.so'; Id = 'T09'; Source = 'jni/dependency.c'; Target = 'aarch64-linux-android30'
+           Common = @('-shared', '-fPIC', '-Wall', '-Wextra', '-Werror'); Flags = @('-O2'); Command = 'jni'
+           Result = 'dependency constructor; JNI_OnLoad not automatic; exported native in dependency' }
+        @{ Name = 'libjni-load.so'; Id = 'T09'; Source = 'jni/library.c'; Target = 'aarch64-linux-android30'
+           Common = @('-shared', '-fPIC', '-Wall', '-Wextra', '-Werror'); Flags = @('-O2'); Links = @('libjni-dep.so'); Command = 'jni'
+           Result = 'root JNI_OnLoad once; registration and JNI short/long/Unicode exports' }
+        @{ Name = 'libjni-noinit.so'; Id = 'T09'; Source = 'jni/library.c'; Target = 'aarch64-linux-android30'
+           Common = @('-shared', '-fPIC', '-Wall', '-Wextra', '-Werror'); Flags = @('-O2', '-DNO_ONLOAD'); Links = @('libjni-dep.so'); Command = 'jni'
+           Result = 'no root hook; never call the dependency JNI_OnLoad instead' }
+        @{ Name = 'libjni-version.so'; Id = 'T09'; Source = 'jni/library.c'; Target = 'aarch64-linux-android30'
+           Common = @('-shared', '-fPIC', '-Wall', '-Wextra', '-Werror'); Flags = @('-O2', '-DBAD_VERSION'); Links = @('libjni-dep.so'); Command = 'jni'
+           Result = 'GUEST_ABI_UNSUPPORTED unsupported JNI_OnLoad version; cached failure' }
+        @{ Name = 'libjni-pending.so'; Id = 'T09'; Source = 'jni/library.c'; Target = 'aarch64-linux-android30'
+           Common = @('-shared', '-fPIC', '-Wall', '-Wextra', '-Werror'); Flags = @('-O2', '-DPENDING_EXCEPTION'); Links = @('libjni-dep.so'); Command = 'jni'
+           Result = 'GUEST_ABI_UNSUPPORTED pending Java exception preserved; cached failure' }
+        @{ Name = 'libjni-datahook.so'; Id = 'T09'; Source = 'jni/library.c'; Target = 'aarch64-linux-android30'
+           Common = @('-shared', '-fPIC', '-Wall', '-Wextra', '-Werror'); Flags = @('-O2', '-DDATA_ONLOAD'); Links = @('libjni-dep.so'); Command = 'jni'
+           Result = 'GUEST_ABI_UNSUPPORTED JNI_OnLoad data symbol refused before call' }
         @{ Name = 'libjni-probe.so'; Id = 'T09'; Source = 'jni/probe.c'; Target = 'aarch64-linux-android30'
            Flags = @('-O2', '-nostdlib', '-fno-builtin', '-femulated-tls'); Command = 'jni'
            Result = 'T09 foundation PASS; not APK admission or G3' }

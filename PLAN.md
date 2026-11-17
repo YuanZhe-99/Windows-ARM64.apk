@@ -336,6 +336,11 @@ JNI 代理销毁前执行 key/TLS 清理，Bionic worker 借用既有上下文�
 T09 增为 14 项；数据入口、非 native 方法、槽位超额及其他 ClassLoader 均拒绝，销毁后真实注销。
 宿主入口的 Windows 展开记录已静态解码；不宣称客体 C++ 展开或 CFG-enabled 通过。
 导出名、JNI_OnLoad、APK 接入及完整 G3 仍未完成。
+后续显式加载增量已验证根库专属/仅一次 JNI_OnLoad、版本/异常/数据入口拒绝、失败缓存及失败 hook
+注册入口的执行禁止；JNI short/long、int/long 重载、UTF-16 名称编码、依赖库导出及显式注册优先均通过。
+T09 共 24 项（同进程新增两个语义组及一个必要的失败 hook 入口终止进程），普通 NDK 链接库家族也已覆盖。
+完整回归 requirements/build All、Host 23、Java 43、Native 58、Bionic 104、Jni 24 通过；
+剩余为 DEX/ClassLoader 调用点、APK 库提取/CLI restricted 及 hello-jni Activity 的完整 G3。
 
 ### 11.1 不能省略的加载适配
 

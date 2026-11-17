@@ -121,10 +121,10 @@ Go vet/测试（含 `CGO_ENABLED=0`）、MyGo vet/i18n 与文档镜像检查均�
 ## P4 JNI 基础检查
 
 2026-11-17，在上述 ARM64 机器及 Microsoft JVM `21.0.13.0.2+1-LTS` 上：
-`build.ps1 -Component All`，然后 `test.ps1 -Suite Jni`：14/14 PASS，启用 `-Xcheck:jni`，没有警告；
+`build.ps1 -Component All`，然后 `test.ps1 -Suite Jni`：24/24 PASS，启用 `-Xcheck:jni`，没有警告；
 最终另跑 `-Xbatch`，在 `T09-compilation.xml` 中验证已安装的 Java 隐式故障方法编译。
-一个 NDK 构建的夹具、一个产品客体辅助库、七组语义及四个短终止进程；不另加压力循环。
-最终 14 项套件在本机耗时 1.36 秒（单次测量，不是性能保证）。这不是 G3。
+七个 NDK 构建的夹具、两个产品客体辅助库、九组语义及五个短终止进程；不另加压力循环。
+24 项套件在本机耗时 1.53 秒（单次测量，不是性能保证）。这不是 G3。
 
 | 条目 | 结果 | 证据 |
 |---|---|---|
@@ -133,8 +133,10 @@ Go vet/测试（含 `CGO_ENABLED=0`）、MyGo vet/i18n 与文档镜像检查均�
 | JVM worker 生命周期 | PASS | detached GetEnv 及版本拒绝；普通/daemon Attach、重复 Attach 身份、显式 Detach 或宿主线程退出自动 Detach，后者晚于仍可调用 JNI 的 Bionic key 析构；不 detach 借用的主线程；join 后精确保留一个主代理 |
 | 持久宿主线程绑定 | PASS | 客体 pthread 身份、key 值、emutls 地址/值在返回宿主后保留；宿主控制的嵌套客体入口改变同一 errno/TLS；最后绑定的 key 析构仍可调用 JNI 并重入该绑定，然后释放 TLS 并使运行时 idle；不证明 Java native 入口 thunk |
 | JVM → guest native 注册 | PASS | 六个固定签名方法经真实 JVM RegisterNatives PE 入口进入：混合 25 参数、long/float/double/对象/void 结果、实例/静态调用、对象/数组修改及 Java 异常传播；五层 Java↔guest 回调、普通/daemon worker native 调用；拒绝数据入口、非 native Java 方法、槽位配额及其他 loader；key 清理时 native 重入，真实注销后 UnsatisfiedLinkError |
+| 显式 JNI 库生命周期 | PASS | 普通 NDK CRT/libc/libdl 链接；依赖/根库/hook trace 为 `2 1 3`，重复加载根库不变；无 hook 根库仅追加构造 `1`，不调用依赖 hook `9`；错误版本及 pending IllegalStateException 仅运行一次并返回失败，重试不重跑；拒绝数据型 JNI_OnLoad；错误版本 hook 注册的方法可在 hook 内调用，但失败后调用会明确终止 |
+| JNI 导出查询 | PASS | short name 优先于冲突的 long name；int/long 重载、数组/对象描述符、下划线/中文 UTF-16 转义及 DT_NEEDED 依赖导出经 JVM 返回精确值；显式注册优先；重复绑定不分配重复入口；JVM 专属 `1bad` 即使有匹配导出也抛出 UnsatisfiedLinkError |
 | 故障及误用边界 | PASS | 不支持的槽 217 及跨线程 JNIEnv：带明确类别退出 3；客体 trap/访问违规：已注册模块/偏移及退出 3；热 Java 空指针/除零异常仍由 JVM 所有并正常完成；主线程/worker 只读检查 x18/sp |
-| 导出名绑定及 APK 集成 | NOT_RUN | 尚无 mangled-name 绑定或 JNI_OnLoad；winapk run 原生准入仍关闭 |
+| APK 调用点集成 | NOT_RUN | DEX/ClassLoader 的 System.loadLibrary/load 重定向、APK 提取及 Activity/G3 验收未集成；winapk run 原生准入仍关闭 |
 
 回归同时通过 requirements、Host 23、Native 58、Bionic 104、Java 43；
 Go 格式/vet/测试（含禁用 CGO）、MyGo vet/i18n 及文档镜像通过。
@@ -143,6 +145,9 @@ Go 格式/vet/测试（含禁用 CGO）、MyGo vet/i18n 及文档镜像通过。
 静态 native 入口增量的回归在 `P4-native-*.log`，只向同一进程添加一个语义组。
 `llvm-readobj --unwind` 也已解码两个汇编函数的 Windows 保存/恢复记录；
 这不是客体展开或启用 CFG 的测试。
+显式加载增量的完整 requirements/build All 及 Host 23、Java 43、Native 58、Bionic 104、Jni 24
+回归在 `P4-load-*.log`。六个库变体使用普通 NDK 共享库链接，
+不使用核心探测的 `-nostdlib`/仿真 TLS 参数；不推定任意 APK 兼容。
 首次混合 trap 实验失败：JVM 在末尾客体处理器运行前退出 1。
 修复安装严格限定客体 PC 的首位处理器，绝不替换 HotSpot 处理器，
 每个非客体 PC 仍走原有链。保留的 T09 用例保护这条边界。
