@@ -12,6 +12,7 @@
 // its close operation preserves mappings until teardown, unlike a standalone N0 Module.
 
 #include "elf_loader.h"
+#include "faults.h"
 
 #include "macapk/elf64_reader.h"
 #include "macapk/elf_reader.h"
@@ -148,6 +149,7 @@ const char* CategoryName(Category c) {
 }
 
 Module::~Module() {
+    if (tracked_) UntrackModule(this);
     if (base_) VirtualFree(reinterpret_cast<void*>(base_), 0, MEM_RELEASE);
 }
 
@@ -156,6 +158,12 @@ bool Module::Executable(uintptr_t address) const {
     for (const auto& [start, length] : executable_)
         if (address >= start && address - start < length) return true;
     return false;
+}
+
+bool Module::FaultAddress(uintptr_t pc, uint64_t* address) const {
+    if (!Executable(pc)) return false;
+    *address = pc - static_cast<uintptr_t>(bias_);
+    return true;
 }
 
 namespace {
@@ -243,10 +251,13 @@ public:
         return true;
     }
 
-    /// Resolves eager relocations, validates initialization targets, and sets final protections.
+    /// Resolves relocations, validates initialization, protects pages and registers fault ranges.
     bool Finish(std::function<void*(std::string_view)> resolver) {
         resolver_ = std::move(resolver);
-        return Relocate(false) && Relocate(true) && Initializers() && Protect();
+        if (!Relocate(false) || !Relocate(true) || !Initializers() || !Protect()) return false;
+        if (!TrackModule(mod_.get())) return Fail(Category::HostMemory, "fault boundary", "vectored handler registration failed");
+        mod_->tracked_ = true;
+        return true;
     }
 
     /// Returns the prepared image for dependency/export discovery, never execution before Finish.

@@ -83,8 +83,9 @@ ordinary NDK output works. N0's original ABI suite and imports are unchanged.
   An unjoined worker at runtime destruction, an unmanaged stateful shim entry, a malformed emutls
   descriptor or an allocation failure in the compiler TLS resolver terminates the probe with
   a diagnostic, never a fabricated TLS address. No exception is unwound through guest code.
-  Guest fault-range handling, `pthread_exit`, detach/cancellation, formatted log
-  shims and full native-profile integration remain P3 work; JNI remains P4.
+  The guest-PC fault boundary below terminates rather than recovers execution.
+  `pthread_exit`, detach/cancellation, formatted log shims and full native-profile integration
+  remain P3 work; JNI remains P4.
 
 The P3 synchronization subset is exercised separately by `native-probe sync` (T08):
 
@@ -207,6 +208,25 @@ T07 uses one positive dependency pair and a small refusal matrix to assert initi
 order/values, guest dl API/error consumption, lookup scope, repeat-open/close, unresolved weak imports, cycle/name rejection,
 invalid constructor targets, and no constructor execution on a failed transaction.
 
+## P3 guest fault boundary (T08)
+
+The loader registers each fully linked/protected image before any initializer or exported call,
+and removes it before unmapping. A last-priority vectored handler considers access violations,
+illegal/privileged instructions and breakpoints only when the fault PC belongs to an executable
+segment of a currently registered guest image. It writes `GUEST_EXECUTION_FAULT`, the module's
+basename, guest virtual address and Windows exception code, then terminates the process with 3.
+It never resumes corrupted guest state, runs guest cleanup or unwinds guest C++ into the host.
+
+All other exceptions continue through the normal Windows chain: host/JVM/JIT code, faults
+inside a host import and jumps to an address outside the registered executable segments are not
+claimed by this boundary. It does not replace HotSpot's handlers, implement signals, recover
+stack overflow or supply ELF unwind metadata. Mixed JVM/guest validation belongs to P4.
+The registry lock is never held across guest execution or callbacks; fault reporting uses
+bounded stack buffers and a direct Windows write, not an allocation or guest callback.
+
+T08 faults uses a normal host-exception-chain case and isolated guest access-violation/trap
+processes. The existing N0 stress suite checks registration/unregistration alongside mappings.
+
 ## Screening
 
 Every 4-byte word of each executable segment is checked: a raw `svc`, `hvc` or `smc` and any
@@ -251,6 +271,7 @@ and expected refusal; `build.ps1 -Component NativeProbe` builds them into `tests
 | T08 sync negative files | same source: missing `pthread_cond_timedwait` (load refusal), owned-mutex teardown (diagnostic, exit 3) | `T08_SYNC_MISSING`, `T08_SYNC_OWNED`; exact recipes/results in `fixtures.psd1` |
 | T08 memory | `threads/memory.c`: allocation/byte/string/thread-sharing cases, invalid and double free | API 30, `-O2 -nostdlib -fno-builtin`, common flags as T05; `T08_MEMORY_INVALID`, `T08_MEMORY_DOUBLE` terminate with exit 3 |
 | T08 io | `threads/io.c`: mapped regular files, explicit stat/time layouts, flags/errors and bounded sleep | API 30, `-O2 -nostdlib -fno-builtin`, common flags as T05; four semantic cases and host-state check |
+| T08 faults | `threads/faults.c`: host exception chain, guest access violation and trap | API 30, `-O2 -nostdlib`, common flags as T05; `T08_GUEST_FAULT` / `T08_GUEST_TRAP` require a module/offset diagnostic and exit 3 |
 | T07 module graph | `modules/dependency.c`, `root.c`, `cycle.c`: positive pair, missing import, invalid initializer, SONAME/cycle seed | API 30, `-O2 -nostdlib`, common flags as T05; explicit linked fixture dependencies and expected values in `fixtures.psd1` |
 
 Every fixture is built by the NDK's own clang and linker; none is a special build that would stand

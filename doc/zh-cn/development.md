@@ -37,6 +37,7 @@ go run ./tools/checkdocs           # doc/en-us and doc/zh-cn mirror each other
 .\scripts\windows\test.ps1 -Suite Modules
 .\scripts\windows\test.ps1 -Suite Memory
 .\scripts\windows\test.ps1 -Suite Io
+.\scripts\windows\test.ps1 -Suite Faults
 .\build\windows-arm64\bin\native-probe.exe suite .\tests\fixtures\elf\libn0abi.so
 .\build\windows-arm64\bin\native-probe.exe sync .\tests\fixtures\elf\libsync.so
 .\build\windows-arm64\bin\winapk.exe doctor --json
@@ -86,6 +87,11 @@ clang-cl 把 `winapk.exe`、`winapk-bridge.dll`、`native-probe.exe` 和 `winapk
 并确认 Unicode 映射字节和根目录外 junction 目标未变。
 只在 `build/windows-arm64/test-data` 下准备被忽略的测试目录。
 探测命令为 `io <elf> <android-root>`；不改变宿主工作目录或环境。
+
+`-Suite Faults` 选择 T08 的 `faults` 命令（也在 `Bionic` 中）：一次宿主 SEH 链用例，
+以及两个单独终止的客体进程（访问违规与 trap）。每份终止诊断必须包含模块与客体虚拟地址，
+退出码为 3，不能伪造成功结果。
+N0 的 `Native` 回归也在已有加载/卸载循环中覆盖新的可执行范围注册表，不另加重复故障压力套件。
 
 `winapk run` 把每个应用的数据放在 `%LOCALAPPDATA%\Windows-ARM64.apk\Apps` 下（`--data-dir` 可改）：`android\`
 是应用看到的 Android 根目录（`data\data\<package>`、`sdcard`），`code\<package>\` 是转换后的代码及缓存戳，

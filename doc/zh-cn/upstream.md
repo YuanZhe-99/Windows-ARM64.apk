@@ -42,6 +42,7 @@ Windows 11 ARM64 上构建或运行过（[port-audit.md](port-audit.md)）。
 | 展开使用专门的 `.pdata`/`.xdata` 元数据与 SEH | 客体 DWARF 展开与宿主 thunk 是两个不同的问题 | 已阅读 |
 | [精确 unbiased interrupt time](https://learn.microsoft.com/en-us/windows/win32/api/realtimeapiset/nf-realtimeapiset-queryunbiasedinterrupttimeprecise) 单位为 100 ns，不计挂起；SDK 导入库为 mincore | 显式 timespec 转换及相对 monotonic 期限；不使用墙钟 sleep | 已阅读；T08 io 检查单位、墙钟 epoch 及最短 sleep 期限；挂起 NOT_RUN |
 | [WriteFile](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-writefile) 的两个 OVERLAPPED offset 均为 `0xFFFFFFFF` 时写入 EOF；同步句柄等待并更新文件指针 | 追加不使用先 seek 后 write，不向客体暴露 OVERLAPPED 对象 | 已阅读；T08 io 验证 seek 到开头后追加 |
+| [AddVectoredExceptionHandler](https://learn.microsoft.com/en-us/windows/win32/api/errhandlingapi/nf-errhandlingapi-addvectoredexceptionhandler) 的 First=0 把处理器放在末尾；未识别异常必须继续搜索 | 仅归因于注册客体可执行 PC，绝不吞掉无关宿主/JVM 异常或恢复客体执行 | 已阅读；T08 faults 保留宿主 SEH 用例，对客体访问违规/trap 输出模块/偏移后终止；JVM/客体混合 NOT_RUN |
 
 | JVM 只在 `System.loadLibrary` 加载的库中查找 `Java_*` native，不在嵌入它的程序中查找 | 宿主 native 用 `RegisterNatives` 注册（[decisions.md](decisions.md)） | 已验证（T01） |
 | 在这台电脑上（Adreno 8cx Gen 3），Vulkan loader 只提供 Mesa Dozen，即转换到 Direct3D 12 的 Vulkan 1.2 | `doctor` 报告 `VULKAN_DRIVER_TRANSLATED`；图形关卡需要厂商驱动或一项已记录的决定 | 已验证（`doctor`） |

@@ -161,8 +161,9 @@ What the N0 loader (`runtime/guest/loader`, [native-profiles.md](native-profiles
 P2's profile N0 is done (G2). P3 now has a separate T08 thread foundation (managed pthreads,
 errno, keys/destructors, C emulated TLS and untimed mutex/condition synchronization), implemented under `runtime/guest/bionic` rather
 than porting Darwin's shim. T07 adds dependency/constructor transactions and guest dl APIs under
-`runtime/guest/loader` and `runtime/guest/bionic`; the remaining Bionic groups, full N1 integration and guest
-fault boundaries are still open ([native-profiles.md](native-profiles.md)); then P4 routes an
+`runtime/guest/loader` and `runtime/guest/bionic`; T08 now also covers private-heap memory/strings,
+mapped files/time and guest-PC fault diagnostics. Formatted logging and full N1 integration
+are still open ([native-profiles.md](native-profiles.md)); then P4 routes an
 APK's libraries and `System.load` to the loader. P1's open items are a density
 change while an app runs and the host natives an app may need next (`NativeOs`, host fonts); the
 interface's switch from `winapk.Mock` to `winapk run` belongs to P7 (`PLAN.md` §14).

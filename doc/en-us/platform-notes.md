@@ -66,7 +66,7 @@ Verified on Windows 11 ARM64 (2026-11-16): build 26300.9974, Snapdragon Compute 
 
 ## P3 thread, synchronization and module checks
 
-`test.ps1 -Suite Bionic`, 2026-11-16: 75/75 checks PASS on the Windows ARM64 machine above (T08: 58, T07: 17), not G3;
+`test.ps1 -Suite Bionic`, 2026-11-16: 83/83 checks PASS on the Windows ARM64 machine above (T08: 66, T07: 17), not G3;
 the thread fixture is built with NDK r30, API 30, `-O2 -nostdlib -femulated-tls -fno-stack-protector`;
 the separate sync fixture uses `-O2 -nostdlib -fno-stack-protector` and no TLS.
 Its hash and exact flags are in `tests/fixtures/elf/fixtures.json`
@@ -79,6 +79,8 @@ T08 memory adds 11 checks from three `-O2 -nostdlib -fno-builtin` builds of one 
 the positive process has four semantic cases and a host-state check, without another stress loop.
 T08 io adds eight checks from one `-O2 -nostdlib -fno-builtin` build, with four semantic cases,
 host-state, hash/summary and a host-side mapping/sentinel check.
+T08 faults adds eight checks from three builds of one source: the host SEH chain survives,
+while guest access violation and trap processes terminate with their module/virtual address.
 
 | Item (`PLAN.md` §10) | Result | Evidence |
 |---|---|---|
@@ -96,6 +98,7 @@ host-state, hash/summary and a host-side mapping/sentinel check.
 | Memory/byte/string subset (T08) | PASS | zero-size allocations, 16-byte alignment, calloc zeroing/overflow, grow/shrink/failed realloc and preserved contents/errno; overlap/bounds/unsigned-byte operations, UTF-8/termination/padding/search; eight-thread ownership transfer; invalid and double free exit 3 before the host allocator; empty allocation table; 12 host-state callbacks without violations |
 | Files and errno (T08 io) | PASS | Unicode/space root and filename; bytes `410042FF5A`, EOF and zero-length I/O; seek above 8 GiB and back without file growth; 128-byte stat with sentinels; create/exclusive/append/read-only/write-only/fortified-open behavior; converted ENOENT/EEXIST/EINVAL/EBADF; unsupported flags/modes and invalid UTF-8/device/traversal/stream/junction paths refused; outside sentinel unchanged, fd table empty |
 | Time (T08 io) | PASS | realtime Unix epoch within two seconds of the host, 100-ns to normalized nanosecond units; monotonic interval at least the requested 2 ms; zero sleep, untouched successful remainder, invalid times and unsupported clocks/durations; four host-state callbacks without violations. Suspend and guest signals NOT_RUN/not supported |
+| Guest-PC fault boundary (T08 faults) | PASS | host-raised access violation reaches its host SEH handler, guest errno/x18/sp unchanged; guest access violation at `neg-guest-fault.so` vaddr `0x42d0` (Windows `0xc0000005`) and trap at `neg-guest-trap.so` vaddr `0x42b4` (`0xc000001d`) each produce `GUEST_EXECUTION_FAULT` then exit 3; no resume/unwind; N0's 2000 cycles still have +0 heap allocations/private regions/handles |
 | APK native and JNI integration | NOT_RUN | T09 not implemented; `winapk run` native loading remains disabled |
 
 The same change set ran `check-requirements.ps1`, `build.ps1 -Component All` and
@@ -112,7 +115,7 @@ by the build script. No new gate is claimed, no version bump, and no plan deviat
   `runtime/platform/windows` and `runtime/guest`. What of `NativeCocoa` and the other host natives Windows implements,
   and what stays unbound, is in [port-audit.md](port-audit.md).
 - The interface does not launch `winapk run` yet; it still uses `winapk.Mock`.
-- Guest native: profile N0 plus separate P3 T08 Bionic subsets and T07 module transactions, only in `native-probe.exe`; `winapk run` loads no APK library (P4). A fault inside guest code is not caught yet (P3, `PLAN.md` §10.3): it ends the probe. Built with `winapk.exe`'s flags, Control Flow Guard off; a CFG build is NOT_RUN ([abi-compatibility.md](abi-compatibility.md)).
+- Guest native: profile N0 plus separate P3 T08 Bionic subsets and T07 module transactions, only in `native-probe.exe`; `winapk run` loads no APK library (P4). The guest-PC fault boundary diagnoses and terminates recognized guest execution faults, not host imports, JIT/JVM faults, out-of-range branch targets or stack overflow; mixed JVM/guest validation remains NOT_RUN (P4). Built with `winapk.exe`'s flags, Control Flow Guard off; a CFG build is NOT_RUN ([abi-compatibility.md](abi-compatibility.md)).
 - This PC has no vendor Vulkan driver: Vulkan is Mesa Dozen on Direct3D 12 ([decisions.md](decisions.md)).
 - macOS build and smoke after the `CMakeLists.txt`, `AppClassLoader` and `native_sqlite.cpp` changes: NOT_RUN (no Mac here); the branch returns only under `WIN32`, the Java check is inert unless `winapk.guestNative` is set, and the CoreFoundation helpers are unchanged outside `_WIN32`.
 - DPI: the app's density is fixed when it starts. Moving its window to a display of another scale, or changing the scale while it runs, resizes the window to keep its size in points (`WM_DPICHANGED`) but the app keeps its first density: NOT_RUN, and not yet handled as Android's configuration change.

@@ -61,7 +61,7 @@ struct LoadStats {
 };
 
 /// A mapped guest image; Load returns it relocated/protected without executing guest code.
-/// Side effects: owns its address range, released when the Module is destroyed.
+/// Side effects: owns its address range and fault attribution; unregisters before unmapping.
 class Module {
 public:
     ~Module();
@@ -88,6 +88,8 @@ public:
     std::span<void (*const)()> Initializers() const { return initializers_; }
     /// Reports whether an aligned address belongs to this image's executable segments.
     bool Executable(uintptr_t address) const;
+    /// Converts a PC in this image's executable segments to a guest virtual address.
+    bool FaultAddress(uintptr_t pc, uint64_t* address) const;
 
 private:
     friend class Loader;
@@ -109,6 +111,7 @@ private:
     std::string soname_;
     std::vector<std::pair<uintptr_t, size_t>> executable_;
     std::vector<void (*)()> initializers_;
+    bool tracked_ = false;
 };
 
 /// Loads an ELF shared object from `path` within profile N0.

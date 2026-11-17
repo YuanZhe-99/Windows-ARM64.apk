@@ -12,6 +12,16 @@
 @{
     Common   = @('-shared', '-fPIC', '-fno-stack-protector', '-Wall', '-Wextra', '-Werror')
     Fixtures = @(
+        @{ Name = 'libfaults.so'; Id = 'T08'; Source = 'threads/faults.c'; Target = 'aarch64-linux-android30'
+           Flags = @('-O2', '-nostdlib'); Command = 'faults'; Cases = 2; Result = 'T08 PASS' }
+        @{ Name = 'neg-guest-fault.so'; Id = 'T08'; Source = 'threads/faults.c'; Target = 'aarch64-linux-android30'
+           Flags = @('-O2', '-nostdlib', '-DT08_GUEST_FAULT'); Command = 'faults'; Exit = 3
+           Reason = 'GUEST_EXECUTION_FAULT neg-guest-fault.so vaddr 0x'; Fault = 'c0000005'
+           Result = 'exit 3: GUEST_EXECUTION_FAULT at guest PC, Windows access violation' }
+        @{ Name = 'neg-guest-trap.so'; Id = 'T08'; Source = 'threads/faults.c'; Target = 'aarch64-linux-android30'
+           Flags = @('-O2', '-nostdlib', '-DT08_GUEST_TRAP'); Command = 'faults'; Exit = 3
+           Reason = 'GUEST_EXECUTION_FAULT neg-guest-trap.so vaddr 0x'; Fault = '(80000003|c000001d)'
+           Result = 'exit 3: GUEST_EXECUTION_FAULT at guest PC, Windows trap' }
         @{ Name = 'libio.so'; Id = 'T08'; Source = 'threads/io.c'; Target = 'aarch64-linux-android30'
            Flags = @('-O2', '-nostdlib', '-fno-builtin'); Command = 'io'; Cases = 5; Result = 'T08 PASS' }
         @{ Name = 'libmemory.so'; Id = 'T08'; Source = 'threads/memory.c'; Target = 'aarch64-linux-android30'

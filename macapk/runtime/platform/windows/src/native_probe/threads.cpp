@@ -34,6 +34,16 @@ int TimeCheck(int64_t seconds, int64_t nanoseconds) {
            seconds >= unixSeconds - 2 && seconds <= unixSeconds + 2;
 }
 
+/// Raises a host-PC access-violation exception that must reach this host SEH handler unchanged.
+int HostException() {
+    __try {
+        RaiseException(EXCEPTION_ACCESS_VIOLATION, 0, 0, nullptr);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return 1;
+    }
+    return 0;
+}
+
 }  // namespace
 
 int ProbeBionic(const std::wstring& path, BionicSuite suite, const std::wstring& androidRoot) {
@@ -42,6 +52,7 @@ int ProbeBionic(const std::wstring& path, BionicSuite suite, const std::wstring&
     std::vector<winapk::guest::HostSymbol> symbols(imports.begin(), imports.end());
     symbols.push_back({"t08_host_state", reinterpret_cast<void*>(&HostState)});
     symbols.push_back({"t08_time_check", reinterpret_cast<void*>(&TimeCheck)});
+    symbols.push_back({"t08_host_exception", reinterpret_cast<void*>(&HostException)});
     winapk::guest::LoadError error;
     auto module = winapk::guest::Load(path, symbols, &error);
     if (!module) {
@@ -62,7 +73,9 @@ int ProbeBionic(const std::wstring& path, BionicSuite suite, const std::wstring&
     const char* syncCases[] = {"mutex-contention8", "mutex-kinds", "mutex-lifecycle", "cond-signal", "cond-broadcast", "cond-errors"};
     const char* memoryCases[] = {"memory-allocation", "memory-bytes", "memory-strings", "memory-sharing"};
     const char* ioCases[] = {"io-roundtrip", "io-flags", "io-refusals", "io-clocks"};
-    const auto cases = suite == BionicSuite::Io ? std::span(ioCases) :
+    const char* faultCases[] = {"fault-host-chain"};
+    const auto cases = suite == BionicSuite::Faults ? std::span(faultCases) :
+                       suite == BionicSuite::Io ? std::span(ioCases) :
                        suite == BionicSuite::Memory ? std::span(memoryCases) :
                        suite == BionicSuite::Sync ? std::span(syncCases) : std::span<const char* const>(threadCases);
     int failed = 0;
@@ -95,7 +108,8 @@ int ProbeBionic(const std::wstring& path, BionicSuite suite, const std::wstring&
     }
     const bool host = callbacks > 0 && violations == 0;
     std::printf("case T08.%shost-state %s: %zu callbacks, %zu x18/sp/errno violations\n",
-                suite == BionicSuite::Io ? "io-" : suite == BionicSuite::Memory ? "memory-" : sync ? "sync-" : "",
+                suite == BionicSuite::Faults ? "fault-" : suite == BionicSuite::Io ? "io-" :
+                suite == BionicSuite::Memory ? "memory-" : sync ? "sync-" : "",
                 host ? "PASS" : "FAIL", callbacks.load(), violations.load());
     failed += !host;
     std::printf("result T08 %s\n", failed ? "FAIL" : "PASS");

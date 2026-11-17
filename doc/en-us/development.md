@@ -44,6 +44,7 @@ The runtime's commands are in the next section.
 .\scripts\windows\test.ps1 -Suite Modules
 .\scripts\windows\test.ps1 -Suite Memory
 .\scripts\windows\test.ps1 -Suite Io
+.\scripts\windows\test.ps1 -Suite Faults
 .\build\windows-arm64\bin\native-probe.exe suite .\tests\fixtures\elf\libn0abi.so
 .\build\windows-arm64\bin\native-probe.exe sync .\tests\fixtures\elf\libsync.so
 .\build\windows-arm64\bin\winapk.exe doctor --json
@@ -108,6 +109,12 @@ there is no additional long stress loop.
 host-state and manifest checks, plus confirmation of the Unicode-mapped bytes and unchanged
 out-of-root junction target. It prepares only ignored test directories below `build/windows-arm64/test-data`.
 The probe accepts `io <elf> <android-root>`; no host working-directory or environment change is made.
+
+`-Suite Faults` selects T08's `faults` command (also in `Bionic`): a host SEH-chain case and two
+separately terminating guest processes (access violation and trap). It requires a module and
+guest virtual address in each fatal diagnostic, exit 3, and no fabricated successful result.
+The N0 `Native` regression also exercises the new executable-range registry over its existing
+load/unload cycles; no duplicate fault stress suite is added.
 
 `winapk run` keeps each app's data under `%LOCALAPPDATA%\Windows-ARM64.apk\Apps` (`--data-dir`
 moves it): `android\` is the Android root the app sees (`data\data\<package>`, `sdcard`),

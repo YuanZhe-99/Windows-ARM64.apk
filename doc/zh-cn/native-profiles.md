@@ -69,8 +69,8 @@
   resolver 必须是绑定到本 shim 的未定义导入，不能是客体库内嵌的另一份 compiler-rt。
 - 调用方必须保持所有模块映射，直到上下文与回调结束。运行时销毁时仍有未 join 的 worker、从未管理线程调用有状态 shim、
   emutls 描述符损坏或编译器 TLS resolver 分配失败时，探测进程带诊断终止，绝不伪造 TLS 地址。
-  不允许异常经客体代码展开。客体故障范围处理、`pthread_exit`、detach/取消、
-  格式化日志 shim 和完整原生 profile 集成仍是 P3 后续工作；JNI 属于 P4。
+  不允许异常经客体代码展开。下述客体 PC 故障边界终止执行，绝不尝试恢复。
+  `pthread_exit`、detach/取消、格式化日志 shim 和完整原生 profile 集成仍是 P3 后续工作；JNI 属于 P4。
 
 P3 同步子集通过独立的 `native-probe sync`（T08）测试：
 
@@ -166,6 +166,23 @@ T08 io 合并读写/seek/stat、open/追加标志、映射/错误拒绝与时钟
 T07 使用一对正例依赖库和少量拒绝样例，断言初始化顺序/值、客体 dl API/错误读取清除、查询范围、重复打开/关闭、未解析弱导入、
 依赖环/名称拒绝、无效构造入口，以及失败事务绝不运行构造函数。
 
+## P3 客体故障边界（T08）
+
+加载器在任何初始化或导出调用前注册已完成链接/保护的映像，并在取消映射前移除。
+末尾优先级的 vectored handler 仅在故障 PC 属于当前注册客体映像的可执行段时，
+处理访问违规、非法/特权指令及断点。它写出 `GUEST_EXECUTION_FAULT`、
+模块基名、客体虚拟地址与 Windows 异常码，然后以退出码 3 终止进程。
+绝不恢复已损坏的客体状态、运行客体清理或让客体 C++ 展开到宿主。
+
+所有其他异常继续走正常 Windows 处理链：宿主/JVM/JIT 代码、宿主导入内部的故障，
+以及跳转到注册可执行段以外地址的故障，均不由本边界认领。
+它不替换 HotSpot 处理器，不实现信号、栈溢出恢复或 ELF 展开元数据。JVM/客体混合验证属于 P4。
+注册表锁绝不跨客体执行或回调持有；故障报告使用有界栈缓冲及直接 Windows 写入，
+不分配内存、不回调客体。
+
+T08 faults 使用正常的宿主异常链用例，及隔离进程中的客体访问违规/trap。
+既有 N0 压力套件随映射一同检查注册/注销。
+
 ## 筛查
 
 检查每个可执行段中的每个 4 字节字：按编码识别裸 `svc`、`hvc`、`smc` 以及任何对 `TPIDR_EL0` 的 `mrs`/`msr`；对
@@ -206,6 +223,7 @@ NativeProbe` 把它们构建到 `tests/fixtures/elf`（生成产物，从不提�
 | T08 同步负例文件 | 同一源码：缺失 `pthread_cond_timedwait`（加载时拒绝），仍持有 mutex 时销毁运行时（诊断，退出码 3） | `T08_SYNC_MISSING`、`T08_SYNC_OWNED`；完整配方/结果在 `fixtures.psd1` |
 | T08 内存 | `threads/memory.c`：分配/字节/字符串/线程共享用例、无效和重复释放 | API 30、`-O2 -nostdlib -fno-builtin`，公共选项与 T05 相同；`T08_MEMORY_INVALID`、`T08_MEMORY_DOUBLE` 以退出码 3 终止 |
 | T08 io | `threads/io.c`：映射常规文件、显式 stat/时间布局、标志/错误及有限 sleep | API 30、`-O2 -nostdlib -fno-builtin`，公共选项与 T05 相同；四项语义及宿主状态检查 |
+| T08 faults | `threads/faults.c`：宿主异常链、客体访问违规与 trap | API 30、`-O2 -nostdlib`，公共选项与 T05 相同；`T08_GUEST_FAULT` / `T08_GUEST_TRAP` 要求模块/偏移诊断及退出码 3 |
 | T07 模块依赖图 | `modules/dependency.c`、`root.c`、`cycle.c`：正例库对、缺失导入、无效初始化入口、SONAME/依赖环种子 | API 30、`-O2 -nostdlib`，公共选项与 T05 相同；显式链接的夹具依赖及期望值在 `fixtures.psd1` |
 
 每个夹具都由 NDK 自带的 clang 和链接器构建；除其选项所表明的以外，没有哪个是可以代表普通 NDK 产物的特制构建

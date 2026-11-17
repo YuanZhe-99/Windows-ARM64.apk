@@ -42,7 +42,7 @@ Host, Java, Native or Bionic.
 #>
 [CmdletBinding()]
 param(
-    [ValidateSet('Host', 'Java', 'Native', 'Bionic', 'Modules', 'Memory', 'Io')]
+    [ValidateSet('Host', 'Java', 'Native', 'Bionic', 'Modules', 'Memory', 'Io', 'Faults')]
     [string]$Suite = 'Host'
 )
 Set-StrictMode -Version Latest
@@ -581,7 +581,9 @@ function Test-Bionic([string]$Command = '') {
             if ($f.ContainsKey('Expect')) {
                 Check "T08.$($f.Name).refusal" ($p.ExitCode -eq 2 -and $o -match "reject $($f.Expect) " -and $o.Contains($f.Reason)) $o.Trim()
             } elseif ($f.ContainsKey('Exit')) {
-                Check "T08.$($f.Name).fatal" ($p.ExitCode -eq $f.Exit -and $err -and $err.Contains($f.Reason)) "exit $($p.ExitCode); $err"
+                $ok = $p.ExitCode -eq $f.Exit -and $err -and $err.Contains($f.Reason)
+                if ($f.ContainsKey('Fault')) { $ok = $ok -and $err -match "vaddr 0x[0-9a-f]+: Windows exception 0x$($f.Fault);" }
+                Check "T08.$($f.Name).fatal" $ok "exit $($p.ExitCode); $err"
             } else {
                 $cases = [regex]::Matches($o, '(?m)^case (T08\.\S+) (PASS|FAIL): (.*)')
                 foreach ($c in $cases) { Check $c.Groups[1].Value ($c.Groups[2].Value -eq 'PASS') $c.Groups[3].Value.TrimEnd() }
@@ -632,7 +634,7 @@ function Test-Modules {
     } finally { $p.Dispose() }
 }
 
-switch ($Suite) { 'Host' { Test-Host } 'Java' { Test-Java } 'Native' { Test-Native } 'Bionic' { Test-Bionic } 'Modules' { Test-Modules } 'Memory' { Test-Bionic -Command memory } 'Io' { Test-Bionic -Command io } }
+switch ($Suite) { 'Host' { Test-Host } 'Java' { Test-Java } 'Native' { Test-Native } 'Bionic' { Test-Bionic } 'Modules' { Test-Modules } 'Memory' { Test-Bionic -Command memory } 'Io' { Test-Bionic -Command io } 'Faults' { Test-Bionic -Command faults } }
 if ($script:failed -gt 0) { Write-Host "$script:failed check(s) failed"; exit 1 }
 Write-Host 'all checks passed'
 exit 0

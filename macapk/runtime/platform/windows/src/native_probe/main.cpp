@@ -461,6 +461,7 @@ int UsageError() {
                "       native-probe sync <elf>                T08: mutex/condition synchronization\n"
                "       native-probe memory <elf>              T08: memory/byte/string contracts\n"
                "       native-probe io <elf> <android-root>    T08: file mapping and time contracts\n"
+               "       native-probe faults <elf>              T08: guest fault/host exception boundary\n"
                "       native-probe modules <directory>      T07: dependency/constructor transactions\n"
                "       native-probe stress <elf> [--iterations N] [--copies K] [--rejected <elf>]\n", stderr);
     return 1;
@@ -480,6 +481,7 @@ int wmain(int argc, wchar_t** argv) {
     if (cmd == L"sync" && argc == 3) return ProbeBionic(path, BionicSuite::Sync);
     if (cmd == L"memory" && argc == 3) return ProbeBionic(path, BionicSuite::Memory);
     if (cmd == L"io" && argc == 4) return ProbeBionic(path, BionicSuite::Io, argv[3]);
+    if (cmd == L"faults" && argc == 3) return ProbeBionic(path, BionicSuite::Faults);
     if (cmd == L"modules" && argc == 3) return ProbeModules(path);
     if (cmd == L"load" || cmd == L"suite") {
         auto m = LoadOrReport(path);
