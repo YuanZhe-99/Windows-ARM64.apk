@@ -66,7 +66,7 @@ Verified on Windows 11 ARM64 (2026-11-16): build 26300.9974, Snapdragon Compute 
 
 ## P3 thread, synchronization and module checks
 
-`test.ps1 -Suite Bionic`, 2026-11-16: 56/56 checks PASS on the Windows ARM64 machine above (T08: 39, T07: 17), not G3;
+`test.ps1 -Suite Bionic`, 2026-11-16: 67/67 checks PASS on the Windows ARM64 machine above (T08: 50, T07: 17), not G3;
 the thread fixture is built with NDK r30, API 30, `-O2 -nostdlib -femulated-tls -fno-stack-protector`;
 the separate sync fixture uses `-O2 -nostdlib -fno-stack-protector` and no TLS.
 Its hash and exact flags are in `tests/fixtures/elf/fixtures.json`
@@ -75,6 +75,8 @@ The thread probe has nine cases, the sync probe eight; their refusal/fatal files
 that APK native or JNI integration works. The T07 graph uses six `-O2 -nostdlib` libraries;
 `-Suite Modules` independently passes its ten semantic cases, six hashes and summary check.
 Its output is in `build/windows-arm64/test-data/logs/T07-modules.*`.
+T08 memory adds 11 checks from three `-O2 -nostdlib -fno-builtin` builds of one source;
+the positive process has four semantic cases and a host-state check, without another stress loop.
 
 | Item (`PLAN.md` §10) | Result | Evidence |
 |---|---|---|
@@ -89,6 +91,7 @@ Its output is in `build/windows-arm64/test-data/logs/T07-modules.*`.
 | Module transactions and lookup (T07) | PASS | dependency-first trace `12`, root result `49`, own definitions, unresolved weak import, breadth-first dependency export lookup, repeat opens/refcounts and close/reopen without reinitialization |
 | Transaction refusal and callbacks (T07) | PASS | missing import and invalid initializer roll back all new mappings before any constructor; cycle, basename, SONAME and missing-file refusals; existing graph unchanged; same-thread constructor reentry and competing-thread refusal without holding the registry lock across callbacks |
 | Guest dl API (T07) | PASS | `dlopen` NOW/LOCAL, `dlsym`, `dlclose`, `dlerror` consumption; invalid flags, missing export and already-closed handle fail; runtime context cleanup |
+| Memory/byte/string subset (T08) | PASS | zero-size allocations, 16-byte alignment, calloc zeroing/overflow, grow/shrink/failed realloc and preserved contents/errno; overlap/bounds/unsigned-byte operations, UTF-8/termination/padding/search; eight-thread ownership transfer; invalid and double free exit 3 before the host allocator; empty allocation table; 12 host-state callbacks without violations |
 | APK native and JNI integration | NOT_RUN | T09 not implemented; `winapk run` native loading remains disabled |
 
 The same change set ran `check-requirements.ps1`, `build.ps1 -Component All` and

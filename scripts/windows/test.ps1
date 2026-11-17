@@ -42,7 +42,7 @@ Host, Java, Native or Bionic.
 #>
 [CmdletBinding()]
 param(
-    [ValidateSet('Host', 'Java', 'Native', 'Bionic', 'Modules')]
+    [ValidateSet('Host', 'Java', 'Native', 'Bionic', 'Modules', 'Memory')]
     [string]$Suite = 'Host'
 )
 Set-StrictMode -Version Latest
@@ -535,7 +535,7 @@ function Test-Native {
 }
 
 <# Runs T08 and its refusal matrix with a deadline so a broken join/barrier cannot hang tests. #>
-function Test-Bionic {
+function Test-Bionic([switch]$MemoryOnly) {
     $probe = Join-Path $out 'bin\native-probe.exe'
     $dir = Join-Path $repo 'tests\fixtures\elf'
     $record = Join-Path $dir 'fixtures.json'
@@ -544,7 +544,10 @@ function Test-Bionic {
     $table = Import-PowerShellDataFile (Join-Path $repo 'tests\windows-arm64\guest-elf\fixtures.psd1')
     $logs = Join-Path $out 'test-data\logs'
     New-Item -ItemType Directory -Force $logs | Out-Null
-    foreach ($f in $table.Fixtures | Where-Object { $_.Id -eq 'T08' -or $_.Name -in 'neg-tls.so', 'neg-svc.so', 'neg-tpidr.so', 'neg-x18.so' }) {
+    foreach ($f in $table.Fixtures | Where-Object {
+        if ($MemoryOnly) { $_.ContainsKey('Command') -and $_.Command -eq 'memory' }
+        else { $_.Id -eq 'T08' -or $_.Name -in 'neg-tls.so', 'neg-svc.so', 'neg-tpidr.so', 'neg-x18.so' }
+    }) {
         $file = Join-Path $dir $f.Name
         $rec = $built | Where-Object name -EQ $f.Name
         $sha = if (Test-Path $file) { (Get-FileHash $file -Algorithm SHA256).Hash.ToLower() } else { 'missing' }
@@ -576,7 +579,7 @@ function Test-Bionic {
             }
         } finally { $p.Dispose() }
     }
-    Test-Modules
+    if (-not $MemoryOnly) { Test-Modules }
 }
 
 <# Runs T07 once as a compact transaction matrix, with manifest checks and a hard deadline. #>
@@ -612,7 +615,7 @@ function Test-Modules {
     } finally { $p.Dispose() }
 }
 
-switch ($Suite) { 'Host' { Test-Host } 'Java' { Test-Java } 'Native' { Test-Native } 'Bionic' { Test-Bionic } 'Modules' { Test-Modules } }
+switch ($Suite) { 'Host' { Test-Host } 'Java' { Test-Java } 'Native' { Test-Native } 'Bionic' { Test-Bionic } 'Modules' { Test-Modules } 'Memory' { Test-Bionic -MemoryOnly } }
 if ($script:failed -gt 0) { Write-Host "$script:failed check(s) failed"; exit 1 }
 Write-Host 'all checks passed'
 exit 0

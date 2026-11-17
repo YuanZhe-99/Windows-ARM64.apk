@@ -1,8 +1,8 @@
 # The guest ELF fixtures (PLAN.md §9.3, §10, §16): T05's N0 ABI suite, T06's refused ELF files,
-# and T08's managed-thread foundation. scripts/windows/build.ps1 -Component NativeProbe builds each
+# T07 module graphs and T08 threads/sync/memory. scripts/windows/build.ps1 -Component NativeProbe builds each
 # entry with the NDK of build-lock.json into tests/fixtures/elf/ (generated, never committed) and
 # records its hash in tests/fixtures/elf/fixtures.json; test.ps1 -Suite Native runs T05 with
-# native-probe suite/stress and checks T06 refusals; Suite Bionic runs T08's thread cases.
+# native-probe suite/stress and checks T06 refusals; Suite Bionic runs T07 and T08.
 #
 # Name: the file. Source: under tests/windows-arm64/guest-elf. Target: clang --target.
 # Flags: added to Common. From + Mutation: a copy of another fixture with one field patched
@@ -12,6 +12,14 @@
 @{
     Common   = @('-shared', '-fPIC', '-fno-stack-protector', '-Wall', '-Wextra', '-Werror')
     Fixtures = @(
+        @{ Name = 'libmemory.so'; Id = 'T08'; Source = 'threads/memory.c'; Target = 'aarch64-linux-android30'
+           Flags = @('-O2', '-nostdlib', '-fno-builtin'); Command = 'memory'; Cases = 5; Result = 'T08 PASS' }
+        @{ Name = 'neg-memory-invalid.so'; Id = 'T08'; Source = 'threads/memory.c'; Target = 'aarch64-linux-android30'
+           Flags = @('-O2', '-nostdlib', '-fno-builtin', '-DT08_MEMORY_INVALID', '-Wno-unused-function'); Command = 'memory'
+           Exit = 3; Reason = 'free of invalid or already freed guest allocation'; Result = 'exit 3: invalid guest free' }
+        @{ Name = 'neg-memory-double.so'; Id = 'T08'; Source = 'threads/memory.c'; Target = 'aarch64-linux-android30'
+           Flags = @('-O2', '-nostdlib', '-fno-builtin', '-DT08_MEMORY_DOUBLE', '-Wno-unused-function'); Command = 'memory'
+           Exit = 3; Reason = 'free of invalid or already freed guest allocation'; Result = 'exit 3: duplicate guest free' }
         @{ Name = 'libdep.so'; Id = 'T07'; Source = 'modules/dependency.c'; Target = 'aarch64-linux-android30'
            Flags = @('-O2', '-nostdlib'); Result = 'constructor trace 1, dependency_value=7' }
         @{ Name = 'libroot.so'; Id = 'T07'; Source = 'modules/root.c'; Target = 'aarch64-linux-android30'

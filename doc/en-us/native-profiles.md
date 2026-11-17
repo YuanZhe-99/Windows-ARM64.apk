@@ -119,6 +119,31 @@ T08 checks fatal refusal of malformed descriptors and unjoined-worker teardown, 
 state, initialized/zero/aligned TLS, destructor re-arming and limits, deleted keys, key exhaustion,
 unsupported attributes, invalid/self join, and read-only x18/sp host-state checks.
 
+## P3 memory, bytes and strings (T08)
+
+The `native-probe memory` subset uses fixed-signature wrappers, not raw UCRT export lookup.
+Its audited imports are `malloc`, `calloc`, `realloc`, `free`; `memcpy`, `memmove`, `memset`,
+`memcmp`, `memchr`; `strlen`, `strnlen`, `strcmp`, `strncmp`, `strcpy`, `strncpy`, `strchr`,
+`strrchr`, `strstr`, `strdup`. Sizes and length returns are explicit unsigned 64-bit guest types.
+
+- Each runtime owns a private Windows heap and an allocation ownership table shared by its
+  managed threads. Bytes may cross a proven pointer signature; no allocator or CRT object does.
+  Allocations are at least 16-byte aligned; outstanding allocations are released at runtime teardown.
+- Zero-size malloc/calloc returns a freeable minimum allocation. Realloc with null acts as
+  malloc; realloc with a non-null pointer and size zero frees it and returns null. A failed
+  realloc leaves the old bytes owned and unchanged.
+- Sizes above `PTRDIFF_MAX`, multiplication overflow and allocation failures return null and set
+  guest `ENOMEM`; successful allocation and free preserve guest errno. Invalid, interior,
+  host-owned or already-freed allocation pointers terminate with a guest ABI diagnostic.
+- Byte/string functions preserve guest errno, compare unsigned bytes and perform no locale or
+  encoding conversion. UTF-8 is copied unchanged. Their normal C buffer/termination requirements
+  still apply; this is not a memory-safety sandbox. `strdup` uses the same private heap.
+
+T08 memory combines allocation/overflow/reallocation, byte overlap/bounds, string/UTF-8 and
+cross-thread allocation/free checks in one small positive fixture; an invalid free and a double
+free use the same source in separate terminating probes. No stdio, formatted varargs or log API
+is implied by this subset.
+
 ## P3 module transactions (T07)
 
 `ModuleSet` extends the loader for audited C-library graphs; the original N0 `Load` API still
@@ -191,6 +216,7 @@ and expected refusal; `build.ps1 -Component NativeProbe` builds them into `tests
 | T08 negative files | same source, missing `pthread_detach` (load refusal), malformed emutls descriptor and unjoined-worker teardown (diagnostic, exit 3) | `T08_MISSING`, `T08_BAD_EMUTLS`, `T08_UNJOINED`; exact recipes/results in `fixtures.psd1` |
 | T08 `libsync.so` | `threads/sync.c`: six mutex/condition cases, stress and host-state checks | API 30, `-O2 -nostdlib`, common flags as T05; NDK header layout assertions |
 | T08 sync negative files | same source: missing `pthread_cond_timedwait` (load refusal), owned-mutex teardown (diagnostic, exit 3) | `T08_SYNC_MISSING`, `T08_SYNC_OWNED`; exact recipes/results in `fixtures.psd1` |
+| T08 memory | `threads/memory.c`: allocation/byte/string/thread-sharing cases, invalid and double free | API 30, `-O2 -nostdlib -fno-builtin`, common flags as T05; `T08_MEMORY_INVALID`, `T08_MEMORY_DOUBLE` terminate with exit 3 |
 | T07 module graph | `modules/dependency.c`, `root.c`, `cycle.c`: positive pair, missing import, invalid initializer, SONAME/cycle seed | API 30, `-O2 -nostdlib`, common flags as T05; explicit linked fixture dependencies and expected values in `fixtures.psd1` |
 
 Every fixture is built by the NDK's own clang and linker; none is a special build that would stand

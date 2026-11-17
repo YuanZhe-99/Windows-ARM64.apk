@@ -2,6 +2,9 @@
 
 #include <string>
 
-/// Runs T08's thread/TLS cases, or its synchronization cases when sync, with cleanup assertions.
+/// Selects one compact group of audited T08 Bionic cases.
+enum class BionicSuite { Threads, Sync, Memory };
+
+/// Runs the selected T08 cases with cleanup and platform-reserved host-state assertions.
 /// Returns: 0 on success, 2 for a refused ELF, 3 for failed assertions.
-int ProbeThreads(const std::wstring& path, bool sync = false);
+int ProbeBionic(const std::wstring& path, BionicSuite suite);

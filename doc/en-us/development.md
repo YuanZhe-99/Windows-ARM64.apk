@@ -42,6 +42,7 @@ The runtime's commands are in the next section.
 .\scripts\windows\test.ps1 -Suite Native
 .\scripts\windows\test.ps1 -Suite Bionic
 .\scripts\windows\test.ps1 -Suite Modules
+.\scripts\windows\test.ps1 -Suite Memory
 .\build\windows-arm64\bin\native-probe.exe suite .\tests\fixtures\elf\libn0abi.so
 .\build\windows-arm64\bin\native-probe.exe sync .\tests\fixtures\elf\libsync.so
 .\build\windows-arm64\bin\winapk.exe doctor --json
@@ -96,6 +97,11 @@ timed waits/locks and attribute APIs remain unsupported ([native-profiles.md](na
 30-second deadline: rollback, constructor order, weak imports, guest dl API/errors, lookup, reference/pinning and
 initializer reentry/concurrency. Use this targeted suite while developing module loading; run
 the full runtime regression once the capability is stable, not after every edit.
+
+`-Suite Memory` selects only T08's `memory` command (also included in `Bionic`): four semantic
+cases plus a host-state check, and two fatal ownership cases from the same source. It uses
+`-fno-builtin` so the tests call the imported wrappers rather than compiler-folded operations;
+there is no additional long stress loop.
 
 `winapk run` keeps each app's data under `%LOCALAPPDATA%\Windows-ARM64.apk\Apps` (`--data-dir`
 moves it): `android\` is the Android root the app sees (`data\data\<package>`, `sdcard`),

@@ -19,7 +19,7 @@ public:
     ThreadRuntime(const ThreadRuntime&) = delete;
     ThreadRuntime& operator=(const ThreadRuntime&) = delete;
 
-    /// Returns audited thread/errno/emutls, dl API and compiler-required byte imports, not arbitrary CRT exports.
+    /// Returns audited thread/errno/emutls, memory/string and dl API imports, not arbitrary CRT exports.
     static std::span<const HostSymbol> Imports();
 
     /// Calls a guest entry with a fresh context, then runs key destructors and frees emulated TLS.
@@ -28,7 +28,7 @@ public:
     /// may unwind into the host. Guest execution faults are not recovered here.
     void* Call(void* (*entry)(void*), void* argument);
 
-    /// Reports whether all contexts, TLS blocks, keys, workers and synchronization records are released.
+    /// Reports whether all contexts, TLS blocks, keys, workers, allocations and synchronization records are released.
     bool Idle() const;
 
 private:

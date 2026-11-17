@@ -106,7 +106,9 @@ struct ConditionState {
 /// Holds one runtime's synchronized token tables and exact cleanup counters.
 struct ThreadState {
     ModuleSet* modules = nullptr;  // Caller-owned; mappings outlive this runtime's guest threads.
+    HANDLE heap = HeapCreate(0, 0, 0);
     std::mutex mutex;
+    std::map<void*, uint64_t> allocations;
     std::map<GuestThread, std::unique_ptr<Worker>> workers;
     std::array<Key, kKeys> keys{};
     std::map<void*, std::unique_ptr<MutexState>> mutexes;
@@ -115,6 +117,9 @@ struct ThreadState {
     GuestThread nextThread = 1;
     GuestKey nextKey = 1;
     std::atomic<size_t> contexts = 0, tlsBlocks = 0;
+
+    /// Releases all remaining guest allocations only after every managed context has ended.
+    ~ThreadState() { if (heap) HeapDestroy(heap); }
 };
 
 namespace {
@@ -186,6 +191,125 @@ int Equal(GuestThread a, GuestThread b) { return a == b; }
 /// Fills guest bytes through an audited fixed signature (Android size_t is 64-bit).
 void* BytesSet(void* destination, int32_t value, uint64_t size) {
     return std::memset(destination, value, static_cast<size_t>(size));
+}
+
+/// Allocates and records guest-owned bytes; the caller holds runtime.mutex.
+void* Allocate(ThreadState& runtime, uint64_t size, bool zero) {
+    if (size > INT64_MAX) { Context().error = kNoMemory; return nullptr; }
+    void* pointer = HeapAlloc(runtime.heap, zero ? HEAP_ZERO_MEMORY : 0, static_cast<SIZE_T>(size ? size : 1));
+    if (pointer) {
+        try {
+            runtime.allocations.emplace(pointer, size);
+            return pointer;
+        } catch (const std::bad_alloc&) {
+            HeapFree(runtime.heap, 0, pointer);
+        }
+    }
+    Context().error = kNoMemory;
+    return nullptr;
+}
+
+/// Allocates bytes from this runtime's private heap, returning guest ENOMEM on failure.
+void* Malloc(uint64_t size) {
+    auto& runtime = Context().runtime;
+    std::lock_guard lock(runtime.mutex);
+    return Allocate(runtime, size, false);
+}
+
+/// Allocates zeroed guest bytes after an explicit unsigned multiplication-overflow check.
+void* Calloc(uint64_t count, uint64_t size) {
+    if (size && count > UINT64_MAX / size) { Context().error = kNoMemory; return nullptr; }
+    auto& runtime = Context().runtime;
+    std::lock_guard lock(runtime.mutex);
+    return Allocate(runtime, count * size, true);
+}
+
+/// Frees only an exact guest-owned allocation; invalid ownership terminates before HeapFree.
+void Release(void* pointer) {
+    if (!pointer) return;
+    auto& runtime = Context().runtime;
+    std::lock_guard lock(runtime.mutex);
+    const auto it = runtime.allocations.find(pointer);
+    if (it == runtime.allocations.end()) Fatal("free of invalid or already freed guest allocation");
+    if (!HeapFree(runtime.heap, 0, pointer)) Fatal("guest heap release failed");
+    runtime.allocations.erase(it);
+}
+
+/// Resizes guest bytes transactionally, preserving the old allocation and content on failure.
+void* Resize(void* pointer, uint64_t size) {
+    auto& runtime = Context().runtime;
+    std::lock_guard lock(runtime.mutex);
+    if (!pointer) return Allocate(runtime, size, false);
+    const auto it = runtime.allocations.find(pointer);
+    if (it == runtime.allocations.end()) Fatal("realloc of invalid or already freed guest allocation");
+    void* result = nullptr;
+    if (size) {
+        result = Allocate(runtime, size, false);
+        if (!result) return nullptr;
+        std::memcpy(result, pointer, static_cast<size_t>(std::min(size, it->second)));
+    }
+    if (!HeapFree(runtime.heap, 0, pointer)) Fatal("guest heap release failed");
+    runtime.allocations.erase(it);
+    return result;
+}
+
+/// Copies non-overlapping guest bytes through an audited 64-bit size signature.
+void* BytesCopy(void* destination, const void* source, uint64_t size) {
+    return std::memcpy(destination, source, static_cast<size_t>(size));
+}
+
+/// Moves potentially overlapping guest bytes without exposing any CRT object.
+void* BytesMove(void* destination, const void* source, uint64_t size) {
+    return std::memmove(destination, source, static_cast<size_t>(size));
+}
+
+/// Compares guest bytes as unsigned bytes and returns the ordering sign.
+int32_t BytesCompare(const void* first, const void* second, uint64_t size) {
+    return std::memcmp(first, second, static_cast<size_t>(size));
+}
+
+/// Finds the first matching unsigned byte, bounded by the guest's 64-bit length.
+void* BytesFind(const void* source, int32_t value, uint64_t size) {
+    return const_cast<void*>(std::memchr(source, value, static_cast<size_t>(size)));
+}
+
+/// Returns a terminated byte string's length as guest size_t, without transcoding.
+uint64_t StringLength(const char* string) { return std::strlen(string); }
+
+/// Returns the bounded byte length, without reading beyond the supplied maximum.
+uint64_t StringBoundedLength(const char* string, uint64_t size) { return strnlen(string, static_cast<size_t>(size)); }
+
+/// Compares terminated byte strings without locale or encoding conversion.
+int32_t StringCompare(const char* first, const char* second) { return std::strcmp(first, second); }
+
+/// Compares at most size unsigned bytes, stopping at a string terminator.
+int32_t StringBoundedCompare(const char* first, const char* second, uint64_t size) {
+    return std::strncmp(first, second, static_cast<size_t>(size));
+}
+
+/// Copies a terminated byte string into caller-owned storage.
+char* StringCopy(char* destination, const char* source) { return std::strcpy(destination, source); }
+
+/// Copies and pads at most size bytes with standard strncpy termination rules.
+char* StringBoundedCopy(char* destination, const char* source, uint64_t size) {
+    return std::strncpy(destination, source, static_cast<size_t>(size));
+}
+
+/// Finds the first matching byte or the terminator when value converts to zero.
+char* StringFind(const char* string, int32_t value) { return const_cast<char*>(std::strchr(string, value)); }
+
+/// Finds the last matching byte, including the terminator.
+char* StringReverseFind(const char* string, int32_t value) { return const_cast<char*>(std::strrchr(string, value)); }
+
+/// Finds a byte substring without interpreting UTF-8 code points.
+char* StringSubstring(const char* string, const char* needle) { return const_cast<char*>(std::strstr(string, needle)); }
+
+/// Duplicates terminated bytes into the guest private heap, using the same free contract.
+char* StringDuplicate(const char* string) {
+    const uint64_t size = std::strlen(string) + 1;
+    auto* result = static_cast<char*>(Malloc(size));
+    if (result) std::memcpy(result, string, static_cast<size_t>(size));
+    return result;
 }
 
 /// Opens an audited guest library with RTLD_NOW|RTLD_LOCAL only; never calls the Windows loader.
@@ -629,7 +753,10 @@ int ConditionDestroy(void* object) {
 
 }  // namespace
 
-ThreadRuntime::ThreadRuntime(ModuleSet* modules) : state_(std::make_unique<ThreadState>()) { state_->modules = modules; }
+ThreadRuntime::ThreadRuntime(ModuleSet* modules) : state_(std::make_unique<ThreadState>()) {
+    if (!state_->heap) throw std::bad_alloc();
+    state_->modules = modules;
+}
 
 ThreadRuntime::~ThreadRuntime() {
     std::lock_guard lock(state_->mutex);
@@ -659,6 +786,24 @@ std::span<const HostSymbol> ThreadRuntime::Imports() {
         {"pthread_getspecific", reinterpret_cast<void*>(&GetSpecific)},
         {"__emutls_get_address", reinterpret_cast<void*>(&EmutlsAddress)},
         {"memset", reinterpret_cast<void*>(&BytesSet)},
+        {"malloc", reinterpret_cast<void*>(&Malloc)},
+        {"calloc", reinterpret_cast<void*>(&Calloc)},
+        {"realloc", reinterpret_cast<void*>(&Resize)},
+        {"free", reinterpret_cast<void*>(&Release)},
+        {"memcpy", reinterpret_cast<void*>(&BytesCopy)},
+        {"memmove", reinterpret_cast<void*>(&BytesMove)},
+        {"memcmp", reinterpret_cast<void*>(&BytesCompare)},
+        {"memchr", reinterpret_cast<void*>(&BytesFind)},
+        {"strlen", reinterpret_cast<void*>(&StringLength)},
+        {"strnlen", reinterpret_cast<void*>(&StringBoundedLength)},
+        {"strcmp", reinterpret_cast<void*>(&StringCompare)},
+        {"strncmp", reinterpret_cast<void*>(&StringBoundedCompare)},
+        {"strcpy", reinterpret_cast<void*>(&StringCopy)},
+        {"strncpy", reinterpret_cast<void*>(&StringBoundedCopy)},
+        {"strchr", reinterpret_cast<void*>(&StringFind)},
+        {"strrchr", reinterpret_cast<void*>(&StringReverseFind)},
+        {"strstr", reinterpret_cast<void*>(&StringSubstring)},
+        {"strdup", reinterpret_cast<void*>(&StringDuplicate)},
         {"dlopen", reinterpret_cast<void*>(&DlOpen)},
         {"dlsym", reinterpret_cast<void*>(&DlSym)},
         {"dlclose", reinterpret_cast<void*>(&DlClose)},
@@ -691,7 +836,7 @@ void* ThreadRuntime::Call(Entry entry, void* argument) {
 bool ThreadRuntime::Idle() const {
     std::lock_guard lock(state_->mutex);
     return state_->workers.empty() && state_->contexts == 0 && state_->tlsBlocks == 0 &&
-           state_->mutexes.empty() && state_->conditions.empty() &&
+           state_->mutexes.empty() && state_->conditions.empty() && state_->allocations.empty() &&
            std::all_of(state_->keys.begin(), state_->keys.end(), [](const Key& key) { return key.token == 0; });
 }
 

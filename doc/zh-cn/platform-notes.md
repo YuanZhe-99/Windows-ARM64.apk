@@ -66,7 +66,7 @@
 
 ## P3 线程、同步与模块检查
 
-`test.ps1 -Suite Bionic`，2026-11-16，在上述 Windows ARM64 机器上 56/56 项检查 PASS（T08：39，T07：17），不是 G3；
+`test.ps1 -Suite Bionic`，2026-11-16，在上述 Windows ARM64 机器上 67/67 项检查 PASS（T08：50，T07：17），不是 G3；
 线程夹具用 NDK r30、API 30、`-O2 -nostdlib -femulated-tls -fno-stack-protector` 构建；
 独立同步夹具使用 `-O2 -nostdlib -fno-stack-protector`，没有 TLS。
 哈希与完整选项在 `tests/fixtures/elf/fixtures.json`（生成产物，不提交）；
@@ -74,6 +74,8 @@
 线程探测包含九个用例，同步探测包含八个；拒绝/终止文件不证明 APK 原生库或 JNI 集成已可用。
 T07 依赖图使用六个 `-O2 -nostdlib` 库；`-Suite Modules` 独立通过十项语义、六项哈希及汇总检查。
 其输出在 `build/windows-arm64/test-data/logs/T07-modules.*`。
+T08 内存用同一源码的三个 `-O2 -nostdlib -fno-builtin` 构建新增 11 项检查；
+正例进程含四项语义及一次宿主状态检查，不另加压力循环。
 
 | 条目（`PLAN.md` §10） | 结果 | 证据 |
 |---|---|---|
@@ -88,6 +90,7 @@ T07 依赖图使用六个 `-O2 -nostdlib` 库；`-Suite Modules` 独立通过十
 | 模块事务与查询（T07） | PASS | 依赖优先 trace `12`、根库结果 `49`、自身定义、未解析弱导入、广度优先依赖导出查询、重复打开/引用计数及关闭后重新打开而不重复初始化 |
 | 事务拒绝与回调（T07） | PASS | 缺失导入和无效初始化入口在任何构造执行前回滚全部新映射；拒绝依赖环、基名、SONAME 和缺失文件；既有依赖图不变；同线程构造重入及其他线程竞争时的拒绝，不跨回调持有注册表锁 |
 | 客体 dl API（T07） | PASS | `dlopen` NOW/LOCAL、`dlsym`、`dlclose`、`dlerror` 读取清除；无效标志、缺失导出及已关闭句柄明确失败；运行时上下文清理 |
+| 内存/字节/字符串子集（T08） | PASS | 零大小分配、16 字节对齐、calloc 清零/溢出、realloc 增长/缩小/失败及内容/errno 保留；重叠/范围/无符号字节操作、UTF-8/终止/填充/查询；八线程归属移交；无效和重复释放在调用宿主分配器前退出 3；分配表清空；12 次宿主状态回调无违规 |
 | APK 原生库与 JNI 集成 | NOT_RUN | T09 尚未实现；`winapk run` 的原生库加载仍关闭 |
 
 同一变更集还运行了 `check-requirements.ps1`、`build.ps1 -Component All`、

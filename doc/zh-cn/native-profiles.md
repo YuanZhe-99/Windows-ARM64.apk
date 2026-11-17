@@ -97,6 +97,25 @@ T08 检查损坏描述符与仍有未 join worker 时销毁运行时导致的终
 指针、主线程状态、初始值/零值/对齐 TLS、析构重设值与轮数
 上限、已删除 key、key 耗尽、不支持的属性、无效/自身 join，以及只读 x18/sp 宿主状态检查。
 
+## P3 内存、字节与字符串（T08）
+
+`native-probe memory` 子集使用固定签名包装，不直接查找 UCRT 导出。
+经审计的导入为 `malloc`、`calloc`、`realloc`、`free`；`memcpy`、`memmove`、`memset`、
+`memcmp`、`memchr`；`strlen`、`strnlen`、`strcmp`、`strncmp`、`strcpy`、`strncpy`、`strchr`、
+`strrchr`、`strstr`、`strdup`。大小及长度返回值显式使用客体无符号 64 位类型。
+
+- 每个运行时拥有私有 Windows 堆及由其受管理线程共享的分配归属表。字节可经已验证指针签名跨域，
+  分配器或 CRT 对象不可跨域。分配至少按 16 字节对齐；未释放分配在运行时销毁时释放。
+- 零大小 malloc/calloc 返回可释放的最小分配。空指针 realloc 等同 malloc；
+  非空指针、零大小 realloc 释放原分配并返回空。realloc 失败后原字节的归属与内容不变。
+- 大小超过 `PTRDIFF_MAX`、乘法溢出及分配失败均返回空并设置客体 `ENOMEM`；
+  成功分配和 free 保持客体 errno。无效、内部、宿主所有或已释放的分配指针带客体 ABI 诊断终止。
+- 字节/字符串函数保持客体 errno，比较无符号字节，不转换区域设置或编码。UTF-8 原样复制。
+  普通 C 缓冲区/终止要求仍适用；这不是内存安全沙箱。`strdup` 使用同一私有堆。
+
+T08 内存把分配/溢出/重新分配、字节重叠/范围、字符串/UTF-8 和跨线程分配/释放合并在一个小正例夹具中；
+无效释放与重复释放使用同一源码、在独立终止探测中检查。不据此宣称支持 stdio、格式化变参或日志 API。
+
 ## P3 模块事务（T07）
 
 `ModuleSet` 为经审计的 C 库依赖图扩展加载器；原有 N0 `Load` API 仍拒绝依赖与构造函数。
@@ -159,6 +178,7 @@ NativeProbe` 把它们构建到 `tests/fixtures/elf`（生成产物，从不提�
 | T08 负例文件 | 同一源码：缺失 `pthread_detach`（加载时拒绝）、损坏的仿真 TLS 描述符和仍有未 join worker 时销毁运行时（诊断，退出码 3） | `T08_MISSING`、`T08_BAD_EMUTLS`、`T08_UNJOINED`；完整配方/结果在 `fixtures.psd1` |
 | T08 `libsync.so` | `threads/sync.c`：六个 mutex/condition 用例、压力测试与宿主状态检查 | API 30、`-O2 -nostdlib`，公共选项与 T05 相同；断言 NDK 头文件布局 |
 | T08 同步负例文件 | 同一源码：缺失 `pthread_cond_timedwait`（加载时拒绝），仍持有 mutex 时销毁运行时（诊断，退出码 3） | `T08_SYNC_MISSING`、`T08_SYNC_OWNED`；完整配方/结果在 `fixtures.psd1` |
+| T08 内存 | `threads/memory.c`：分配/字节/字符串/线程共享用例、无效和重复释放 | API 30、`-O2 -nostdlib -fno-builtin`，公共选项与 T05 相同；`T08_MEMORY_INVALID`、`T08_MEMORY_DOUBLE` 以退出码 3 终止 |
 | T07 模块依赖图 | `modules/dependency.c`、`root.c`、`cycle.c`：正例库对、缺失导入、无效初始化入口、SONAME/依赖环种子 | API 30、`-O2 -nostdlib`，公共选项与 T05 相同；显式链接的夹具依赖及期望值在 `fixtures.psd1` |
 
 每个夹具都由 NDK 自带的 clang 和链接器构建；除其选项所表明的以外，没有哪个是可以代表普通 NDK 产物的特制构建

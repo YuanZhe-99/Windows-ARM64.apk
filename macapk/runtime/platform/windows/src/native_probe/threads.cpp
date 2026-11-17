@@ -26,7 +26,7 @@ int HostState(const int32_t* guestErrno) {
 
 }  // namespace
 
-int ProbeThreads(const std::wstring& path, bool sync) {
+int ProbeBionic(const std::wstring& path, BionicSuite suite) {
     using winapk::guest::ThreadRuntime;
     auto imports = ThreadRuntime::Imports();
     std::vector<winapk::guest::HostSymbol> symbols(imports.begin(), imports.end());
@@ -49,7 +49,9 @@ int ProbeThreads(const std::wstring& path, bool sync) {
     ThreadRuntime runtime;
     const char* threadCases[] = {"threads8", "threads32", "destructor-limit", "deleted-keys", "key-exhaustion", "errors", "memset"};
     const char* syncCases[] = {"mutex-contention8", "mutex-kinds", "mutex-lifecycle", "cond-signal", "cond-broadcast", "cond-errors"};
-    const auto cases = sync ? std::span(syncCases) : std::span<const char* const>(threadCases);
+    const char* memoryCases[] = {"memory-allocation", "memory-bytes", "memory-strings", "memory-sharing"};
+    const auto cases = suite == BionicSuite::Memory ? std::span(memoryCases) :
+                       suite == BionicSuite::Sync ? std::span(syncCases) : std::span<const char* const>(threadCases);
     int failed = 0;
     for (uintptr_t i = 0; i < std::size(cases); i++) {
         void* result = runtime.Call(entry, reinterpret_cast<void*>(i));
@@ -61,22 +63,26 @@ int ProbeThreads(const std::wstring& path, bool sync) {
         if (!ok) return 3;
     }
 
+    const bool sync = suite == BionicSuite::Sync;
     // Repeated fresh contexts at one module address must reinitialize every emutls variable.
-    DWORD before = 0, after = 0;
-    for (int i = 0; i < 10; i++)
-        if (runtime.Call(entry, nullptr) || !runtime.Idle()) failed++;
-    GetProcessHandleCount(GetCurrentProcess(), &before);
-    bool cycles = true;
-    for (int i = 0; i < 200; i++)
-        if (runtime.Call(entry, nullptr) || !runtime.Idle()) cycles = false;
-    GetProcessHandleCount(GetCurrentProcess(), &after);
-    const bool clean = cycles && after <= before;
-    std::printf("case T08.%sstress %s: 200 cycles, 1600 workers, handle delta %+lld, registry %s\n",
-                sync ? "sync-" : "", clean ? "PASS" : "FAIL", static_cast<long long>(after) - before, runtime.Idle() ? "empty" : "not empty");
-    failed += !clean;
+    // Memory/strings have bounded semantic cases, not another redundant stress loop.
+    if (suite != BionicSuite::Memory) {
+        DWORD before = 0, after = 0;
+        for (int i = 0; i < 10; i++)
+            if (runtime.Call(entry, nullptr) || !runtime.Idle()) failed++;
+        GetProcessHandleCount(GetCurrentProcess(), &before);
+        bool cycles = true;
+        for (int i = 0; i < 200; i++)
+            if (runtime.Call(entry, nullptr) || !runtime.Idle()) cycles = false;
+        GetProcessHandleCount(GetCurrentProcess(), &after);
+        const bool clean = cycles && after <= before;
+        std::printf("case T08.%sstress %s: 200 cycles, 1600 workers, handle delta %+lld, registry %s\n",
+                    sync ? "sync-" : "", clean ? "PASS" : "FAIL", static_cast<long long>(after) - before, runtime.Idle() ? "empty" : "not empty");
+        failed += !clean;
+    }
     const bool host = callbacks > 0 && violations == 0;
     std::printf("case T08.%shost-state %s: %zu callbacks, %zu x18/sp/errno violations\n",
-                sync ? "sync-" : "", host ? "PASS" : "FAIL", callbacks.load(), violations.load());
+                suite == BionicSuite::Memory ? "memory-" : sync ? "sync-" : "", host ? "PASS" : "FAIL", callbacks.load(), violations.load());
     failed += !host;
     std::printf("result T08 %s\n", failed ? "FAIL" : "PASS");
     return failed ? 3 : 0;

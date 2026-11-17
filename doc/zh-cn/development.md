@@ -35,6 +35,7 @@ go run ./tools/checkdocs           # doc/en-us and doc/zh-cn mirror each other
 .\scripts\windows\test.ps1 -Suite Native
 .\scripts\windows\test.ps1 -Suite Bionic
 .\scripts\windows\test.ps1 -Suite Modules
+.\scripts\windows\test.ps1 -Suite Memory
 .\build\windows-arm64\bin\native-probe.exe suite .\tests\fixtures\elf\libn0abi.so
 .\build\windows-arm64\bin\native-probe.exe sync .\tests\fixtures\elf\libsync.so
 .\build\windows-arm64\bin\winapk.exe doctor --json
@@ -75,6 +76,10 @@ clang-cl 把 `winapk.exe`、`winapk-bridge.dll`、`native-probe.exe` 和 `winapk
 `-Suite Modules` 只运行精简的 T07 依赖图矩阵（`native-probe modules`），也包含在 `-Suite Bionic` 中。
 它验证夹具哈希，并在单进程、30 秒期限内检查十项语义：回滚、构造顺序、弱导入、客体 dl API/错误、查询、引用/保留映射及初始化重入/并发。
 开发模块加载时使用该定向套件，能力稳定后再执行完整运行时回归，不在每次编辑后重复全量测试。
+
+`-Suite Memory` 只选择 T08 的 `memory` 命令（也包含在 `Bionic` 中）：四项语义、一次宿主状态检查，
+以及来自同一源码的两个归属违规终止用例。使用 `-fno-builtin`，确保测试调用导入包装而不是编译器折叠的操作；
+不另加耗时压力循环。
 
 `winapk run` 把每个应用的数据放在 `%LOCALAPPDATA%\Windows-ARM64.apk\Apps` 下（`--data-dir` 可改）：`android\`
 是应用看到的 Android 根目录（`data\data\<package>`、`sdcard`），`code\<package>\` 是转换后的代码及缓存戳，

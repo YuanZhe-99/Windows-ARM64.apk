@@ -42,6 +42,7 @@ Native`); the case names below are its own. Verified 2026-11-04 on the machine o
 | Android mutex/condition objects | opaque guest storage, 40/48 bytes, alignment 4; no host lock stored there | fixed pointer signatures; generation/address tables own host state | T08 (`sync`): kinds, contention, wait/relock, lifecycle and refusal cases |
 | Thread/key shims and C emutls | fixed integer/pointer signatures; Android `pthread_t` as `int64_t`, key as `int32_t` | explicit wrappers; no host pthread/CRT object passed to the guest | T08 (`threads`); see [native-profiles.md](native-profiles.md) |
 | Guest dl APIs | fixed pointer/int signatures, guest opaque handle tokens | module namespace only; never Windows loader handles or arbitrary host symbols | T07: roundtrip, error consumption, flags and invalid/closed handles |
+| Memory, bytes and strings | explicit 64-bit guest sizes/lengths, fixed pointers/ints | runtime-owned heap and ownership checks; byte wrappers only, no shared allocator/CRT objects | T08 `memory`: zero/overflow/failure, overlap/unsigned bytes, UTF-8, cross-thread ownership and invalid frees |
 | `long double`, C++ classes, exceptions | not supported | not supported | — |
 
 Direct means the host calls through a pointer of the matching host prototype, or the guest's
