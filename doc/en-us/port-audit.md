@@ -1,7 +1,7 @@
 # Port audit
 
 What in Mac.apk is tied to macOS, how each part is handled on Windows ARM64, and in which phase.
-Audited at Mac.apk `ff2afbf` (2026-11-03) and re-checked at `8b45e48` (2026-11-04, upstream's v1.0.2377 sync), merged as the `macapk/` subtree, on Windows 11 ARM64
+Audited at Mac.apk `ff2afbf` (2026-11-03) and re-checked at `3f35611` (2026-11-16, upstream's v1.0.2379 sync), merged as the `macapk/` subtree, on Windows 11 ARM64
 (build 26300). Re-run the searches below after every Mac.apk merge and update the tables.
 
 ## Method
@@ -38,7 +38,7 @@ Audited at Mac.apk `ff2afbf` (2026-11-03) and re-checked at `8b45e48` (2026-11-0
 
 ## Coupling counts
 
-Lines matching each pattern (`grep -c`, summed), at `8b45e48`.
+Lines matching each pattern (`grep -c`, summed), at `3f35611`.
 
 | Pattern | `runtime/src` | `runtime/translator` | `runtime/java` | `launcher` | `scripts` |
 |---|---|---|---|---|---|
@@ -80,7 +80,7 @@ compiled class.
 
 | Check | Result |
 |---|---|
-| The Java side compiles unchanged with Microsoft OpenJDK 21.0.13 ARM64 | PASS at `8b45e48`: 84 s, javac's limit of 100 warnings (internal `Unsafe` API and deprecations), no error |
+| The Java side compiles unchanged with Microsoft OpenJDK 21.0.13 ARM64 | PASS at `3f35611`: javac's limit of 100 warnings (internal `Unsafe` API and deprecations), no error |
 | `android-framework.jar` | 14,979 KB, 6,415 entries |
 | `macapk-loader.jar` | 1,556 KB, 530 entries |
 | Patch modules load on the JVM (`--patch-module java.base=… --patch-module jdk.unsupported=…`) | PASS (T01) |
@@ -123,7 +123,7 @@ What a pure-Java APK needs from the host, as `winapk run` provides it (G1, [plat
 | `main.cpp`'s start-up (install, unpack, DEX conversion, JVM options, natives, `Boot.run`) | re-expressed in `run.cpp`: the APK is read natively (`apk.cpp`: ZIP, ZIP64, inflate, binary manifest, entry-name screening), DEX is converted by com.macapk.dex in a child process as upstream does, but a `winapk dex` whose JVM gets its arguments as UTF-16 strings rather than a `java.exe` (ADR-0003), cached by the APK, converter and framework hashes, then the JVM is created in-process with upstream's options minus the macOS-only ones (hosts-file path, AOT cache); `winapk.exe` has the UTF-8 active code page, so option strings carry Unicode paths |
 | `build-id.txt` and `MACAPK_BUILD_JAVA_ID` (`build_ids.py`, read by `main.cpp`) | `winapk run` exports `MACAPK_BUILD_JAVA_ID` from both jars' whole digests, so the app's own dynamic-DEX cache persists and is invalidated by any converter or framework change (ADR-0003); `MACAPK_BUILD_NATIVE_ID` waits for the guest loader (P2–P4) |
 | `NativeLog` (4 of 5 natives) | `print`, `nativeBoostCurrentThreadQos` (thread priority above normal), `nativeBootTimeNanos` (the performance counter, HotSpot's `nanoTime` source) bound; `nativeInstallJniTrace` and `nativeRegisterPairipGate` unbound |
-| `NativeCocoa` window, presentation, input (29 of 57 natives) | bound in `window.cpp` (ADR-0002): `init`, `runLoop`, sizes and scale, windows and views, the renderer, `presentBitmap`, touch registration, orientation and aspect cap, `setSecureContent` (`WDA_EXCLUDEFROMCAPTURE`), task to back/front, data and library dirs, `exitProcess`. Window state as upstream: a minimised window draws at 2 Hz (upstream's hidden-window throttle), restoring it calls `ActivityHost.macapkTaskToFront` (upstream's unhide hook), focus changes are logged, and losing focus or the mouse capture mid-press sends `ACTION_CANCEL`. Text: a character no mapped key delivered (an IME commit, a dead-key composition, an unmapped key) goes to `dispatchKey` as KEYCODE_UNKNOWN with the character, one UTF-16 unit per DOWN/UP pair, upstream's shape for composed text. Unbound, each failing with `UnsatisfiedLinkError` where called: the AOSP window-policy session (`activityWindowTransition`, `windowOverrideOrientation`, `applyWindowOrientationFor`, `setTopActivityConfigChanges`), URL and scheme handling, the IOSurface ring (`presentFrame`), GL surfaces and overlays, `hostFontFile`, `setSystemFontsDir`, `setSystemProperty`, the translation overlay, trackpad and quit-gesture debugging |
+| `NativeCocoa` window, presentation, input (29 of 57 natives) | bound in `window.cpp` (ADR-0002): `init`, `runLoop`, sizes and scale, windows and views, the renderer, `presentBitmap`, touch registration, orientation and aspect cap, `setSecureContent` (`WDA_EXCLUDEFROMCAPTURE`), task to back/front, data and library dirs, `exitProcess`. Window state as upstream: a minimised window draws at 2 Hz (upstream's hidden-window throttle), restoring it calls `ActivityHost.macapkTaskToFront` (upstream's unhide hook), focus changes are logged, and losing focus or the mouse capture mid-press releases capture and sends `ACTION_CANCEL`. Text: a character no mapped key delivered (an IME commit, a dead-key composition, an unmapped key) goes to `dispatchKey` as KEYCODE_UNKNOWN with the character, one UTF-16 unit per DOWN/UP pair, upstream's shape for composed text. Unbound, each failing with `UnsatisfiedLinkError` where called: the AOSP window-policy session (`activityWindowTransition`, `windowOverrideOrientation`, `applyWindowOrientationFor`, `setTopActivityConfigChanges`), URL and scheme handling, the IOSurface ring (`presentFrame`), GL surfaces and overlays, `hostFontFile`, `setSystemFontsDir`, `setSystemProperty`, the translation overlay, trackpad and quit-gesture debugging |
 | `NativeSqlite` (26 natives) | bound: upstream's `native_sqlite.cpp` itself, built into `winapk-bridge.dll` against SQLite 3.54.1, with the Unicode `upper`/`lower`/`LIKE` and the LOCALIZED, UNICODE and PHONEBOOK collations every Android connection carries. Upstream quirk kept: it converts strings as modified UTF-8, so a character outside the BMP in SQL text or a column differs from a device (macOS alike) |
 | Other host natives Boot reaches (`NativeOs.setenv`, `GamepadBridge`, Monet wallpaper) | unbound; Boot logs each and goes on |
 | `AppClassLoader.findLibrary`'s stub fallback | with guest native off, `GUEST_NATIVE_DISABLED` instead (G1.5) |

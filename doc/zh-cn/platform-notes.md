@@ -4,41 +4,41 @@
 |---|---|
 | Windows 11 ARM64 | G0 通过；G1 的检查在本机通过（T02、T03）：`winapk run` 在 Win32 窗口中运行纯 Java APK 的真实 DEX，支持触摸、按键和输入的 Unicode 文字、滚动、改变尺寸、最小化与恢复、返回、保存的状态和 SQLite，路径可含 Unicode 字符；Kotlin 夹具 T04 也能运行。G2 同样通过：`native-probe.exe` 加载 N0 客体 ELF 库，在其上运行 ABI 测试集 T05，并拒绝格式错误和超出 profile 的库（T06）；`winapk run` 尚不加载 APK 的库。界面仍对接示例数据（`winapk.Mock`）。 |
 | Windows 11 x64 | 不是目标平台；只可承载构建工具和解析测试。 |
-| macOS（Apple Silicon） | 上游 Mac.apk 的平台；已引入为 `macapk/`，当前在 `8b45e48`；尚未在此运行 macOS 构建或 smoke（`NOT_RUN`）。 |
+| macOS（Apple Silicon） | 上游 Mac.apk 的平台；已引入为 `macapk/`，当前在 `3f35611`；尚未在此运行 macOS 构建或 smoke（`NOT_RUN`）。 |
 
 ## Windows
 
-在 Windows 11 ARM64 上验证（2026-11-04）：build 26300.9711，Snapdragon Compute Platform（8cx Gen 3），32 GB，Qualcomm Adreno 8cx Gen 3（驱动 30.0.4122.4000），Vulkan loader 1.3.301，只有 Mesa Dozen 设备；Go 1.27.3、Microsoft OpenJDK 21.0.13 ARM64、clang-cl 22.1.3。
+在 Windows 11 ARM64 上验证（2026-11-16）：build 26300.9974，Snapdragon Compute Platform（8cx Gen 3），32 GB，Qualcomm Adreno 8cx Gen 3（驱动 30.0.4122.4000），Vulkan loader 1.3.301，只有 Mesa Dozen 设备；Go 1.27.4、MyGo v0.9.2、Microsoft OpenJDK 21.0.13 ARM64、clang-cl 22.1.3。
 
 | 检查 | 结果 |
 |---|---|
-| Go 模块 | `go vet ./...` 与 `go test ./...` 通过 |
+| Go 模块 | `go vet ./...`、`go test ./...` 与 `CGO_ENABLED=0 go test ./...` 通过 |
 | 文档镜像 | `go run ./tools/checkdocs` 通过 |
 | 环境要求 | `scripts/windows/check-requirements.ps1`：每个锁定的工具均为 OK，包括 Android SDK（build-tools 36.0.0、android-36）、NDK r30 和 kotlinc 2.4.0（Android Studio 自带） |
 | 平台资源 | `build.ps1 -Component FrameworkRes`：由 AOSP `android-16.0.0_r2`（API 36）构建的 `framework-res.apk`，66.4 MB，sha256 `62eb212e…6d90`；它的 14,530 个公开资源 ID 与 android.jar（android-36）一致，一个资源（`string/user_switched`）因没有默认值被 aapt2 去掉 |
 | 夹具 | `build.ps1 -Component Fixtures`：`hello-java.apk`、`hello-jni.apk` 和 `hello-kotlin.apk`（内含转为 DEX 的 kotlin-stdlib 2.4.0）已签名，apksigner 校验通过；`libhello.so` 为 ELF64 AArch64（NDK r30）；哈希在 `tests/fixtures/*.json` |
-| G1 Java 路径 | `test.ps1 -Suite Java`：在 1080p 显示器 100% 缩放（density 160）下 41 项检查 PASS（在加入 DPI 检查和显示器 DPI 修复之前），在 3840×2160 显示器 200% 缩放（density 320）下 43 项 PASS（新增 DPI 检查）；`winapk.exe`、`winapk-bridge.dll`、`sqlite3.dll` 和 `zd.dll` 为 ARM64 |
-| Java 侧（Mac.apk `8b45e48`） | `build.ps1 -Component Java`：不经修改即可编译，84 秒，没有错误，并像上游一样把 Android 的 `org.apache.http.legacy` 解包进框架 jar（[port-audit.md](port-audit.md)） |
-| 客体 ELF 夹具 | `build.ps1 -Component NativeProbe`：用 NDK r30 的 clang 21 构建 T05 和 T06 的 27 个夹具，哈希在 `tests/fixtures/elf/fixtures.json`（[native-profiles.md](native-profiles.md)） |
+| G1 Java 路径 | `test.ps1 -Suite Java`：100% 缩放（density 160，2026-11-16，含按下途中失去激活释放鼠标捕获的修复）下 43 项检查 PASS，3840×2160 显示器 200% 缩放（density 320，2026-11-04）下 43 项 PASS；`winapk.exe`、`winapk-bridge.dll`、`sqlite3.dll` 和 `zd.dll` 为 ARM64 |
+| Java 侧（Mac.apk `3f35611`） | `build.ps1 -Component Java`：不经修改即可编译，没有错误，并像上游一样把 Android 的 `org.apache.http.legacy` 解包进框架 jar（[port-audit.md](port-audit.md)） |
+| 客体 ELF 夹具 | `build.ps1 -Component NativeProbe`：用 NDK r30 的 clang 21 构建 T05 和 T06 的 24 个夹具，哈希在 `tests/fixtures/elf/fixtures.json`（[native-profiles.md](native-profiles.md)） |
 | G2 原生路径 | `test.ps1 -Suite Native`：58 项检查 PASS（见下）；`native-probe.exe` 和 `capstone.dll` 为 ARM64 |
-| T01 宿主和 JVM | `test.ps1 -Suite Host`：23 项检查 PASS——`winapk.exe`、`winapk-bridge.dll`、`native-probe.exe`、zlib、SQLite 和 Capstone 为 ARM64；`jvm.dll` 为 ARM64，在进程内以上游的模块选项创建 JVM；JNI 宿主 → Java → 宿主；Java2D；260 个字体族；补丁模块；以及负例（找不到 JVM、无效的 `--java-home`） |
+| T01 宿主和 JVM | `test.ps1 -Suite Host`：22 项检查 PASS——`winapk.exe`、`winapk-bridge.dll`、`native-probe.exe`、zlib、SQLite 和 Capstone 为 ARM64；`jvm.dll` 为 ARM64，在进程内以上游的模块选项创建 JVM；JNI 宿主 → Java → 宿主；Java2D；259 个字体族；补丁模块；以及负例（找不到 JVM、无效的 `--java-home`） |
 | Vulkan | ARM64 loader 可用；两个 Mesa Dozen 设备（基于 Direct3D 12 的 Vulkan 1.2）；`doctor --present`：Win32 surface 测试通过。没有厂商 Vulkan 驱动 |
-| 界面 | `go tool mygo vet .` 与 `go tool mygo i18n check` 通过；`design/` 的每个界面在 `ui.Tester` 中以两种语言和两种外观渲染；在 `ui.Tester` 中用指针拖动的窗格会拆分目标窗格；原生窗口能打开并保持运行（smoke 运行，示例数据） |
+| 界面 | `go tool mygo vet .` 与 `go tool mygo i18n check` 通过；`design/` 的每个界面在 `ui.Tester` 中以两种语言和两种外观渲染；在 `ui.Tester` 中用指针拖动的窗格会拆分目标窗格（已适配 MyGo v0.9.2）；原生窗口能打开并保持运行（smoke 运行，示例数据） |
 
 ## 关卡
 
 | 关卡 | 状态 |
 |---|---|
-| G0 宿主就绪 | PASS（2026-11-03，本机：T01，工具链已锁定） |
-| G1 Java MVP | 本机 PASS（2026-11-04），含 G1.6，100% 与 200% 缩放下均通过；应用运行中改变缩放为 NOT_RUN（见下） |
-| G2 Native 最小执行 | 本机 PASS（2026-11-04）：`native-probe.exe` 中的 profile N0；`winapk run` 中客体原生仍关闭 |
+| G0 宿主就绪 | PASS（2026-11-03，2026-11-16 在本机复验：T01，工具链已锁定） |
+| G1 Java MVP | 本机 PASS（2026-11-04 200% 缩放，2026-11-16 100% 缩放复验），含 G1.6；应用运行中改变缩放为 NOT_RUN（见下） |
+| G2 Native 最小执行 | 本机 PASS（2026-11-04，2026-11-16 复验）：`native-probe.exe` 中的 profile N0；`winapk run` 中客体原生仍关闭 |
 | G3 Native 集成 | NOT_RUN |
 | G4 图形 | NOT_RUN |
 | G5 实验版 | NOT_RUN |
 
 ## G1 检查
 
-`test.ps1 -Suite Java`，2026-11-04，在上述机器上。
+`test.ps1 -Suite Java`，2026-11-04（200% 缩放）与 2026-11-16（100% 缩放），在上述机器上。
 
 | 项（`PLAN.md` §8） | 结果 | 证据 |
 |---|---|---|
@@ -54,12 +54,12 @@
 
 ## G2 检查
 
-`test.ps1 -Suite Native`，2026-11-04，在上述机器上，12 秒。
+`test.ps1 -Suite Native`，2026-11-16，在上述机器上。
 
 | 条目（`PLAN.md` §9） | 结果 | 证据 |
 |---|---|---|
 | N0 正例返回精确值，包括双向回调、浮点和结构体 | PASS | T05：四个构建（带 RELR 的 `libn0abi.so`、`-rela`、`-sysv`、`-4k`）上各 27 个用例：整数、客体 `long`、高位带垃圾值的窄参数、指针、浮点、经栈传递的 20 个参数、HFA、经寄存器/引用/`x8` 传递的结构体、客体可变参数函数、RELATIVE/RELR、ABS64、GLOB_DAT 和 JUMP_SLOT 数据、BSS、宿主导入、客体调用的宿主函数指针、五层客体 → 宿主 → 客体重入、被调用方保存的寄存器（以及能发现被破坏寄存器的检查）、sp 对齐；每次回调中 x18 都是 TEB |
-| 负例在任何入口或构造函数之前被拒绝，并给出模块、偏移和原因 | PASS | T06：21 个文件（17 个构建所得，4 个修补一个字段派生），每个都以预期的类别和原因输出 `reject CATEGORY file where: reason`，退出码 2，未运行任何代码（[native-profiles.md](native-profiles.md)） |
+| 负例在任何入口或构造函数之前被拒绝，并给出模块、偏移和原因 | PASS | T06：20 个文件（13 个构建所得，7 个修补一个字段派生），每个都以预期的类别和原因输出 `reject CATEGORY file where: reason`，退出码 2，未运行任何代码（[native-profiles.md](native-profiles.md)） |
 | 循环加载/执行无崩溃、无资源增长；地址随机化下可重复 | PASS | 2000 次加载/运行/卸载循环，每次都附带一次被拒绝的加载：两半中堆分配均 +0 字节，私有区域 +0，句柄 +0；同时加载 32 份副本，位于 32 个不同基址，全部通过；两个进程位于两个基址，全部通过 |
 | 在真实 ARM64 上 | PASS | 上述机器；`native-probe.exe` 和 `capstone.dll` 为 ARM64 |
 | `abi-compatibility.md` | PASS | [abi-compatibility.md](abi-compatibility.md)：直通、需 thunk 和不支持的签名及其用例 |

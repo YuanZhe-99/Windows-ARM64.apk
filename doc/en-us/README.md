@@ -27,28 +27,27 @@ per APK.
 
 ## Project status
 
-Development stopped on 2026-11-05 at version 0.1.0, which was never released or tagged. G0, G1 and
-G2 pass on the Windows 11 ARM64 machine recorded in [platform-notes.md](platform-notes.md); G3, G4
-and G5 were never run. What exists: `winapk run` runs pure-Java and Kotlin APKs in a Win32
-window; `native-probe.exe` loads profile-N0 guest ELF libraries and runs the ABI suite on them;
-the MyGo interface runs against sample data (`winapk.Mock`) and does not start the runtime. The
-last build used Mac.apk `8b45e48`, Go 1.27.3 and MyGo v0.7.4.
+Development resumed on 2026-11-16 at version 0.1.0 (unreleased; paused from 2026-11-05). G0, G1
+and G2 pass on the Windows 11 ARM64 machine recorded in [platform-notes.md](platform-notes.md); G3,
+G4 and G5 have not been run yet. What exists: `winapk run` runs pure-Java and Kotlin APKs in a
+Win32 window; `native-probe.exe` loads profile-N0 guest ELF libraries and runs the ABI suite on
+them; the MyGo interface runs against sample data (`winapk.Mock`) and does not start the runtime
+yet. The current build uses Mac.apk `3f35611`, Go 1.27.4 and MyGo v0.9.2.
 
-Work resuming starts by moving Go, MyGo and Mac.apk to their latest versions and re-running the
-G0–G2 checks, then continues with `PLAN.md` §10 (P3: Bionic, threads, errno, TLS) and §11 (P4:
-JNI and loading an APK's libraries in `winapk run`).
+Active work continues with `PLAN.md` §10 (P3: Bionic, threads, errno, TLS) and §11 (P4: JNI and
+loading an APK's libraries in `winapk run`).
 
 ## Upstream versions
 
 Go, MyGo and Mac.apk are not pinned: they always follow their latest version. The table shows the
-latest version at the last check (2026-11-04); everything else is locked in `build-lock.json`,
+latest version at the last check (2026-11-16); everything else is locked in `build-lock.json`,
 which also records what the last build used of the three.
 
 | Component | Policy | Latest at last check |
 |---|---|---|
-| Go | latest release | 1.27.3 |
-| MyGo | latest tag | v0.7.4 |
-| Mac.apk | latest `main`, as the `macapk/` subtree | `8b45e48`, merged |
+| Go | latest release | 1.27.4 |
+| MyGo | latest tag | v0.9.2 |
+| Mac.apk | latest `main`, as the `macapk/` subtree | `3f35611`, merged |
 | OpenJDK (ARM64), clang-cl, MSVC, Windows SDK, CMake, Ninja, vcpkg, Vulkan headers | locked in `build-lock.json` | Microsoft OpenJDK 21.0.13; clang-cl 22.1.3; MSVC 14.51; SDK 10.0.26100; CMake 4.3.1; Ninja 1.13.2; vcpkg baseline `afa249f`; Vulkan headers 1.4.363; Capstone 5.0.9 |
-| Android SDK/NDK, AOSP framework resources | chosen in `build-lock.json`, not installed yet | build-tools 36.0.0, android-36; NDK r30 (30.0.16248370); `android-16.0.0_r2` |
+| Android SDK/NDK, kotlinc, AOSP framework resources | locked in `build-lock.json` | build-tools 36.0.0, android-36; NDK r30 (30.0.16248370); kotlinc 2.4.0; `android-16.0.0_r2` |
 | ANGLE, Skia | chosen in P5a and P8 | not chosen yet; the Vulkan loader is Windows' own |

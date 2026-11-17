@@ -9,7 +9,7 @@
   Microsoft OpenJDK 21，用 `winget install --id Microsoft.OpenJDK.21 -e --architecture arm64` 安装（其 MSI
   设置系统 `JAVA_HOME` 和 PATH；构建时可用 `WINAPK_JAVA_HOME` 覆盖）。Android SDK（build-tools 36.0.0、
   android-36、cmdline-tools）和 NDK r30 用于构建平台资源和夹具，Kotlin 夹具使用 Android Studio 自带的 kotlinc 2.4.0（或 `KOTLIN_HOME`）；Android Studio 的默认位置 `%LOCALAPPDATA%\Android\Sdk`
-  无需 `ANDROID_HOME` 即可找到。`scripts/windows/check-requirements.ps1` 检查全部内容，不安装任何东西。
+  无需 `ANDROID_HOME` 即可找到（用 Android Studio 或 `android sdk install` 安装）。`scripts/windows/check-requirements.ps1`（与 `scripts/windows/` 下的所有脚本一样在 PowerShell 7 `pwsh` 中运行）检查全部内容，不安装任何东西。
 
 ## 命令
 

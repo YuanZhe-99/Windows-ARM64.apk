@@ -9,10 +9,11 @@ Android Framework, and the app's own `arm64-v8a` native libraries are loaded by 
 loader with a Bionic and JNI bridge. An app opens either in a phone-style pane inside the main
 window or in a window of its own.
 
-> **Status:** discontinued (2026-11-05). Development stopped at 0.1.0, before any release.
+> **Status:** experimental, in development (`0.1.0`, unreleased).
 > The pure-Java path (gate G1) and a probe of the restricted ELF loader (gate G2) work on the test
-> machine; nothing here is ready for use. See the [project status](doc/en-us/README.md#project-status),
-> [PLAN.md](PLAN.md) (in Chinese) and the [platform notes](doc/en-us/platform-notes.md).
+> machine; nothing here is ready for end-user installation yet. See the
+> [project status](doc/en-us/README.md#project-status), [PLAN.md](PLAN.md) (in Chinese) and the
+> [platform notes](doc/en-us/platform-notes.md).
 
 ## Features
 
@@ -37,7 +38,7 @@ for the first versions.
 
 ## Building from Source
 
-No builds were released. Requirements and commands: [doc/en-us/development.md](doc/en-us/development.md).
+No builds have been released yet. Requirements and commands: [doc/en-us/development.md](doc/en-us/development.md).
 
 ## Documentation
 

@@ -1,7 +1,7 @@
 # 上游契约
 
 Windows-ARM64.apk 依赖上游的哪些行为，以及每一点核实到了什么程度。Mac.apk、Go 与 MyGo 跟随各自最新版本，因此上游变化时
-每一点都要重新核对。下列 Mac.apk 要点在 `8b45e48`（2026-11-04 合并）上成立；“已阅读”表示读过源码，“已构建”或“已验证”表示 P0 在
+每一点都要重新核对。下列 Mac.apk 要点在 `3f35611`（2026-11-16 合并）上成立；“已阅读”表示读过源码，“已构建”或“已验证”表示 P0 在
 Windows 11 ARM64 上构建或运行过（[port-audit.md](port-audit.md)）。
 
 ## Mac.apk
@@ -20,7 +20,7 @@ Windows 11 ARM64 上构建或运行过（[port-audit.md](port-audit.md)）。
 | `runtime/src/jvm_loader.cpp` 以 macOS 加载假设嵌入 JVM | 需要 Windows `jvm.dll` 加载器及其自己的选项 | 已验证：Windows 加载器在 `platform/windows` 中，JDK 接受上游的模块选项（T01） |
 | `runtime/CMakeLists.txt` 在顶层启用 OBJCXX，并查找 Apple 与 Homebrew 依赖 | 语言、源文件、链接和依赖发现改为按平台条件化 | 已构建：`if(WIN32)` 分支在 macOS 项目之前引入 `platform/windows/windows.cmake` |
 | `runtime/translator/src/arm64_native.cpp` 将 ELF 映射/重定位与 macOS 内存、寄存器和补丁机制交织 | N0 加载器只复用 ELF 记录布局（`elf64_reader.h`）；使用 `x18`、`TPIDR_EL0` 或 `svc` 的代码被拒绝而不是打补丁 | 已阅读；布局已构建（G2） |
-| `runtime/scripts/build.sh` 把 `thirdparty/apache-http-legacy/org.apache.http.legacy.jvm.jar` 放到框架的 classpath 上，并解包进 `android-framework.jar`，绝不覆盖已编译的类 | `build.ps1 -Component Java` 同样处理 | 已构建（`8b45e48`） |
+| `runtime/scripts/build.sh` 把 `thirdparty/apache-http-legacy/org.apache.http.legacy.jvm.jar` 放到框架的 classpath 上，并解包进 `android-framework.jar`，绝不覆盖已编译的类 | `build.ps1 -Component Java` 同样处理 | 已构建（`3f35611`） |
 | `main.cpp` 把应用的文件夹命名为 `<package>_<version>`，并去掉版本号里的点（`dir_naming.h`） | `winapk run` 只用包名命名，因此应用路径中不出现版本号的点 | 已阅读 |
 | `arm64_pack.cpp` 与 `arm64_macho_emit.cpp` 把客体代码包装为 Mach-O | Windows 改用一个宿主 PE 桥和虚拟客体库注册表 | 已阅读 |
 | `bionic_shim.cpp` 将 Bionic、系统调用和线程绑定到 Darwin 机制 | 按能力拆分，绝不整文件移植 | 已阅读 |

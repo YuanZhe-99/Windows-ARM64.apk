@@ -6,9 +6,8 @@ setting (PLAN.md §18).
 .DESCRIPTION
 Each requirement prints OK, MISSING or DIFFERENT with what was found. A
 locked requirement that is missing or different makes the script exit 1; a
-chosen one not installed yet (the Android SDK and NDK, needed from P1/P2) is
-reported as LATER and does not. How to install each is in
-doc/en-us/development.md.
+chosen one not installed yet is reported as LATER and does not. How to
+install each is in doc/en-us/development.md.
 #>
 [CmdletBinding()]
 param()
@@ -63,13 +62,25 @@ $vk = Join-Path $env:SystemRoot 'System32\vulkan-1.dll'
 if (Test-Path $vk) { Report 'VulkanLoader' 'OK' "$((Get-Item $vk).VersionInfo.FileVersion) $(Get-PeMachine $vk) (system; winapk doctor reports devices)" }
 else { Report 'VulkanLoader' 'LATER' 'no vulkan-1.dll: graphics gates cannot run here' }
 
-# Chosen, needed from P1 (SDK) and P2 (NDK): reported, never required yet.
-$sdkRoot = @($env:ANDROID_HOME, $env:ANDROID_SDK_ROOT, (Join-Path $env:LOCALAPPDATA 'Android\Sdk')) | Where-Object { $_ -and (Test-Path $_) } | Select-Object -First 1
-if ($sdkRoot) { Report 'AndroidSDK' 'OK' $sdkRoot } else { Report 'AndroidSDK' 'LATER' "not installed; needed from P1 ($($lock.guest.androidSdk.packages -join ', '))" }
-$ndk = if ($sdkRoot) { Join-Path $sdkRoot ('ndk\' + ($lock.guest.androidNdk.version -replace '.*\((.*)\)', '$1')) }
-if ($ndk -and (Test-Path $ndk)) { Report 'AndroidNDK' 'OK' $ndk } else { Report 'AndroidNDK' 'LATER' "not installed; needed from P2 ($($lock.guest.androidNdk.version))" }
+<# Maps a failed requirement to LATER when chosen, else MISSING or DIFFERENT. #>
+function MissState($Entry, [string]$Message = '') {
+    if ($Entry.status -ne 'locked') { return 'LATER' }
+    if ($Message -match ' is ') { return 'DIFFERENT' }
+    'MISSING'
+}
+
+try {
+    $asdk = Find-AndroidSdk
+    Report 'AndroidSDK' 'OK' "$($asdk.Root) ($(Split-Path $asdk.BuildTools -Leaf), $(Split-Path (Split-Path $asdk.AndroidJar) -Leaf))"
+} catch { Report 'AndroidSDK' (MissState $lock.guest.androidSdk $_.Exception.Message) $_.Exception.Message }
+
+try {
+    $ndk = [IO.Path]::GetFullPath((Join-Path (Find-AndroidNdk) '..\..\..\..\..\..'))
+    Report 'AndroidNDK' 'OK' "$ndk ($($lock.guest.androidNdk.version))"
+} catch { Report 'AndroidNDK' (MissState $lock.guest.androidNdk $_.Exception.Message) $_.Exception.Message }
+
 try { Report 'kotlinc' 'OK' "$(Find-Kotlinc) ($($lock.guest.kotlinc.version))" }
-catch { Report 'kotlinc' 'LATER' "$($_.Exception.Message); needed for the Kotlin fixture T04 only" }
+catch { Report 'kotlinc' (MissState $lock.guest.kotlinc $_.Exception.Message) $_.Exception.Message }
 
 if ($script:bad -gt 0) { Write-Host "$script:bad requirement(s) missing or different"; exit 1 }
-Write-Host 'requirements met for the Java and Host components'
+Write-Host 'all locked requirements met'

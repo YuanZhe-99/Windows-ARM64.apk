@@ -6,3 +6,4 @@
 - Go 1.27.3、MyGo v0.7.4、Mac.apk `main` 位于 `367fd1a`（2026-11-03 检查），原样引入为 `macapk/` subtree。
 - 2026-11-04：Mac.apk `main` 合并到 `8b45e48`（上游 v1.0.2377 同步）；Go 1.27.3 和 MyGo v0.7.4 已检查，未变。
 - 2026-11-05：G2 之后停止开发；0.1.0 从未发布或打标签（[README.md](README.md#项目状态)）。
+- 2026-11-16：恢复开发；升到 Go 1.27.4、MyGo v0.9.2 和 Mac.apk `main` 的 `3f35611`（上游 v1.0.2379 同步），重新验证 G0–G2（[platform-notes.md](platform-notes.md)）。

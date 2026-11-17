@@ -4,41 +4,41 @@
 |---|---|
 | Windows 11 ARM64 | G0 passes; G1's checks pass on this PC (T02, T03): `winapk run` runs a pure-Java APK's real DEX in a Win32 window with touch, keys and typed Unicode text, scrolling, resizing, minimising and restoring, Back, saved state and SQLite, from Unicode paths; the Kotlin fixture T04 runs too. G2 passes as well: `native-probe.exe` loads N0 guest ELF libraries, runs the ABI suite T05 on them and refuses the malformed and out-of-profile ones (T06); `winapk run` does not load an APK's libraries yet. The interface still runs against sample data (`winapk.Mock`). |
 | Windows 11 x64 | Not a target; may host build tools and parsing tests only. |
-| macOS (Apple Silicon) | Upstream Mac.apk's platform; imported as `macapk/`, now at `8b45e48`; no macOS build or smoke run here yet (`NOT_RUN`). |
+| macOS (Apple Silicon) | Upstream Mac.apk's platform; imported as `macapk/`, now at `3f35611`; no macOS build or smoke run here yet (`NOT_RUN`). |
 
 ## Windows
 
-Verified on Windows 11 ARM64 (2026-11-04): build 26300.9711, Snapdragon Compute Platform (8cx Gen 3), 32 GB, Qualcomm Adreno 8cx Gen 3 (driver 30.0.4122.4000), Vulkan loader 1.3.301 with Mesa Dozen devices only; Go 1.27.3, Microsoft OpenJDK 21.0.13 ARM64, clang-cl 22.1.3.
+Verified on Windows 11 ARM64 (2026-11-16): build 26300.9974, Snapdragon Compute Platform (8cx Gen 3), 32 GB, Qualcomm Adreno 8cx Gen 3 (driver 30.0.4122.4000), Vulkan loader 1.3.301 with Mesa Dozen devices only; Go 1.27.4, MyGo v0.9.2, Microsoft OpenJDK 21.0.13 ARM64, clang-cl 22.1.3.
 
 | Check | Result |
 |---|---|
-| Go module | `go vet ./...` and `go test ./...` pass |
+| Go module | `go vet ./...`, `go test ./...` and `CGO_ENABLED=0 go test ./...` pass |
 | Documentation mirror | `go run ./tools/checkdocs` passes |
 | Requirements | `scripts/windows/check-requirements.ps1`: every locked tool OK, including the Android SDK (build-tools 36.0.0, android-36), NDK r30 and kotlinc 2.4.0 (Android Studio's) |
 | Platform resources | `build.ps1 -Component FrameworkRes`: `framework-res.apk` from AOSP `android-16.0.0_r2` (API 36), 66.4 MB, sha256 `62eb212e…6d90`; its 14,530 public resource IDs equal android.jar's (android-36), one resource (`string/user_switched`) dropped by aapt2 for lacking a default |
 | Fixtures | `build.ps1 -Component Fixtures`: `hello-java.apk`, `hello-jni.apk` and `hello-kotlin.apk` (with kotlin-stdlib 2.4.0 dexed in) signed and verified by apksigner; `libhello.so` ELF64 AArch64 (NDK r30); hashes in `tests/fixtures/*.json` |
-| G1 Java path | `test.ps1 -Suite Java`: 41 checks PASS at 100% scale (density 160) on a 1080p display before the DPI checks and the display-DPI fix were added, and 43 PASS (the DPI checks added) at 200% (density 320) on a 3840×2160 display; `winapk.exe`, `winapk-bridge.dll`, `sqlite3.dll` and `zd.dll` ARM64 |
-| Java side (Mac.apk `8b45e48`) | `build.ps1 -Component Java`: compiles unchanged, 84 s, no error, Android's `org.apache.http.legacy` unpacked into the framework jar as upstream does ([port-audit.md](port-audit.md)) |
-| Guest ELF fixtures | `build.ps1 -Component NativeProbe`: the 27 fixtures of T05 and T06 with NDK r30's clang 21, hashes in `tests/fixtures/elf/fixtures.json` ([native-profiles.md](native-profiles.md)) |
+| G1 Java path | `test.ps1 -Suite Java`: 43 checks PASS at 100% scale (density 160, 2026-11-16, including the `ReleaseCapture` fix on deactivation mid-press) and 43 PASS at 200% (density 320, 3840×2160 display, 2026-11-04); `winapk.exe`, `winapk-bridge.dll`, `sqlite3.dll` and `zd.dll` ARM64 |
+| Java side (Mac.apk `3f35611`) | `build.ps1 -Component Java`: compiles unchanged, no error, Android's `org.apache.http.legacy` unpacked into the framework jar as upstream does ([port-audit.md](port-audit.md)) |
+| Guest ELF fixtures | `build.ps1 -Component NativeProbe`: the 24 fixtures of T05 and T06 with NDK r30's clang 21, hashes in `tests/fixtures/elf/fixtures.json` ([native-profiles.md](native-profiles.md)) |
 | G2 native path | `test.ps1 -Suite Native`: 58 checks PASS (below); `native-probe.exe` and `capstone.dll` ARM64 |
-| T01 host and JVM | `test.ps1 -Suite Host`: 23 checks PASS — `winapk.exe`, `winapk-bridge.dll`, `native-probe.exe`, zlib, SQLite and Capstone ARM64; JVM `jvm.dll` ARM64 created in-process with upstream's module options; JNI host → Java → host; Java2D; 260 font families; patch modules; and the negative cases (no JVM found, an invalid `--java-home`) |
+| T01 host and JVM | `test.ps1 -Suite Host`: 22 checks PASS — `winapk.exe`, `winapk-bridge.dll`, `native-probe.exe`, zlib, SQLite and Capstone ARM64; JVM `jvm.dll` ARM64 created in-process with upstream's module options; JNI host → Java → host; Java2D; 259 font families; patch modules; and the negative cases (no JVM found, an invalid `--java-home`) |
 | Vulkan | loader ARM64 available; two Mesa Dozen devices (Vulkan 1.2 on Direct3D 12); `doctor --present`: Win32 surface test passed. No vendor Vulkan driver |
-| Interface | `go tool mygo vet .` and `go tool mygo i18n check` pass; every screen of `design/` renders in `ui.Tester` in both languages and appearances; a pane dragged with the pointer in `ui.Tester` splits its target; the native window opens and stays up (smoke run, sample data) |
+| Interface | `go tool mygo vet .` and `go tool mygo i18n check` pass; every screen of `design/` renders in `ui.Tester` in both languages and appearances; a pane dragged with the pointer in `ui.Tester` splits its target (updated for MyGo v0.9.2); the native window opens and stays up (smoke run, sample data) |
 
 ## Gates
 
 | Gate | Status |
 |---|---|
-| G0 host ready | PASS (2026-11-03, this machine: T01, toolchain locked) |
-| G1 Java MVP | PASS on this PC (2026-11-04), G1.6 included, at 100% and 200% scale; a scale change while an app runs NOT_RUN (below) |
-| G2 native minimal execution | PASS on this PC (2026-11-04): profile N0 in `native-probe.exe`; guest native stays off in `winapk run` |
+| G0 host ready | PASS (2026-11-03, re-verified 2026-11-16 on this machine: T01, toolchain locked) |
+| G1 Java MVP | PASS on this PC (2026-11-04 at 200% scale, re-verified 2026-11-16 at 100% scale), G1.6 included; a scale change while an app runs NOT_RUN (below) |
+| G2 native minimal execution | PASS on this PC (2026-11-04, re-verified 2026-11-16): profile N0 in `native-probe.exe`; guest native stays off in `winapk run` |
 | G3 native integration | NOT_RUN |
 | G4 graphics | NOT_RUN |
 | G5 experimental release | NOT_RUN |
 
 ## G1 checks
 
-`test.ps1 -Suite Java`, 2026-11-04, on the machine above.
+`test.ps1 -Suite Java`, 2026-11-04 (200% scale) and 2026-11-16 (100% scale), on the machine above.
 
 | Item (`PLAN.md` §8) | Result | Evidence |
 |---|---|---|
@@ -54,12 +54,12 @@ Verified on Windows 11 ARM64 (2026-11-04): build 26300.9711, Snapdragon Compute 
 
 ## G2 checks
 
-`test.ps1 -Suite Native`, 2026-11-04, on the machine above, 12 s.
+`test.ps1 -Suite Native`, 2026-11-16, on the machine above.
 
 | Item (`PLAN.md` §9) | Result | Evidence |
 |---|---|---|
 | N0 positive cases return exact values, callbacks both ways and floating point and structures included | PASS | T05: 27 cases on each of four builds (`libn0abi.so` with RELR, `-rela`, `-sysv`, `-4k`): integers, guest `long`, narrow arguments with dirty upper bits, pointers, floating point, 20 arguments over the stack, HFAs, structures in registers, by reference and through `x8`, a variadic guest function, RELATIVE/RELR, ABS64, GLOB_DAT and JUMP_SLOT data, BSS, host imports, a host function pointer called by the guest, five levels of guest → host → guest reentry, callee-saved registers (and the harness catching a broken one), sp alignment; x18 is the TEB in every callback |
-| Negative cases refused before any entry or constructor, with module, offset and reason | PASS | T06: 21 files (17 built, 4 derived by patching one field), each `reject CATEGORY file where: reason` with its expected category and reason, exit 2, nothing run ([native-profiles.md](native-profiles.md)) |
+| Negative cases refused before any entry or constructor, with module, offset and reason | PASS | T06: 20 files (13 built, 7 derived by patching one field), each `reject CATEGORY file where: reason` with its expected category and reason, exit 2, nothing run ([native-profiles.md](native-profiles.md)) |
 | Repeated load/execute without crash or growing resources; repeatable under address randomization | PASS | 2000 load/run/unload cycles, each with a refused load: heap allocations +0 bytes in both halves, private regions +0, handles +0; 32 copies at once at 32 distinct bases, all passing; two processes at two bases, all passing |
 | On real ARM64 | PASS | the machine above; `native-probe.exe` and `capstone.dll` ARM64 |
 | `abi-compatibility.md` | PASS | [abi-compatibility.md](abi-compatibility.md): direct, thunk and unsupported signatures with their cases |

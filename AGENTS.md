@@ -12,10 +12,6 @@ Vulkan). The product front end is a Go + MyGo application that opens an app eith
 phone-style pane inside its main window or in a standalone window; each APK runs in its own
 runtime process. Treat the user's message as the change request: plan, implement, verify, report.
 
-**Status: development stopped on 2026-11-05** (`doc/en-us/README.md`, Project status). Before
-changing anything, confirm with the user that work is resuming; then follow this guide from the
-top, starting with the upstream updates.
-
 ## Reading order
 
 When you need to understand code, read in this order and stop as soon as you have what you need:

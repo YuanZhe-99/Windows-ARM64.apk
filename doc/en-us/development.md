@@ -14,8 +14,9 @@
   (build-tools 36.0.0, android-36, cmdline-tools) and NDK r30 build the platform resources and
   the fixtures, and the Kotlin fixture uses the kotlinc 2.4.0 that Android Studio bundles (or
   `KOTLIN_HOME`); Android Studio's default location `%LOCALAPPDATA%\Android\Sdk` is found without
-  `ANDROID_HOME`.
-  `scripts/windows/check-requirements.ps1` checks all of it and installs nothing.
+  `ANDROID_HOME` (installed with Android Studio or `android sdk install`).
+  `scripts/windows/check-requirements.ps1` (run in PowerShell 7, `pwsh`, like all scripts under
+  `scripts/windows/`) checks all of it and installs nothing.
 
 ## Commands
 

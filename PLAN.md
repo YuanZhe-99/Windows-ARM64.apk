@@ -6,14 +6,13 @@
 >
 > 图形方向：Android Vulkan → ABI/WSI 适配 → Windows 原生 Vulkan；Android OpenGL ES/EGL → ANGLE → Vulkan。ANGLE/D3D11 是独立、可配置的备选后端。
 
-> **状态（2026-11-05）：项目已停止开发。** P0–P2 完成（G0、G1、G2 通过），P3 起未开始；版本停在未发布的 0.1.0。
-> 恢复时的起点见 `doc/zh-cn/README.md` 的“项目状态”。
+> **状态（2026-11-16）：开发进行中（版本 0.1.0，尚未发布）。** P0–P2 已完成（G0、G1、G2 通过），当前推进 P3（§10）与 P4（§11）。
+> 当前进度、上游版本与已验证项见 `doc/zh-cn/README.md` 与 `doc/zh-cn/platform-notes.md`。
 
 - 编写日期：2026-11-03。
 - 上游仓库：[kksimp/Mac.apk](https://github.com/kksimp/Mac.apk)。
-- 本计划核查时的上游提交：[`f87be03575a79c7eeed578f421ee852bf99a814b`](https://github.com/kksimp/Mac.apk/tree/f87be03575a79c7eeed578f421ee852bf99a814b)，提交时间 2026-10-29 UTC。
-- 上游版本不固定：Mac.apk 始终跟随上游最新 `main`（以 git subtree 引入 `macapk/`），Go 与 MyGo 始终跟随最新发行版；文中的上游路径与审计表按实际合入的上游提交核对和更新。
-- 核查范围：上游构建文档、文件目录及关键构建/加载/桥接源码的定向阅读；未实际编译或执行 Windows 移植，也未完成整个仓库审计。
+- 初稿核查时的上游提交：[`f87be03575a79c7eeed578f421ee852bf99a814b`](https://github.com/kksimp/Mac.apk/tree/f87be03575a79c7eeed578f421ee852bf99a814b)（2026-10-29 UTC）；当前实际合入的上游提交与复核结果见 `build-lock.json` 与 `doc/en-us/port-audit.md`。
+- 上游版本不固定：Mac.apk 始终跟随上游最新 `main`（以 git subtree 引入 `macapk/`），Go 与 MyGo 始终跟随最新发行版；每次合入后按 `doc/en-us/upstream.md` 与 `doc/en-us/port-audit.md` 复核并重跑受影响关卡。
 - 产品名称确定为 **`Windows-ARM64.apk`**。本文中的 `winapk` 仅作为内部 CLI/构建标识；面向用户的名称使用 `Windows-ARM64.apk`，无需因此批量重命名上游 Java 包或覆盖现有 macOS 产品。
 
 ## 1. 给 Coding Agent 的执行要求
@@ -176,39 +175,33 @@ Host Platform API
 
 跨平台 C 接口尽量使用固定宽度整数、显式长度和 opaque handle；不让 `std::string`、Windows `long`、CRT `FILE*` 或平台 pthread 对象跨客体边界。
 
-### 4.4 建议新增的目录
+### 4.4 仓库目录映射
 
-以下目录是建议新增项，不是已存在的上游结构。P0 应核对仓库约定后再创建。
+Mac.apk 以 git subtree 位于 `macapk/`，文档统一维护在 `doc/en-us/` 并镜像到 `doc/zh-cn/`（不另建 `docs/windows-arm64/`）：
 
 ```text
-docs/windows-arm64/
+doc/en-us/（及镜像 doc/zh-cn/）
   port-audit.md
   abi-compatibility.md
   native-profiles.md
-  graphics-capabilities.md
-  compatibility.md
-  adr/
-runtime/platform/
-  common/
-  windows/
-  macos/                 # 按需迁入，不做一次性大搬家
-runtime/guest/
-  abi/
-  loader/
-  bionic/
-  jni/
-  graphics/
-cmake/platforms/
-scripts/windows/
-tests/windows-arm64/
-  host/
-  guest-elf/
-  apk-fixtures/
-  graphics/
-  negative/
+  decisions.md
+  platform-notes.md
+  gui.md
+macapk/runtime/platform/
+  windows/               # winapk CLI、JVM/Vulkan 探测、Win32 桥、native-probe
+macapk/runtime/guest/
+  loader/                # 受限 ELF 加载器（已实现 N0）
+  abi/                   # 按阶段新增（P3+）
+  bionic/                # 按阶段新增（P3）
+  jni/                   # 按阶段新增（P4）
+  graphics/              # 按阶段新增（P5b/P6）
+scripts/windows/         # 环境检查、构建、测试（PowerShell 7）
+tests/windows-arm64/     # 自建 APK 与客体 ELF 夹具源码
+tests/fixtures/          # 生成的测试夹具与哈希记录（不提交）
+build/windows-arm64/     # 构建与测试输出（不提交）
 ```
 
-已有 `runtime/translator/` 不必立即删除或改名。先提取可测试组件、增加 Windows 目标，再逐步替换重复实现。
+已有 `macapk/runtime/translator/` 不删除或改名；Windows 目标仅复用经审计的数据结构，逐步建设独立客体组件。
 
 ## 5. ABI 与原生执行的硬约束
 
@@ -257,16 +250,16 @@ TLS 的加载和访问不仅是一个 `TlsAlloc` 调用；它涉及模块布局�
 ## 6. 阶段依赖和验收关卡
 
 ```text
-P0 盘点/依赖/探测
- ├─ P1 纯 Java 启动与 Win32 基础界面 ───────────────┐
- ├─ P2 ELF + ABI 最小实验 → P3 Bionic/TLS → P4 JNI ┤
- └─ P5a 宿主 ANGLE/Vulkan 构建与呈现 ─────────────┤
-                                                  ↓
-                                    P5b 客体 GLES/EGL 集成
-                                                  ↓
-                                    P6 客体 Vulkan/WSI 集成
-                                                  ↓
-                                    P7 打包、回归、实验版交付
+P0 盘点/依赖/探测（已完成，G0 PASS）
+ ├─ P1 纯 Java 启动与 Win32 基础界面（已完成，G1 PASS） ─────────┐
+ ├─ P2 ELF + ABI 最小实验（已完成，G2 PASS） → P3 Bionic/TLS → P4 JNI ┤
+ └─ P5a 宿主 ANGLE/Vulkan 构建与呈现 ─────────────────────────────┤
+                                                                  ↓
+                                                    P5b 客体 GLES/EGL 集成
+                                                                  ↓
+                                                    P6 客体 Vulkan/WSI 集成
+                                                                  ↓
+                                                    P7 打包、回归、实验版交付
 
 P8：P7 后的可选扩展（Skia/AGSL、媒体、ARM32 等）
 ```
@@ -282,148 +275,33 @@ P8：P7 后的可选扩展（Skia/AGSL、媒体、ARM32 等）
 | G4：图形 | GLES 与 Vulkan 两条客体路径各自通过 | 后端分别报告，不互相代替 |
 | G5：实验版 | 干净机器构建/运行/错误报告可复现 | 标记未验证项，不把打包成功当兼容性通过 |
 
-## 7. P0 — 仓库盘点、工具链与能力探测
+## 7. P0 — 仓库盘点、工具链与能力探测（已完成，G0 通过）
 
-### 输入
+P0 与 G0 已完成并通过真机验证；长期契约已迁入概念文档：
 
-- 上游源码、当前分支、适用的仓库工作规范。
-- 一台真实 Windows 11 ARM64 设备；图形阶段需要可访问 GPU 和桌面会话。
-- Windows ARM64 JDK、C/C++ 工具链、Windows SDK、CMake/Ninja、Android SDK/NDK。
+- **移植审计与上游耦合：** `doc/en-us/port-audit.md`、`doc/en-us/upstream.md`。
+- **依赖锁定与环境检查：** `build-lock.json`、`scripts/windows/check-requirements.ps1`、`doc/en-us/development.md`。
+- **宿主工具链、JDK、进程结构与 JNI 方向：** `doc/en-us/decisions.md`（ADR-0001）。
+- **`winapk doctor` 与 T01 验证证据：** `doc/en-us/platform-notes.md`（含本机仅具 Mesa Dozen 转换层 Vulkan 驱动的事实及 P5/P6 前置要求）。
+- **后续阶段延续项：** 自建夹具 T01–T06 已完成，T07–T15 按 §16 随 P3–P8 建立；ANGLE 与 Skia 分别在 P5a 与 P8 锁定构建。
 
-### 工作项
+## 8. P1 — 纯 Java APK 与 Win32 基础界面（已完成，G1 通过）
 
-状态（2026-11-03）：G0 通过，结果见 `doc/en-us/platform-notes.md`、`port-audit.md`、`decisions.md` 与 `build-lock.json`。
+P1 与 G1（含 G1.6 Kotlin 夹具，100% 与 200% 缩放）已完成并通过真机验证；长期契约已迁入概念文档：
 
-- [x] 记录当前工作树状态、合入的上游 commit 和已有变更；不覆盖用户改动。
-- [x] 对比本计划核查时的上游提交与最新上游 `main`；路径变化时更新审计表，不盲套文件名。
-- [x] 搜索平台耦合：`Cocoa`、`AppKit`、`Metal`、`Mach`、`dyld`、`.dylib`、`/opt/homebrew`、`/Library`、`mmap`、`pthread`、`sigaction`、`x18`、`TPIDR_EL0`、`svc`。
-- [x] 阅读 `runtime/CMakeLists.txt`、`runtime/translator/CMakeLists.txt`、`runtime/scripts/build.sh` 和 `scripts/build_framework_res.sh`。
-- [x] 从既有构建脚本提取 Java 编译、资源打包、module patches 和启动选项；不只把 `.sh` 改名为 `.ps1`。
-- [x] 为宿主、客体和 Java 工具链分别记录版本、target triple、来源、校验值、许可证与用途。
-- [x] 检查生成 PE 的机器类型、JVM/DLL 架构、NDK ELF 的架构。构建期工具可以通过 x64 仿真运行，但不得与原生运行时验证混淆。（2026-11-03：PE 与 JVM/DLL 已检查，均为 ARM64；NDK ELF 待安装 NDK 后在 P2 检查。）（P1：fixture 的 NDK ELF 由构建脚本检查为 ELF64 AArch64。）
-- [x] 核实 JDK 的 `java.desktop`、JNI headers、`jvm.dll`、Java2D/字体支持，以及上游需要的 `--patch-module`、`--add-opens`。
-- [x] 编写 `doctor`：检查运行时、JVM、图形后端及可选依赖，输出机器可读 JSON。
-- [x] 锁定 Mac.apk、Go、MyGo 以外的依赖版本（这三者跟随最新，只记录每次构建实际使用的版本）；不得依赖 macOS 预编译产物。ANGLE/Skia 若没有合适 ARM64 二进制，建立独立构建任务。
-- [ ] 建立公开、自建的 APK/ELF 测试集；上游私人回归集不可作为验收前提。（2026-11-03：T01 已建立；APK 与 ELF 夹具需要 Android SDK/NDK，见 `build-lock.json`。）（P1：T02、T03、`hello-jni` 已建立；ELF 夹具 T05/T06 随 P2。）
+- **独立构建与平台资源：** `scripts/windows/build.ps1`（`Java`、`FrameworkRes`、`Fixtures`、`Host`）与 `doc/en-us/development.md`。
+- **宿主桥、窗口/消息线程与构建标识：** `doc/en-us/port-audit.md`、`doc/en-us/decisions.md`（ADR-0002 `NativeCocoa` 过渡绑定与 UI 线程超时机制、ADR-0003 `winapk dex` UTF-16 参数与完整 JAR 摘要标识）。
+- **G1 逐项验收证据与输入/DPI 边界：** `doc/en-us/platform-notes.md`。
+- **后续阶段延续项：** MyGo 前端对接 `winapk` 运行时进程与窗格/独立窗口呈现归属 P7（§14.1，契约草案见 `doc/en-us/gui.md`）；运行中动态改变显示器缩放时的 Android 配置变更与真实输入法组字会话仍为 `NOT_RUN`（见 `doc/en-us/platform-notes.md`）；其余未绑定宿主 native（如 `NativeOs`、宿主字体）随目标样例按需实现。
 
-### `doctor` 最低字段
+## 9. P2 — 提前验证 ELF 加载与 ARM64 ABI（已完成，G2 通过）
 
-```json
-{
-  "schemaVersion": 1,
-  "host": { "osBuild": "measured", "osArch": "arm64", "processArch": "arm64" },
-  "jvm": { "vendor": "measured", "version": "measured", "arch": "arm64" },
-  "graphics": {
-    "vulkanLoader": "available-or-reason",
-    "devices": [],
-    "win32Present": "not-run-or-result",
-    "angleBackends": []
-  },
-  "runtime": { "guestNativeProfiles": [], "guestVulkan": false },
-  "limitations": []
-}
-```
+P2 与 G2（独立 `native-probe.exe` 上的 profile N0、ABI 正例 T05、提前拒绝负例 T06 及 2000 次循环/32 副本压力测试）已完成并通过真机验证；长期契约已迁入概念文档：
 
-GPU 记录至少包含 vendor/device ID、驱动版本、API 版本、queue families、WSI 支持；区分“驱动支持”与“兼容层已开放”。没有 Vulkan 时，Java MVP 仍可运行，客体 Vulkan 明确不可用。
-
-### 产物与验收
-
-- `port-audit.md`：文件、依赖、平台耦合、处理方式、优先级。
-- 依赖锁定清单、工具链说明、基线构建结果。
-- `doctor` 输出及 G0 状态。
-- 第一个 ADR：宿主工具链/JDK、运行时进程结构和 JNI 加载方向。
-
-## 8. P1 — 纯 Java APK 与 Win32 基础界面
-
-状态（2026-11-04）：G1 在本机通过，含 G1.6，100% 与 200% 缩放下均通过（运行中改变缩放为 NOT_RUN），结果见 `doc/en-us/platform-notes.md`、`port-audit.md`、ADR-0002 与 ADR-0003；界面接入 `winapk run` 属于 P7。G2 也已在本机通过（见 §9 与 `doc/en-us/native-profiles.md`、`abi-compatibility.md`）。
-
-### 8.1 拆分构建
-
-- [x] Windows 配置只启用 C/C++；macOS 才启用 OBJCXX 与 Apple frameworks。
-- [x] 分离公共 runtime、macOS backend、Windows backend；用目标级源文件和链接设置控制平台。
-- [x] 给 Java Framework/DEX 转换增加独立构建入口，不要求先构建 Bionic shim、ANGLE 或 Skia。
-- [x] 支持 Windows classpath 分隔符、Unicode/空格路径、参数文件和长命令行。（P1：winapk.exe 使用 UTF-8 活动代码页，转换器以 UTF-16 参数在 `winapk dex` 中运行；含空格、匈牙利文、韩文、中文的路径已测试。）
-- [x] 保留上游资源、字体、module patches、build IDs 与缓存失效语义。（P1：`MACAPK_BUILD_JAVA_ID` 以两个 jar 的完整摘要导出，基础比上游宽，见 ADR-0003。）
-- [x] 按锁定 AOSP/SDK 配方提供 `framework-res.apk`；记录来源/API，缺失时明确失败，不以空资源包通过。
-
-### 8.2 平台中立 Java 接口
-
-- [x] 对 `Boot`、`ActivityHost`、`ViewCanvasDriver` 与 `NativeCocoa` 的调用关系做最小梳理。
-- [x] 新增 `HostPlatform` 或等价适配层；macOS 后端可继续调用 `NativeCocoa`，Windows 后端调用新的 JNI 桥。（ADR-0002：NativeCocoa 的声明在 Windows 上绑定到 winapk-bridge.dll。）
-- [x] 基础窗口/输入/呈现路径先切换，其他服务按能力返回明确的“不支持”。
-- [x] 避免一次性全局替换类名；任何暂时保留的 `NativeCocoa` 名称都要说明是过渡兼容接口。
-- [x] 不全局伪造宿主 `os.name` 等系统属性来影响整个 JDK；若上游依赖这类机制，在宿主与客体视图间隔离并回归验证。
-
-### 8.3 JVM 与线程
-
-- [x] Windows runtime 从确定的 JDK/JRE 路径加载正确的 `jvm.dll`，使用 Invocation API 创建 JVM。
-- [x] 验证 JDK 选项实际有效，不照搬 macOS 的信号/主线程/JIT 参数。
-- [x] 明确 Win32 消息线程、Framework 主 Looper 和渲染任务归属；跨线程使用任务队列。
-- [x] 避免 JNI 调用持锁等待 UI，而 UI 又同步等待 JVM 的循环依赖。（P1：跨线程窗口调用每 2 秒记录 `UI_THREAD_BLOCKED`，循环运行后 10 秒未开始即以 `UI_CALL_TIMEOUT` 放弃。）
-- [x] 正确处理关闭、焦点、最小化、恢复和进程退出；阻塞任务有超时与诊断。（P1：最小化时 2 Hz 绘制，恢复时调用 `macapkTaskToFront`，失去焦点取消按下；均已测试。）
-
-### 8.4 基础图形和输入
-
-- [x] Java2D 渲染到离屏像素缓冲；Windows 使用 DIB/等价最小位图路径呈现。
-- [x] 显式定义 ARGB/BGRA、premultiplied alpha、stride、尺寸和缓冲所有权；先解决正确性，再优化拷贝。
-- [x] 映射鼠标点击/拖动为触摸，键盘/滚轮为相应 Android 事件；首轮先支持常见按键和返回。
-- [x] DPI 缩放后使用一致的逻辑坐标；resize 更新 Surface/Activity 的尺寸与生命周期。（P1：100% 与 200%（4K）缩放及改变尺寸已验证；运行中改变缩放时应用保持启动时的 density，NOT_RUN。）
-- [x] 简单测试页面使用 TextView、Button、EditText 和可滚动列表；字体回退和输入结果要可检查。
-- [x] 为不支持的高级输入/多触点/IME 场景记录范围；不让基础编辑框静默丢字。（P1：未映射按键与输入法提交经 WM_CHAR 送达；范围见 `doc/en-us/platform-notes.md`；真实输入法会话 NOT_RUN。）
-
-### 8.5 数据与缓存
-
-- [x] 将每应用数据、缓存和日志放入 `%LOCALAPPDATA%` 下明确的运行时目录，可由测试参数覆盖。
-- [x] 处理 APK 文件项路径穿越、绝对路径、重名/大小写冲突、非法 Windows 名称和解压大小限制。（P1：条目从不按名称映射为文件；不安全的名称在 `inspect` 中报告。）
-- [x] 在原始 ZIP 中保留大小写敏感的资源查询语义；不能简单将所有 APK 项直接映射成 Windows 文件名。
-- [x] 缓存 key 包含 APK 内容哈希、转换器/Framework 版本、平台和必要配置；写入使用临时文件后原子替换。
-
-### G1 验收
-
-1. 从真实 `hello-java.apk` 的 DEX 启动 Activity，日志包含转换、类加载和生命周期节点。
-2. 页面可显示文字、按钮和输入框；点击计数、文本输入、滚动、返回均有断言。
-3. 改变窗口尺寸/DPI 后坐标和内容正确；关闭后无残留运行时进程。
-4. 保存首选项/应用文件并重启验证；冷缓存与热缓存两次均成功。
-5. 未启用 guest native 时，尝试加载 APK `.so` 给出明确错误。
-6. 可选 Kotlin 夹具通过同一 DEX 路径运行，包含必要标准库；不以纯 Java 结果推定全部 Kotlin/Compose 兼容。
-
-## 9. P2 — 提前验证 ELF 加载与 ARM64 ABI
-
-### 9.1 独立实验程序
-
-建立不依赖 JVM/窗口/ANGLE 的 `native-probe.exe`。只加载受控测试 ELF，输出检查结果和失败阶段。保持该实验可独立运行，便于区分 JVM 问题与加载器问题。
-
-### 9.2 解析、内存和重定位
-
-- [x] 先接受 little-endian ELF64、`EM_AARCH64`、`ET_DYN`；验证所有偏移、长度、溢出和 segment 重叠。
-- [x] 按 program headers 处理 `PT_LOAD`、`PT_DYNAMIC`、BSS 和对齐，不把完整 section headers 作为正常加载前提。
-- [x] 查询 Windows 页大小与 allocation granularity；计算 load bias、reserve/commit 范围和最终权限。
-- [x] 使用 `VirtualAlloc`/`VirtualProtect` 等宿主实现，并在代码修改后 `FlushInstructionCache`。
-- [x] 保持构造期间可写、执行前设定最终权限；不以长期 RWX 规避问题。不能可靠表达的 page 权限组合应报告并拒绝。
-- [x] 第一批实现 `RELATIVE`、`ABS64`、`GLOB_DAT`、`JUMP_SLOT`；按用例加入 GNU hash/symbol versions 等。（P2：另有 RELR、GNU 与 SysV hash；带版本的导入拒绝。）
-- [x] 明确记录 RELR、Android packed relocations、TLS relocations、IFUNC/IRELATIVE 的支持状态；未知类型不得跳过。（`doc/en-us/native-profiles.md`）
-- [x] 解析阶段完成不等于可执行：依赖、重定位、执行 profile 检查完成前，不运行构造函数或 IFUNC resolver。（N0 完全不运行它们。）
-- [x] 支持失败回滚，避免半初始化模块进入全局可查找状态。
-
-### 9.3 ABI 测试
-
-- [x] NDK 生成 N0 fixtures，并记录 API level、编译器/链接器版本、优化和安全选项。
-- [x] 测试整数、指针、浮点、混合参数、超过寄存器容量的参数、HFA、小/大结构体返回。
-- [x] 验证保存寄存器、栈对齐、返回地址和回调重入；`x18` 检测只读，不主动给宿主 x18 写 sentinel。
-- [x] 对 thunk 使用明确的 guest/host 参数模型；有证明的固定签名才允许直接调用。（`doc/en-us/abi-compatibility.md`；N0 尚无 thunk。）
-- [ ] 动态产生的宿主 thunk 按 Windows 要求处理可调用目标和展开信息；用目标进程实际缓解策略进行测试。（P2：N0 不生成 thunk；以 `winapk.exe` 的编译选项与缓解策略（CFG 关闭）测试，启用 CFG 为 NOT_RUN。）
-- [x] 扫描 x18、TPIDR、svc 等风险并结合构建来源决定准入；仅报告支持的 N0 语义。
-- [x] 加入损坏 ELF、错误架构、未知重定位、缺失符号和禁止指令的负例。
-
-### G2 验收
-
-- N0 所有正例返回精确期望值；至少包含双向回调和浮点/结构体场景。
-- 负例在执行入口/构造函数之前拒绝，并输出模块、偏移与原因。
-- 循环加载/执行无崩溃，无随循环增长的资源泄漏；地址随机化下可重复。
-- 在真实 ARM64 上执行；x64 机器仅能报告交叉编译或解析测试通过。
-- 形成 `abi-compatibility.md`：哪些签名可直通、哪些必须 thunk、哪些不支持，以及证据位置。
-
-若 G2 未通过，保持 guest native 默认关闭，继续 Java MVP；不要进入大规模 Bionic 或游戏兼容开发。
+- **N0 准入条件、加载顺序、重定位支持表、静态筛查与拒绝类别：** `doc/en-us/native-profiles.md`。
+- **宿主 ↔ 客体调用约定对比及直通 / 需 thunk / 不支持签名表：** `doc/en-us/abi-compatibility.md`。
+- **G2 验收证据：** `doc/en-us/platform-notes.md`。
+- **转入 P3/P4 的未完成项：** N0 仅绑定固定签名宿主函数，尚未动态生成宿主 thunk；P3/P4 引入宿主 thunk（如可变参数桥、`RegisterNatives` Java→客体入口）时，必须按 Windows ARM64 要求处理可调用目标和展开信息，并在目标进程实际缓解策略（含启用 CFG 的构建，当前为 `NOT_RUN`）下测试。`winapk run` 中客体原生当前仍默认关闭。
 
 ## 10. P3 — Bionic、线程、TLS 与客体模块语义
 
@@ -745,7 +623,7 @@ Next blocking issue:
 
 ## 18. 构建与命令接口契约
 
-下面是**待实现的目标接口**，不是上游当前已有命令。可以根据仓库风格调整名称，但文档、脚本和 CI 必须一致。
+P0–P2 已实现的命令（含 `FrameworkRes`、`Fixtures`、`-Suite Host`、`winapk dex`、`native-probe`）以 `doc/en-us/development.md` 为准；下面列出完整阶段的命令接口契约（其中 `Graphics`、`--native=restricted`、`--gles-backend`、`--guest-vulkan`、`package.ps1` 随 P3–P7 实现）：
 
 ```powershell
 # 盘点环境；只检查，不默默安装或修改系统配置。
@@ -802,10 +680,10 @@ Next blocking issue:
 
 ### 最终完成清单
 
-- [ ] P0 审计与依赖锁定完整，实际合入的上游 commit 可追溯。
-- [ ] Windows ARM64 宿主构建与 Java 独立构建入口可用。
-- [ ] G1：真实纯 Java APK 的界面、输入与持久化通过。
-- [ ] G2：N0 ELF 与 ABI 测试在 ARM64 真机通过。
+- [x] P0 审计与依赖锁定完整，实际合入的上游 commit 可追溯。
+- [x] Windows ARM64 宿主构建与 Java 独立构建入口可用。
+- [x] G1：真实纯 Java APK 的界面、输入与持久化通过。
+- [x] G2：N0 ELF 与 ABI 测试在 ARM64 真机通过。
 - [ ] G3：受支持 N1 的 Bionic/TLS/JNI 测试通过，限制明确。
 - [ ] G4：guest GLES 与 guest Vulkan 路径分别通过，不用宿主样例代替。
 - [ ] G5：干净环境实验包、文档、日志和兼容性报告完成。
@@ -816,13 +694,6 @@ Next blocking issue:
 
 如果只完成部分关卡，按层级交付可用成果和阻塞报告，不能勾选整项“Windows ARM64 移植完成”。
 
-## 20. 首次工作会话应立即完成的事情
+## 20. 基线里程碑状态与当前起点
 
-1. 阅读仓库规范，记录工作树状态，定位本计划列出的上游入口。
-2. 生成 P0 审计初稿和锁定工具链清单，核实 ARM64 JDK/JNI 与 Vulkan 环境。
-3. 将 Java-only 构建从 macOS 原生构建前置依赖中拆出，先验证 JAR 与资源产物。
-4. 创建最小 Windows ARM64 宿主和 `doctor`，证明 JVM 可嵌入。
-5. 建立 N0 fixture 与独立 ELF/ABI probe 的最小闭环，尽早给出 native 路线的第一份证据。
-6. 汇报实际改动、执行命令、通过/失败项及下一项具体阻塞；随后按依赖图继续。
-
-**第一轮优先交付两个独立证据：Java APK 路线确实能在 Windows ARM64 JVM 上启动，以及受限 Android ARM64 ELF 路线确实能在 Windows ARM64 进程中正确执行。图形集成建立在这些证据之上。**
+首次工作会话的目标（P0 审计与工具链锁定、Java-only 独立构建、最小 Windows ARM64 宿主与 `doctor`、纯 Java APK 路线 G1、独立 N0 ELF/ABI 探测闭环 G2）均已完成并记录于 `doc/en-us/platform-notes.md`。当前起点为 §10（P3：Bionic、线程、errno、TLS）与 §11（P4：JNI 与在 `winapk run` 中接入 APK 原生库），图形集成（§12、§13）与实验版打包（§14）按 §6 依赖图依次推进。

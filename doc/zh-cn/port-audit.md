@@ -1,7 +1,7 @@
 # 移植审计
 
 Mac.apk 中哪些部分与 macOS 绑定、在 Windows ARM64 上如何处理、在哪个阶段处理。审计基于 Mac.apk
-`ff2afbf`（2026-11-03）并在 `8b45e48`（2026-11-04，上游 v1.0.2377 同步）上复核，以 `macapk/` subtree 合入，在 Windows 11 ARM64（build 26300）上进行。每次合并
+`ff2afbf`（2026-11-03）并在 `3f35611`（2026-11-16，上游 v1.0.2379 同步）上复核，以 `macapk/` subtree 合入，在 Windows 11 ARM64（build 26300）上进行。每次合并
 Mac.apk 后重新执行下面的搜索并更新各表。
 
 ## 方法
@@ -37,7 +37,7 @@ Mac.apk 后重新执行下面的搜索并更新各表。
 
 ## 耦合计数
 
-各模式匹配的行数（`grep -c` 求和），基于 `8b45e48`。
+各模式匹配的行数（`grep -c` 求和），基于 `3f35611`。
 
 | 模式 | `runtime/src` | `runtime/translator` | `runtime/java` | `launcher` | `scripts` |
 |---|---|---|---|---|---|
@@ -77,7 +77,7 @@ Mac.apk 后重新执行下面的搜索并更新各表。
 
 | 检查 | 结果 |
 |---|---|
-| Java 侧不经修改即可用 Microsoft OpenJDK 21.0.13 ARM64 编译 | 在 `8b45e48` 上 PASS：84 秒，达到 javac 的 100 个警告上限（内部 `Unsafe` API 和弃用），没有错误 |
+| Java 侧不经修改即可用 Microsoft OpenJDK 21.0.13 ARM64 编译 | 在 `3f35611` 上 PASS：达到 javac 的 100 个警告上限（内部 `Unsafe` API 和弃用），没有错误 |
 | `android-framework.jar` | 14,979 KB，6,415 个条目 |
 | `macapk-loader.jar` | 1,556 KB，530 个条目 |
 | 补丁模块能在 JVM 上加载（`--patch-module java.base=… --patch-module jdk.unsupported=…`） | PASS（T01） |
@@ -120,7 +120,7 @@ Mac.apk 后重新执行下面的搜索并更新各表。
 | `main.cpp` 的启动流程（安装、解包、DEX 转换、JVM 选项、native、`Boot.run`） | 在 `run.cpp` 中重新表达：原生读取 APK（`apk.cpp`：ZIP、ZIP64、解压、二进制 manifest、条目名筛查），与上游一样在子进程中用 com.macapk.dex 转换 DEX，但子进程是以 UTF-16 字符串向 JVM 传参的 `winapk dex`，而不是 `java.exe`（ADR-0003），按 APK、转换器和框架的哈希缓存，然后在进程内以上游的选项（去掉 macOS 专用的 hosts 文件路径和 AOT 缓存）创建 JVM；`winapk.exe` 使用 UTF-8 活动代码页，所以选项字符串能携带 Unicode 路径 |
 | `build-id.txt` 与 `MACAPK_BUILD_JAVA_ID`（`build_ids.py`，由 `main.cpp` 读取） | `winapk run` 以两个 jar 的完整摘要导出 `MACAPK_BUILD_JAVA_ID`，因此应用自己的动态 DEX 缓存得以保留，并在转换器或框架有任何改动时失效（ADR-0003）；`MACAPK_BUILD_NATIVE_ID` 等客体加载器（P2–P4）实现后再提供 |
 | `NativeLog`（5 个 native 中的 4 个） | 绑定 `print`、`nativeBoostCurrentThreadQos`（线程优先级高于正常）、`nativeBootTimeNanos`（性能计数器，即 HotSpot `nanoTime` 的来源）；`nativeInstallJniTrace` 和 `nativeRegisterPairipGate` 未绑定 |
-| `NativeCocoa` 的窗口、呈现、输入（57 个 native 中的 29 个） | 在 `window.cpp` 中绑定（ADR-0002）：`init`、`runLoop`、尺寸和缩放、窗口和视图、渲染器、`presentBitmap`、触摸注册、方向和宽高比上限、`setSecureContent`（`WDA_EXCLUDEFROMCAPTURE`）、任务移到后台/前台、数据和库目录、`exitProcess`。窗口状态与上游一致：最小化的窗口以 2 Hz 绘制（上游对隐藏窗口的节流），恢复窗口时调用 `ActivityHost.macapkTaskToFront`（上游取消隐藏时的钩子），记录焦点变化，按下途中失去焦点或鼠标捕获时发送 `ACTION_CANCEL`。文字：没有映射按键送达的字符（输入法提交、死键组合、未映射的按键）以 KEYCODE_UNKNOWN 加该字符交给 `dispatchKey`，每个 UTF-16 码元一对 DOWN/UP，即上游处理组合文字的方式。未绑定，在被调用处以 `UnsatisfiedLinkError` 失败的：AOSP 窗口策略会话（`activityWindowTransition`、`windowOverrideOrientation`、`applyWindowOrientationFor`、`setTopActivityConfigChanges`）、URL 和 scheme 处理、IOSurface 环（`presentFrame`）、GL surface 和覆盖层、`hostFontFile`、`setSystemFontsDir`、`setSystemProperty`、翻译覆盖层、触控板和退出手势调试 |
+| `NativeCocoa` 的窗口、呈现、输入（57 个 native 中的 29 个） | 在 `window.cpp` 中绑定（ADR-0002）：`init`、`runLoop`、尺寸和缩放、窗口和视图、渲染器、`presentBitmap`、触摸注册、方向和宽高比上限、`setSecureContent`（`WDA_EXCLUDEFROMCAPTURE`）、任务移到后台/前台、数据和库目录、`exitProcess`。窗口状态与上游一致：最小化的窗口以 2 Hz 绘制（上游对隐藏窗口的节流），恢复窗口时调用 `ActivityHost.macapkTaskToFront`（上游取消隐藏时的钩子），记录焦点变化，按下途中失去焦点或鼠标捕获时释放捕获并发送 `ACTION_CANCEL`。文字：没有映射按键送达的字符（输入法提交、死键组合、未映射的按键）以 KEYCODE_UNKNOWN 加该字符交给 `dispatchKey`，每个 UTF-16 码元一对 DOWN/UP，即上游处理组合文字的方式。未绑定，在被调用处以 `UnsatisfiedLinkError` 失败的：AOSP 窗口策略会话（`activityWindowTransition`、`windowOverrideOrientation`、`applyWindowOrientationFor`、`setTopActivityConfigChanges`）、URL 和 scheme 处理、IOSurface 环（`presentFrame`）、GL surface 和覆盖层、`hostFontFile`、`setSystemFontsDir`、`setSystemProperty`、翻译覆盖层、触控板和退出手势调试 |
 | `NativeSqlite`（26 个 native） | 已绑定：就是上游的 `native_sqlite.cpp`，编入 `winapk-bridge.dll`，链接 SQLite 3.54.1，带有每个 Android 连接都有的 Unicode `upper`/`lower`/`LIKE` 和 LOCALIZED、UNICODE、PHONEBOOK 排序规则。保留的上游特性：它按 modified UTF-8 转换字符串，所以 SQL 文本或列中 BMP 之外的字符与设备上不同（macOS 亦然） |
 | Boot 会用到的其他宿主 native（`NativeOs.setenv`、`GamepadBridge`、Monet 壁纸） | 未绑定；Boot 逐一记录日志并继续 |
 | `AppClassLoader.findLibrary` 退回 stub | guest native 关闭时改为 `GUEST_NATIVE_DISABLED`（G1.5） |

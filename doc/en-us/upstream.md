@@ -2,7 +2,7 @@
 
 What Windows-ARM64.apk relies on from its upstreams, and how far each point has been checked.
 Mac.apk, Go and MyGo follow their latest version, so every point is re-checked when that upstream
-moves. The Mac.apk points below hold at `8b45e48` (merged 2026-11-04); "read" means read in the source,
+moves. The Mac.apk points below hold at `3f35611` (merged 2026-11-16); "read" means read in the source,
 "built" or "verified" that P0 built or ran it on Windows 11 ARM64 ([port-audit.md](port-audit.md)).
 
 ## Mac.apk
@@ -21,7 +21,7 @@ moves. The Mac.apk points below hold at `8b45e48` (merged 2026-11-04); "read" me
 | `runtime/src/jvm_loader.cpp` embeds the JVM with macOS loading assumptions | a Windows `jvm.dll` loader with its own options is needed | verified: the Windows loader is in `platform/windows`, and the JDK accepts upstream's module options (T01) |
 | `runtime/CMakeLists.txt` enables OBJCXX at the top level and finds Apple and Homebrew dependencies | languages, sources, links and discovery become platform-conditional | built: an `if(WIN32)` branch includes `platform/windows/windows.cmake` before the macOS project |
 | `runtime/translator/src/arm64_native.cpp` interleaves ELF mapping and relocation with macOS memory, register and patching | the N0 loader reuses only the ELF record layouts (`elf64_reader.h`); code that uses `x18`, `TPIDR_EL0` or `svc` is refused rather than patched | read; layouts built (G2) |
-| `runtime/scripts/build.sh` puts `thirdparty/apache-http-legacy/org.apache.http.legacy.jvm.jar` on the framework's classpath and unpacks it into `android-framework.jar`, never over a compiled class | `build.ps1 -Component Java` does the same | built (`8b45e48`) |
+| `runtime/scripts/build.sh` puts `thirdparty/apache-http-legacy/org.apache.http.legacy.jvm.jar` on the framework's classpath and unpacks it into `android-framework.jar`, never over a compiled class | `build.ps1 -Component Java` does the same | built (`3f35611`) |
 | `main.cpp` names an app's folders `<package>_<version>` with the version's dots folded (`dir_naming.h`) | `winapk run` names them after the package alone, so no version dot appears in an app's paths | read |
 | `arm64_pack.cpp` and `arm64_macho_emit.cpp` wrap guest code as Mach-O | Windows uses one host PE bridge and a virtual guest library registry instead | read |
 | `bionic_shim.cpp` ties Bionic, syscalls and threads to Darwin mechanisms | split by capability, never ported file-wide | read |
