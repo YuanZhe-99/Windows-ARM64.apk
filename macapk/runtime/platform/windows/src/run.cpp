@@ -28,6 +28,7 @@
 #include <algorithm>
 #include <cstdio>
 #include <fstream>
+#include <memory>
 #include <set>
 #include <sstream>
 #include <vector>
@@ -107,19 +108,55 @@ std::wstring Quote(const std::wstring& a) {
     return q + L"\"";
 }
 
-/// Runs a program with `args`, sharing this process's console streams, and waits.
-/// Returns: its exit code, or -1 when it could not start.
+/// Starts the DEX converter inside a kill-on-close job and waits for its exit.
+/// Notes: assigns the job atomically at creation; the non-inherited job handle belongs to the launcher.
+/// Returns: the child exit code, or -1 on a Win32 launch or wait failure.
 int Spawn(const std::wstring& exe, const std::vector<std::wstring>& args) {
+    const auto failed = [](const char* operation, DWORD error) {
+        Log(std::string("DEX_CONVERSION_FAILED: ") + operation + " win32=" + std::to_string(error));
+        return -1;
+    };
     std::wstring cmd = Quote(exe);
     for (const auto& a : args) cmd += L" " + Quote(a);
-    STARTUPINFOW si{sizeof si};
+
+    const std::unique_ptr<void, decltype(&CloseHandle)> job(CreateJobObjectW(nullptr, nullptr), CloseHandle);
+    if (!job) return failed("CreateJobObjectW", GetLastError());
+    JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits{};
+    limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+    if (!SetInformationJobObject(job.get(), JobObjectExtendedLimitInformation, &limits, sizeof limits))
+        return failed("SetInformationJobObject", GetLastError());
+
+    SIZE_T size = 0;
+    InitializeProcThreadAttributeList(nullptr, 1, 0, &size);
+    if (!size) return failed("InitializeProcThreadAttributeList (size)", GetLastError());
+    std::vector<unsigned char> storage(size);
+    STARTUPINFOEXW si{};
+    si.StartupInfo.cb = sizeof si;
+    si.lpAttributeList = reinterpret_cast<LPPROC_THREAD_ATTRIBUTE_LIST>(storage.data());
+    if (!InitializeProcThreadAttributeList(si.lpAttributeList, 1, 0, &size))
+        return failed("InitializeProcThreadAttributeList", GetLastError());
+    HANDLE childJob = job.get();
+    if (!UpdateProcThreadAttribute(si.lpAttributeList, 0, PROC_THREAD_ATTRIBUTE_JOB_LIST,
+                                  &childJob, sizeof childJob, nullptr, nullptr)) {
+        const auto error = GetLastError();
+        DeleteProcThreadAttributeList(si.lpAttributeList);
+        return failed("UpdateProcThreadAttribute (job list)", error);
+    }
+
     PROCESS_INFORMATION pi{};
-    if (!CreateProcessW(exe.c_str(), cmd.data(), nullptr, nullptr, TRUE, 0, nullptr, nullptr, &si, &pi)) return -1;
-    WaitForSingleObject(pi.hProcess, INFINITE);
-    DWORD code = 0;
-    GetExitCodeProcess(pi.hProcess, &code);
+    const auto created = CreateProcessW(exe.c_str(), cmd.data(), nullptr, nullptr, TRUE,
+                                       EXTENDED_STARTUPINFO_PRESENT, nullptr, nullptr, &si.StartupInfo, &pi);
+    const auto creationError = created ? ERROR_SUCCESS : GetLastError();
+    DeleteProcThreadAttributeList(si.lpAttributeList);
+    if (!created) return failed("CreateProcessW (DEX job)", creationError);
+
     CloseHandle(pi.hThread);
-    CloseHandle(pi.hProcess);
+    const std::unique_ptr<void, decltype(&CloseHandle)> process(pi.hProcess, CloseHandle);
+    Log("stage dex-child pid=" + std::to_string(pi.dwProcessId));
+    if (WaitForSingleObject(process.get(), INFINITE) != WAIT_OBJECT_0)
+        return failed("WaitForSingleObject (DEX child)", GetLastError());
+    DWORD code = 0;
+    if (!GetExitCodeProcess(process.get(), &code)) return failed("GetExitCodeProcess (DEX child)", GetLastError());
     return static_cast<int>(code);
 }
 

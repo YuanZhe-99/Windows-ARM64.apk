@@ -31,3 +31,4 @@
 | `macapk/runtime/platform/windows/src/bridge/guest_graphics.cpp` | T11 固定 Android EGL/GLES 入口、客体句柄归属、最小化/恢复及消息线程驱动分发 | `AddGuestGraphicsLibraries`、`MakeCurrent`、`EnsureSurface`、`Swap`、`GetProc`、`Test-GraphicsGuest` |
 | `macapk/runtime/platform/windows/src/bridge/guest_vulkan.cpp` | T13 Android→Win32 WSI 与受限设备/队列分发、命令录制及交换链呈现 | `CreateSurface`、`CreateDevice`、`CreateSwapchain`、`DeviceProc`、`Present`、`Test-VulkanWsi` |
 | `scripts/windows/package.ps1` | 从已有 ARM64 Release 产物离线打包，生成运行时与源码 ZIP 及本地依赖清单 | `Copy-Payload`、`Test-Package` |
+| `macapk/runtime/platform/windows/src/run.cpp` | APK 启动、按内容寻址的 DEX 缓存及用于回收转换器的 Job Object | `Spawn`、`StageCode`、`ConvertDex`、`Test-DexJob` |

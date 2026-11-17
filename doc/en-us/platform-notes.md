@@ -303,6 +303,12 @@ with a fresh profile root and Windows-only `PATH`. This verifies a local backend
 existing dependencies, not a clean machine or G5. No frontend, ANGLE DLLs, ICD or JVM is
 bundled. The release, linked ANGLE license audit and independent ARM64 replication remain open.
 
+The DEX converter is assigned atomically to a kill-on-close job at process creation.
+`DexJob` pauses the real converter JVM at startup and kills only the launcher; the child exits
+within the deadline and no converted JAR is published. Job setup, launch and wait failures
+identify the failed Win32 operation and error code. This is not a security sandbox or the
+deferred frontend process manager; long-running T14 remains `NOT_RUN`.
+
 ## Known limitations
 
 - Shared Windows hooks are platform-gated CMake/SQLite changes and the Windows guest DEX,

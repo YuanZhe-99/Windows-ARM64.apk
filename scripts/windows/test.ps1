@@ -39,13 +39,13 @@ and hardware TLS/syscall/register access remain refused. Each probe has a
 
 .PARAMETER Suite
 Host, Java, Native, Bionic, Jni, ApkJni, GraphicsHost, GraphicsJava, Surface, GraphicsGuest,
-VulkanWsi, Package, or a targeted Bionic subset.
+VulkanWsi, DexJob, Package, or a targeted Bionic subset.
 .PARAMETER PackageZip
 Local runtime ZIP from package.ps1, required for Package.
 #>
 [CmdletBinding()]
 param(
-    [ValidateSet('Host', 'Java', 'Native', 'Bionic', 'Modules', 'Memory', 'Io', 'Faults', 'Format', 'Libraries', 'Jni', 'ApkJni', 'GraphicsHost', 'GraphicsJava', 'Surface', 'GraphicsGuest', 'VulkanWsi', 'Package')]
+    [ValidateSet('Host', 'Java', 'Native', 'Bionic', 'Modules', 'Memory', 'Io', 'Faults', 'Format', 'Libraries', 'Jni', 'ApkJni', 'GraphicsHost', 'GraphicsJava', 'Surface', 'GraphicsGuest', 'VulkanWsi', 'DexJob', 'Package')]
     [string]$Suite = 'Host',
     [string]$PackageZip
 )
@@ -1173,6 +1173,43 @@ function Test-VulkanWsi {
     }
 }
 
+<# Verifies that terminating the launcher reaps an active DEX converter. #>
+function Test-DexJob {
+    $root = Join-Path $out ("test-data\dex-job-" + [guid]::NewGuid().ToString('N'))
+    New-Item -ItemType Directory $root | Out-Null
+    $log = Join-Path $root 'run.log'
+    $apk = Join-Path $repo 'tests\fixtures\hello-jni.apk'
+    $script:appSize = '360x720'
+    $saved = @{ JAVA_TOOL_OPTIONS = [Environment]::GetEnvironmentVariable('JAVA_TOOL_OPTIONS') }
+    try {
+        # Gate JVM startup on a process-local, ephemeral loopback socket so the child cannot
+        # finish normally before cancellation. Nothing attaches to the debug agent.
+        $env:JAVA_TOOL_OPTIONS = '-agentlib:jdwp=transport=dt_socket,server=y,suspend=y,address=127.0.0.1:0'
+        $p = Start-App $apk $root $log 'restricted'
+    } finally { Set-TestEnv $saved }
+    $child = $null
+    try {
+        $started = Wait-Log $log 'stage dex-child pid=(\d+)' 10 $p
+        if ($started) { $child = Get-Process -Id ([int]$started.Groups[1].Value) -ErrorAction SilentlyContinue }
+        $ready = if ($child) { Wait-Log "$log.out" 'Listening for transport dt_socket at address: \d+' 5 $child }
+        if (!$ready -or $child.HasExited -or $p.HasExited) {
+            Check 'T14.dex-job' $false "converter did not reach its startup gate; see $log"
+            return
+        }
+        $p.Kill()
+        $exited = $p.WaitForExit(5000) -and $child.WaitForExit(5000)
+        $cached = @(Get-ChildItem -LiteralPath $root -Recurse -File -Filter 'classes.jar')
+        Check 'T14.dex-job' ($exited -and !$cached.Count -and (Read-Log $log) -notmatch 'stage dex-converted') 'launcher termination reaped the live converter without publishing a cache'
+    } finally {
+        if (!$p.HasExited) { $p.Kill(); $p.WaitForExit() }
+        $p.Dispose()
+        if ($child) {
+            if (!$child.HasExited) { $child.Kill(); $child.WaitForExit() }
+            $child.Dispose()
+        }
+    }
+}
+
 <# Verifies the staged archive and runs one real APK from a fresh Unicode package path. #>
 function Test-Package {
     if (!$PackageZip) { throw 'Package requires -PackageZip (output from scripts/windows/package.ps1)' }
@@ -1245,7 +1282,7 @@ function Test-Package {
     } finally { Set-TestEnv $saved }
 }
 
-switch ($Suite) { 'Host' { Test-Host } 'Java' { Test-Java } 'Native' { Test-Native } 'Bionic' { Test-Bionic } 'Modules' { Test-Modules } 'Memory' { Test-Bionic -Command memory } 'Io' { Test-Bionic -Command io } 'Faults' { Test-Bionic -Command faults } 'Format' { Test-Bionic -Command format } 'Libraries' { Test-Libraries } 'Jni' { Test-Jni } 'ApkJni' { Test-ApkJni } 'GraphicsHost' { Test-GraphicsHost } 'GraphicsJava' { Test-GraphicsJava } 'Surface' { Test-Surface } 'GraphicsGuest' { Test-GraphicsGuest } 'VulkanWsi' { Test-VulkanWsi } 'Package' { Test-Package } }
+switch ($Suite) { 'Host' { Test-Host } 'Java' { Test-Java } 'Native' { Test-Native } 'Bionic' { Test-Bionic } 'Modules' { Test-Modules } 'Memory' { Test-Bionic -Command memory } 'Io' { Test-Bionic -Command io } 'Faults' { Test-Bionic -Command faults } 'Format' { Test-Bionic -Command format } 'Libraries' { Test-Libraries } 'Jni' { Test-Jni } 'ApkJni' { Test-ApkJni } 'GraphicsHost' { Test-GraphicsHost } 'GraphicsJava' { Test-GraphicsJava } 'Surface' { Test-Surface } 'GraphicsGuest' { Test-GraphicsGuest } 'VulkanWsi' { Test-VulkanWsi } 'DexJob' { Test-DexJob } 'Package' { Test-Package } }
 if ($script:failed -gt 0) { Write-Host "$script:failed check(s) failed"; exit 1 }
 Write-Host 'all checks passed'
 exit 0

@@ -478,7 +478,8 @@ Android Surface 是 `ANativeWindow` 对应的图形端点；AHardwareBuffer 扩�
 - [x] 本地 CLI 包包含 Release runtime、Framework JAR、module patches、资源、宿主 DLL 和外部 ARM64 JRE/VC++ 依赖说明；不含 ANGLE。
 - [x] 验证包内 PE 为 ARM64，并拒绝 Debug CRT 导入；源码 ZIP 也排除 macOS `.dylib` 预编译件。
 - [x] 本地 CLI 包不携带 GPU ICD 或 Vulkan loader。
-- [ ] 运行时子进程交给启动器管理；需要时用 Job Object 清理子进程，退出码明确。
+- [x] CLI 的 DEX 转换子进程在创建时进入随启动器退出的 Job Object；转换失败保留退出码及 Win32 阶段诊断，`DexJob` 验证强制退出时回收。
+- [ ] 前端启动器管理每 APK 的运行时进程（前端暂缓）。
 - [x] 在含空格/中文的解压路径和全新数据/配置根目录用已有依赖执行 T14.package；打包不下载。
 - [ ] 公开分发前完成许可审核，含 ANGLE 实际链接依赖；本地包已有许可证、notices、源码快照和哈希。
 - [x] 不注册默认 APK 打开程序，不自动修改全局环境。
@@ -648,6 +649,7 @@ Next blocking issue:
 .\scripts\windows\test.ps1 -Suite Surface
 .\scripts\windows\test.ps1 -Suite GraphicsGuest
 .\scripts\windows\test.ps1 -Suite VulkanWsi
+.\scripts\windows\test.ps1 -Suite DexJob
 
 # 本地 CLI 包；先暂存或提交预期源码，包不发布。
 .\scripts\windows\build.ps1 -Component All
@@ -700,4 +702,4 @@ $zip = .\scripts\windows\package.ps1
 
 ## 20. 基线里程碑状态与当前起点
 
-P0 审计/锁定、Java MVP（G1）、N0 ELF/ABI（G2）及已声明 C/Bionic/JNI 子集与真实 APK 集成（G3）均已完成，证据见 `doc/en-us/platform-notes.md`。层 A、B 在该范围 PASS；不是整个后端完成。P5 的受限 T11 客体 EGL/GLES 已通过，真实 context loss、客体最小化/恢复及长期稳定性未验收。接下来推进 §13 客体 Vulkan，再做 §14 后端交付；本机只有 Mesa Dozen 转换层 Vulkan，厂商 Vulkan 路径需设备。前端暂缓；不提前勾选 G4/G5 或发布。
+P0 审计/锁定、Java MVP（G1）、N0 ELF/ABI（G2）及已声明 C/Bionic/JNI 子集与真实 APK 集成（G3）均已完成，证据见 `doc/en-us/platform-notes.md`。层 A/B 在该范围 PASS。P5 受限客体 EGL/GLES、P6 Dozen 上的 T13 清屏呈现、P7 本地 CLI 包和 DEX 子进程管理均单独验证。真实 context/device loss、客体 Vulkan 最小化/恢复、shader/通用资源与回调正例、T14 长期稳定性和独立机器验证仍未验收；本机只有 Mesa Dozen，厂商 Vulkan 路径需设备。前端暂缓，G4/G5 与层 C/D 未验收，不发布。

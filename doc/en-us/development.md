@@ -84,6 +84,7 @@ tree can contain large third-party checkouts; it is not product Go source. Root 
 .\scripts\windows\test.ps1 -Suite Libraries
 .\scripts\windows\test.ps1 -Suite Jni
 .\scripts\windows\test.ps1 -Suite ApkJni
+.\scripts\windows\test.ps1 -Suite DexJob            # active converter cancellation; one non-UI launch
 .\build\windows-arm64\bin\native-probe.exe suite .\tests\fixtures\elf\libn0abi.so
 .\build\windows-arm64\bin\native-probe.exe sync .\tests\fixtures\elf\libsync.so
 .\build\windows-arm64\bin\winapk.exe doctor --json

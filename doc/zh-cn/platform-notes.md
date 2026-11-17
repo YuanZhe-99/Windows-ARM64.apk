@@ -283,6 +283,10 @@ Release CLI 及四个 DLL 均为 ARM64，不导入 Debug CRT。`Package` 四项�
 目录的 `PATH`。这验证了使用已有依赖的本地后端 ZIP，不代表干净机器或 G5 验收。
 不捆绑前端、ANGLE DLL、ICD 或 JVM。发布、ANGLE 链接许可审核和独立 ARM64 机器复现仍待完成。
 
+DEX 转换器在创建进程时原子加入随启动器退出的 Job Object。`DexJob` 暂停真实转换器 JVM 的
+启动，只终止启动器；子进程在截止时间内退出，未发布转换 JAR。Job 配置、进程启动或等待失败时
+记录 Win32 操作及错误码。这不是安全沙箱，也不是暂缓的前端进程管理；T14 长期稳定性仍为 `NOT_RUN`。
+
 ## 已知限制
 
 - 共享 Windows hook 包括平台条件化的 CMake/SQLite 改动及 Windows 客体 DEX、Boot、AppClassLoader
