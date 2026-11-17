@@ -8,6 +8,8 @@ namespace winapk::bridge {
 void AddGuestVulkanLibrary(std::vector<guest::BuiltinLibrary>& libraries);
 /// Reports whether a live guest Vulkan surface owns the window's graphics endpoint.
 bool GuestVulkanOwnsWindow();
+/// Reports that the active guest Vulkan swapchain has presented to this HWND.
+bool GuestVulkanPresents(HWND window);
 /// Invalidates WSI queries on content replacement; closes all Vulkan state on window close.
 void RetireGuestVulkan(HWND window, bool closing = false);
 

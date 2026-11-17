@@ -1094,7 +1094,7 @@ function Test-GraphicsGuest {
     }
 }
 
-<# Checks guest instance dispatch and Android WSI, not presentation. #>
+<# Checks guest Vulkan transfer-clear presentation and Android WSI in one APK. #>
 function Test-VulkanWsi {
     $apk = Join-Path $repo 'tests\fixtures\hello-vulkan-wsi.apk'
     $record = Get-Content (Join-Path $repo 'tests\fixtures\hello-vulkan-wsi.json') -Raw | ConvertFrom-Json
@@ -1151,7 +1151,7 @@ function Test-VulkanWsi {
             Check 'T13.wsi.live' ($initial -and $after -and $after.Value -eq 'T13.wsi: PASS replacement' -and
                 $extent -ne $first.Groups[2].Value -and $text -match "T13\.wsi: resized=$extent\b" -and $code -eq 0 -and
                 $text -match 'guest Vulkan instance teardown complete' -and
-                $text -notmatch 'WARNING in native method|FATAL ERROR in native method|T13\.wsi: FAIL') "WSI, resize to $extent, surface loss/replacement and teardown; no draw"
+                $text -notmatch 'WARNING in native method|FATAL ERROR in native method|T13\.wsi: FAIL') "three transfer-clear presents, resize to $extent, surface loss/replacement and teardown"
         } finally {
             if (!$p.HasExited) { $p.Kill(); $p.WaitForExit() }
             $p.Dispose()

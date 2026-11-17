@@ -71,7 +71,7 @@ void Limitations(Report& r) {
                 "no GPU vendor Vulkan driver: every Vulkan device translates to another API (Mesa Dozen on Direct3D 12)");
         }
     }
-    add("GUEST_VULKAN_NOT_IMPLEMENTED", "guest Vulkan supports only an experimental instance/WSI profile; no guest drawing or presentation");
+    add("GUEST_VULKAN_NOT_IMPLEMENTED", "guest Vulkan supports only an experimental WSI/transfer-clear profile, not general rendering");
 }
 
 void PrintJson(const Report& r) {

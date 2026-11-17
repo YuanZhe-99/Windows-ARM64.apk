@@ -29,4 +29,4 @@
 | `macapk/runtime/platform/windows/src/bridge/graphics.cpp`、`android/opengl/GLSurfaceView.java` | T10 Java GLES20：私有 ANGLE DLL、宿主管理窗口 context、受限于当前帧的 renderer 回调及有界回读 | `JavaGraphics::Open`、`Begin`、`End`、`RegisterJavaGraphics`、`macapkWindowsDrawFrame`、`Test-GraphicsJava` |
 | `macapk/runtime/platform/windows/src/bridge/surface.cpp` | 受限 `libandroid.so` 的窗口身份、挂载寿命和客户区尺寸 | `PublishSurface`、`ResizeSurface`、`RetireSurface`、`NativeWindowLibrary` |
 | `macapk/runtime/platform/windows/src/bridge/guest_graphics.cpp` | T11 固定 Android EGL/GLES 入口、客体句柄归属、消息线程驱动分发 | `AddGuestGraphicsLibraries`、`MakeCurrent`、`EnsureSurface`、`GetProc`、`Test-GraphicsGuest` |
-| `macapk/runtime/platform/windows/src/bridge/guest_vulkan.cpp` | T13.wsi 受限实例/物理设备分发、Android surface 翻译和 Win32 查询 | `AddGuestVulkanLibrary`、`CreateInstance`、`CreateSurface`、`WithSurface`、`RetireGuestVulkan`、`Test-VulkanWsi` |
+| `macapk/runtime/platform/windows/src/bridge/guest_vulkan.cpp` | T13 Android→Win32 WSI 与受限设备/队列分发、命令录制及交换链呈现 | `CreateSurface`、`CreateDevice`、`CreateSwapchain`、`DeviceProc`、`Present`、`Test-VulkanWsi` |

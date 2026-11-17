@@ -40,7 +40,7 @@ Go 模块展开包通配符时忽略 `./build`。该生成/下载目录可能包
 .\scripts\windows\test.ps1 -Suite GraphicsJava      # real APK; not guest GLES or G4
 .\scripts\windows\test.ps1 -Suite Surface           # one APK; native window lifetime only
 .\scripts\windows\test.ps1 -Suite GraphicsGuest     # guest EGL/GLES T11; not guest Vulkan or G4
-.\scripts\windows\test.ps1 -Suite VulkanWsi         # guest instance/WSI T13.wsi; no swapchain or G4
+.\scripts\windows\test.ps1 -Suite VulkanWsi         # guest WSI and transfer-clear T13; not G4
 .\scripts\windows\test.ps1 -Suite Host
 .\scripts\windows\test.ps1 -Suite Java
 .\scripts\windows\test.ps1 -Suite Native

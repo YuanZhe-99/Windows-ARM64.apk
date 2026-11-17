@@ -46,6 +46,7 @@ Native`）；下文的用例名即其本身的名称。2026-11-04 在 [platform-
 | Android native window 引用 | 固定指针参数、32 位尺寸；在代理 `JNIEnv` 所属线程解析 | 客体令牌既不是 `jobject` 也不是 `HWND`；桥匹配 holder 对象身份，不使用客体提供的地址 | T10.surface：带 `DT_NEEDED libandroid.so` 的普通 NDK ELF、引用寿命和真实客户区尺寸 |
 | 客体 EGL/GLES | 固定 ARM64 函数、32 位 EGL/GL 标量（GLboolean 8 位）、浮点寄存器与指针/数组参数 | EGL 对象使用桥令牌，同进程内存同步调用；`eglGetProcAddress` 仅返回固定 PE 桥入口 | T11：导入与 proc 地址调用、九参数纹理上传、FBO 与混合 shader 回读；拒绝未知入口 |
 | 客体 Vulkan 实例/WSI | 固定 ARM64 函数；两端构建检查实例与 WSI 结构体尺寸，显式转换 Android→Win32 surface | 实例、物理设备和 surface 使用令牌；不返回驱动句柄或驱动 proc 地址 | T13.wsi：proc 作用域、实际 WSI 查询、resize、已脱离和过期 surface 拒绝 |
+| 客体 Vulkan 交换链清屏 | 固定设备/队列命令、结构体尺寸匹配，只允许固定的图像转换/清屏序列 | 在 HWND 线程翻译客体令牌和数组；`vkGetDeviceProcAddr` 只返回固定桥入口 | T13：获取 fence、命令缓冲区、三次实际呈现、过期交换链及旧设备 proc 拒绝 |
 | 客体 CRT 退出/atfork 注册 | 固定回调/参数/DSO 指针、32 位状态；不使用宿主 CRT 注册表 | 运行时所有的记录；退出回调在受管理上下文中执行客体代码；fork 不可用 | T07 N1：逆序、DSO 选择、重入/仅一次、注册上限及关闭后的运行时清理 |
 | 内存、字节与字符串 | 显式 64 位客体大小/长度，固定指针/int | 运行时所有的堆及归属检查；仅字节包装，不共享分配器/CRT 对象 | T08 `memory`：零值/溢出/失败、重叠/无符号字节、UTF-8、跨线程归属及无效释放 |
 | `open`/`open64` 可选 mode | — | 专用固定 `(pointer, int32, uint32)` 入口仅在创建时读取 x2；不使用宿主变参或共享 va_list | T08 `io`：双参数 open、三参数 create、fortified `__open_2` 及不支持的标志/模式 |

@@ -470,7 +470,8 @@ void Tick(Window* w) {
 void Paint(Window* w) {
     PAINTSTRUCT ps;
     HDC dc = BeginPaint(w->hwnd, &ps);
-    if ((w->graphics && w->graphicsView == w->content) || GuestGraphicsPresents(w->hwnd)) {
+    if ((w->graphics && w->graphicsView == w->content) || GuestGraphicsPresents(w->hwnd) ||
+        GuestVulkanPresents(w->hwnd)) {
         EndPaint(w->hwnd, &ps);
         return;
     }

@@ -425,7 +425,8 @@ Vulkan GPU 命令和 SPIR-V 原则上交给 Windows 原生驱动；本层负责�
 
 - [x] T13.wsi 使用 System32 ARM64 Vulkan Loader 正常发现 ICD；不硬编码厂商驱动。
 - [x] T13.wsi 验证实例与物理设备令牌、实例 proc 分发、Android→Win32 surface、实际呈现支持查询及 resize/换挂载；不呈现帧。
-- [ ] 为虚拟 `libvulkan.so` 提供 bootstrap、instance/device dispatch 和版本协商。
+- [x] T13 清屏增量验证客体设备/队列、获取 fence、命令缓冲区、交换链三帧呈现及 resize 后重建；不覆盖 shader、通用缓冲区/图像或回调。
+- [x] 为虚拟 `libvulkan.so` 提供上述受限 profile 的 bootstrap、instance/device dispatch 及版本拒绝。
 - [ ] 基于固定 `vk.xml` 生成签名/桥表或采用经过验证的等价方式；首轮可以只开放完成的命令集合。
 - [ ] 若只实现 Vulkan 核心命令的受限子集，产品能力报告标为 fixture/PoC profile；不能据此宣称符合某个完整 Vulkan 版本或通过 Khronos 一致性认证。
 - [ ] 审计所有返回函数指针的路径：`vkGetInstanceProcAddr`、`vkGetDeviceProcAddr`、扩展入口和回调。

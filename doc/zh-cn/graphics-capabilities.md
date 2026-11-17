@@ -13,7 +13,8 @@ G3 之后 P5/P6 进行中，尚无图形关卡通过。Java 位图路径保持�
 | 受管理的 native window | 下述引用 profile PASS | 真实受限 APK、客户区尺寸、换挂载及引用拒绝；不绘制 |
 | 客体 GLES/N2 | 受限 T11 profile PASS | 普通 NDK APK；纹理/FBO、混合 shader、resize、surface 替换与显式 Vulkan 拒绝 |
 | 客体 Vulkan 实例/WSI | T13.wsi 在 Dozen 上 PASS | 真实 APK、Android→Win32 surface、实际支持与 capabilities、resize、换挂载及拒绝；不绘制 |
-| 客体 Vulkan/N2 呈现 | NOT_RUN | device/queue dispatch、交换链绘制、回调与同步 |
+| 客体 Vulkan 交换链清屏 | Dozen 上受限 T13 profile PASS | 真实客体设备/队列、命令缓冲区及交换链，resize 前后共三次呈现 |
+| 客体 Vulkan shader/缓冲区 profile 与 G4 | NOT_RUN | shader pipeline、通用缓冲区/图像、回调及 validation layers |
 | 厂商 ARM64 Vulkan ICD | BLOCKED | 具有该驱动的机器；Dozen 结果不能填入此行 |
 
 ## ANGLE 源码构建
@@ -130,10 +131,20 @@ Vulkan loader。桥筛选实例扩展，把 Android surface 创建翻译为 Win3
 物理设备和 surface 句柄，并查询实际呈现支持和 capabilities。消息线程负责 surface
 创建、查询及销毁；ANGLE 不参与。
 
-该增量不暴露逻辑设备、交换链、命令缓冲区或回调。支持查询和 WSI 创建均不等于呈现一帧，
-也不等于通过 G4。
+仅通过 WSI 测试不等于呈现一帧，也不等于通过 G4。
 
 `test.ps1 -Suite VulkanWsi` 启动同一个普通 NDK API-30 APK 两次：一次系统 ICD 可用，
 一次仅对子进程屏蔽 ICD。验证扩展和 proc 作用域，拒绝 AHardwareBuffer、分配回调、
 非空 `pNext` 及过期句柄。窗口从 `360x720` 改到 `424x752`；替换视图后旧 surface
 返回 `VK_ERROR_SURFACE_LOST_KHR`。不安装或复制驱动。
+
+### 交换链清屏 profile
+
+一个逻辑设备及呈现队列、一个 FIFO 交换链和一个主命令缓冲区构成独立受限 profile。
+客体对已获取图像的令牌记录布局转换与清屏，向所属队列提交并呈现。驱动设备、队列、
+交换链和图像句柄保持私有。本 profile 不实现 shader pipeline、通用缓冲区/图像、
+自定义分配器或调试回调。
+
+现有 `VulkanWsi` 套件在原正例进程中增加三次清屏呈现，不增加启动次数。resize 后旧交换链
+返回 `VK_ERROR_OUT_OF_DATE_KHR`，客体释放后自行重建。测试断言真实 present 返回值，
+没有进行交换链像素回读；无厂商 Vulkan 或 G4 验收结论。

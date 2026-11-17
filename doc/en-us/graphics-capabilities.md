@@ -13,7 +13,8 @@ independent; enabling guest native does not enable GLES or guest Vulkan.
 | Managed native window | PASS for the reference profile below | real restricted APK, client extent, replacement and refused references; no drawing |
 | Guest GLES/N2 | PASS for the bounded T11 profile | normal NDK APK; texture/FBO, blended shader, resize, surface replacement, and explicit Vulkan refusal |
 | Guest Vulkan instance/WSI | PASS for T13.wsi on Dozen | real APK, Android→Win32 surface, actual support/capabilities, resize, replacement and refusal; no drawing |
-| Guest Vulkan/N2 presentation | NOT_RUN | device/queue dispatch, swapchain drawing, callbacks and synchronization |
+| Guest Vulkan transfer-clear | PASS for the bounded T13 profile on Dozen | real guest device/queue, command buffer and swapchain; three presents across resize |
+| Guest Vulkan shader/buffer profile and G4 | NOT_RUN | shader pipelines, general buffers/images, callbacks and validation-layer run |
 | Vendor ARM64 Vulkan ICD | BLOCKED | a machine with that driver; Dozen results cannot fill this row |
 
 ## ANGLE source build
@@ -153,11 +154,23 @@ translates Android surface creation to Win32, keeps instance, physical-device an
 handles private, and checks actual presentation support and capabilities. The message
 thread owns surface creation, queries and teardown. ANGLE does not participate.
 
-This increment does not expose logical devices, swapchains, command buffers or callbacks.
-Neither support queries nor WSI creation count as presenting a frame or passing G4.
+The WSI checks alone do not count as presenting a frame or passing G4.
 
 `test.ps1 -Suite VulkanWsi` launches one normal NDK API-30 APK twice: once with the system
 ICD available and once with the child unable to discover it. It verifies extension/proc
 scopes and rejects AHardwareBuffer, allocation callbacks, nonempty `pNext` and stale handles.
 The window changes from `360x720` to `424x752`; replacing the view makes the old surface
 report `VK_ERROR_SURFACE_LOST_KHR`. No driver is installed or copied.
+
+### Swapchain transfer-clear profile
+
+One logical device and present queue, one FIFO swapchain and one primary command buffer
+form a separate, bounded profile. The guest records image transitions and a color clear
+against a token for the acquired image, submits on the owned queue and presents. The
+driver’s device, queue, swapchain and image handles stay private. The profile does not
+implement shader pipelines, general buffers/images, custom allocators or debug callbacks.
+
+The existing `VulkanWsi` suite adds three transfer clears/presents to its positive process,
+without extra launches. The old swapchain returns `VK_ERROR_OUT_OF_DATE_KHR` after resize;
+the guest destroys and recreates it. The fixture checks actual present return values, not
+swapchain pixel readback. This is not vendor Vulkan or G4 acceptance.

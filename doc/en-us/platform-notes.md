@@ -276,6 +276,23 @@ The verified APK SHA-256 is `8c5dbddc771f8c56f0e0a810f2e5691aea55624a07b7fb55743
 Requirements and Build All passed, as did Host 27, Java 43, Native 58, Bionic 104, Jni 24,
 ApkJni 8, GraphicsHost 6, GraphicsJava 4, Surface 4 and GraphicsGuest 4. Logs: `P6-WSI-*.log`.
 
+## P6 guest Vulkan transfer-clear
+
+The next T13 increment adds two real FIFO swapchain presents at launch and one after
+`360x720` → `424x752` resize in the same positive APK process. The guest records two image
+barriers and a clear, waits on a real acquire fence, submits and waits for the queue, and
+checks both present results. An acquire on the old extent returns `VK_ERROR_OUT_OF_DATE_KHR`;
+the replacement still tests surface loss and ordered teardown. The negative child cannot
+discover the ICD. There is no swapchain pixel readback, shader/buffer test, or driver-loss
+injection. The System32 loader did not enumerate `VK_LAYER_KHRONOS_validation`, so validation
+is `NOT_RUN`. This is Dozen evidence, not vendor Vulkan or G4 acceptance.
+
+Final Windows ARM64 run: `VulkanWsi` 3 PASS in 5.34 s, with APK SHA-256
+`bc72336205b84b76d17c3e1e6229e2d5db5a99bc270a951b92bd7845e0d61b29`.
+Requirements and Build All passed. Host 27, Java 43, Native 58, Bionic 104, Jni 24,
+ApkJni 8, GraphicsHost 6, GraphicsJava 4, Surface 4 and GraphicsGuest 4 also passed.
+Logs: `P6-clear-*.log`.
+
 ## Known limitations
 
 - Shared Windows hooks are platform-gated CMake/SQLite changes and the Windows guest DEX,

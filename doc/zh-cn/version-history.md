@@ -2,6 +2,7 @@
 
 ## 0.1.0（进行中）
 
+- 2026-11-17：以真实 T13 APK 验证受限客体 Vulkan 清屏：经 Dozen 完成三次 FIFO 呈现，包括 resize 后重建交换链。shader/缓冲区、回调和 G4/G5 仍未验收。Go 1.27.4、MyGo v0.10.0 和已合并的 Mac.apk `3f35611` 经检查未变。
 - 2026-11-17：新增独立客体 Vulkan 实例/WSI profile（T13.wsi），在 Dozen 上验证窗口 resize/替换及仅对子进程屏蔽 ICD。客体 Vulkan 绘制和 G4/G5 仍为 NOT_RUN。Go 1.27.4、MyGo v0.10.0 和已合并的 Mac.apk `3f35611` 经检查未变。
 - 2026-11-17：接入受限客体 EGL/GLES（T11）。真实 NDK API-30 APK 验证 ANGLE 的显式 D3D11 与 Vulkan/Dozen，包括纹理/FBO 和混合 shader 回读、重建 surface、显式 Vulkan 不可用时不回退。客体 Vulkan、G4/G5 仍为 NOT_RUN。Go 1.27.4、MyGo v0.10.0 和已合并的 Mac.apk `3f35611` 经检查未变。
 - 2026-11-17：在真实 APK 中验证受限 Android native window 引用 profile；客体 EGL/Vulkan 渲染仍为 NOT_RUN。Go 1.27.4、MyGo v0.10.0 和已合并的 Mac.apk `3f35611` 已检查、未变。

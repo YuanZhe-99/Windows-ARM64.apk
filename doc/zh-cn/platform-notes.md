@@ -259,6 +259,22 @@ T13.wsi 使用含 `DT_NEEDED libvulkan.so` 的普通 ARM64 NDK API-30 APK。定�
 环境检查及 Build All 通过；Host 27、Java 43、Native 58、Bionic 104、Jni 24、ApkJni 8、
 GraphicsHost 6、GraphicsJava 4、Surface 4、GraphicsGuest 4 均通过。日志为 `P6-WSI-*.log`。
 
+## P6 客体 Vulkan 交换链清屏
+
+T13 后续增量在同一正例 APK 中，启动时完成两次真实 FIFO 交换链呈现，窗口从
+`360x720` 改到 `424x752` 后再呈现一次。客体录制两次图像 barrier 和一次清屏，
+等待真实 acquire fence、提交并等待队列，再检查两种 present 返回值。旧尺寸的交换链
+在 acquire 时返回 `VK_ERROR_OUT_OF_DATE_KHR`；替换视图仍检查 surface 失效和有序销毁。
+负例子进程发现不了 ICD。没有交换链像素回读、shader/缓冲区测试或驱动丢失注入。
+System32 loader 未枚举 `VK_LAYER_KHRONOS_validation`，validation 为 `NOT_RUN`。
+这仅是 Dozen 证据，不是厂商 Vulkan 或 G4 验收。
+
+最终 Windows ARM64 运行：`VulkanWsi` 3 项通过（5.34 秒），APK SHA-256 为
+`bc72336205b84b76d17c3e1e6229e2d5db5a99bc270a951b92bd7845e0d61b29`。
+环境检查及 Build All 通过；Host 27、Java 43、Native 58、Bionic 104、Jni 24、
+ApkJni 8、GraphicsHost 6、GraphicsJava 4、Surface 4、GraphicsGuest 4 均通过。
+日志为 `P6-clear-*.log`。
+
 ## 已知限制
 
 - 共享 Windows hook 包括平台条件化的 CMake/SQLite 改动及 Windows 客体 DEX、Boot、AppClassLoader

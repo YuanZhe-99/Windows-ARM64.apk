@@ -342,7 +342,7 @@ function Build-Fixtures {
             $info.expected = 'T11: texture/FBO readback, blended shader draw, resize and drawable replacement, EGL proc/token refusals and normal teardown'
         }
         if ($name -eq 'hello-vulkan-wsi') {
-            $info.expected = 'T13.wsi: guest instance/proc and Android-to-Win32 surface, actual present support and resize/replacement; no device or draw'
+            $info.expected = 'T13.wsi: real WSI and three guest swapchain clear/present calls; stale extent and surface refusal, resize/replacement and teardown'
         }
         $info | ConvertTo-Json -Depth 6 | Set-Content (Join-Path $fixtures "$name.json") -Encoding utf8NoBOM
         Write-Step "$name.apk: dex sha256 $($info.dexSha256)"

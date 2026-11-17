@@ -23,6 +23,9 @@ static_assert(sizeof(VkApplicationInfo) == 48 && sizeof(VkInstanceCreateInfo) ==
               sizeof(VkAndroidSurfaceCreateInfoKHR) == 32 && offsetof(VkAndroidSurfaceCreateInfoKHR, window) == 24);
 static_assert(sizeof(VkExtensionProperties) == 260 && sizeof(VkQueueFamilyProperties) == 24 &&
               sizeof(VkSurfaceCapabilitiesKHR) == 52 && sizeof(VkSurfaceFormatKHR) == 8);
+static_assert(sizeof(VkDeviceQueueCreateInfo) == 40 && sizeof(VkDeviceCreateInfo) == 72 &&
+              sizeof(VkSwapchainCreateInfoKHR) == 104 && sizeof(VkImageMemoryBarrier) == 72 &&
+              sizeof(VkSubmitInfo) == 72 && sizeof(VkPresentInfoKHR) == 64);
 
 /// Owns the bridge's single instance and window surface; unrelated to ANGLE, even under Dozen.
 struct Vulkan {
@@ -36,11 +39,31 @@ struct Vulkan {
     bool surfaceExtension = false;
     bool androidSurfaceExtension = false;
     bool retired = false;
+    bool presented = false;
     struct Device { VkPhysicalDevice host, guest; };
     std::array<Device, 32> devices{};
     uint32_t deviceCount = 0;
+    VkDevice device = VK_NULL_HANDLE, guestDevice = VK_NULL_HANDLE;
+    PFN_vkGetDeviceProcAddr deviceProc = nullptr;
+    VkPhysicalDevice devicePhysical = VK_NULL_HANDLE;
+    VkQueue queue = VK_NULL_HANDLE, guestQueue = VK_NULL_HANDLE;
+    uint32_t family = 0;
+    VkSwapchainKHR swapchain = VK_NULL_HANDLE, guestSwapchain = VK_NULL_HANDLE;
+    VkExtent2D extent{};
+    VkResult swapchainError = VK_SUCCESS;
+    struct Image { VkImage host, guest; };
+    std::array<Image, 16> images{};
+    uint32_t imageCount = 0, imageIndex = UINT32_MAX;
+    VkCommandPool pool = VK_NULL_HANDLE, guestPool = VK_NULL_HANDLE;
+    VkCommandBuffer command = VK_NULL_HANDLE, guestCommand = VK_NULL_HANDLE;
+    VkFence fence = VK_NULL_HANDLE, guestFence = VK_NULL_HANDLE;
+    enum class Frame { Idle, Acquired, Ready, Recording, Executable, Submitted, Complete, Invalid };
+    Frame frame = Frame::Idle;
+    unsigned commands = 0;
 } vk;
 uintptr_t nextHandle = 1;
+using Frame = Vulkan::Frame;
+constexpr uint64_t kWaitNs = 1000000000; // at most one second per guest-requested wait on the HWND thread
 
 /// Runs a synchronous command on the HWND owner, without holding a registry/JVM lock while waiting.
 template<class F> VkResult Run(F&& fn) {
@@ -56,6 +79,48 @@ template<class F> VkResult Run(F&& fn) {
 /// Resolves a driver entry privately against the owned instance (or bootstrap scope).
 template<class P> P Driver(const char* name, VkInstance instance = VK_NULL_HANDLE) {
     return reinterpret_cast<P>(vk.proc(instance, name));
+}
+
+/// Resolves a device-side driver entry privately against the owned device.
+template<class P> P DeviceDriver(const char* name) {
+    return reinterpret_cast<P>(vk.deviceProc(vk.device, name));
+}
+
+/// Drains the one queue before destroying the backing swapchain and invalidating its tokens.
+void DropSwapchain() {
+    if (!vk.swapchain) return;
+    DeviceDriver<PFN_vkQueueWaitIdle>("vkQueueWaitIdle")(vk.queue);
+    DeviceDriver<PFN_vkDestroySwapchainKHR>("vkDestroySwapchainKHR")(vk.device, vk.swapchain, nullptr);
+    vk.swapchain = vk.guestSwapchain = VK_NULL_HANDLE;
+    vk.imageCount = 0;
+    vk.imageIndex = UINT32_MAX;
+    vk.frame = Vulkan::Frame::Idle;
+    vk.presented = false;
+    vk.swapchainError = VK_SUCCESS;
+}
+
+/// Destroys device children in dependency order, including on unexpected window close.
+bool DropDevice() {
+    if (!vk.device) return true;
+    if (vk.frame == Frame::Acquired) {
+        const auto result = DeviceDriver<PFN_vkWaitForFences>("vkWaitForFences")
+            (vk.device, 1, &vk.fence, VK_TRUE, kWaitNs);
+        if (result != VK_SUCCESS && result != VK_ERROR_DEVICE_LOST) {
+            LogLine("GRAPHICS_RENDER_FAILED: guest Vulkan acquire fence still pending at close; leaving driver objects to process exit");
+            return false;
+        }
+    }
+    DropSwapchain();
+    if (vk.pool) DeviceDriver<PFN_vkDestroyCommandPool>("vkDestroyCommandPool")(vk.device, vk.pool, nullptr);
+    if (vk.fence) DeviceDriver<PFN_vkDestroyFence>("vkDestroyFence")(vk.device, vk.fence, nullptr);
+    DeviceDriver<PFN_vkDestroyDevice>("vkDestroyDevice")(vk.device, nullptr);
+    vk.device = vk.guestDevice = VK_NULL_HANDLE;
+    vk.deviceProc = nullptr;
+    vk.queue = vk.guestQueue = VK_NULL_HANDLE;
+    vk.pool = vk.guestPool = VK_NULL_HANDLE;
+    vk.command = vk.guestCommand = VK_NULL_HANDLE;
+    vk.fence = vk.guestFence = VK_NULL_HANDLE;
+    return true;
 }
 
 /// Opens the native system loader only, never a DLL chosen by an APK or on PATH.
@@ -136,6 +201,7 @@ void DropSurface() {
 
 /// Tears down all driver state before the runtime closes the HWND.
 void Shutdown() {
+    if (!DropDevice()) return;
     DropSurface();
     if (vk.instance) {
         Driver<PFN_vkDestroyInstance>("vkDestroyInstance", vk.instance)(vk.instance, nullptr);
@@ -319,7 +385,7 @@ VkResult VKAPI_CALL PresentModes(VkPhysicalDevice d, VkSurfaceKHR s, uint32_t* c
 void VKAPI_CALL DestroySurface(VkInstance i, VkSurfaceKHR s, const VkAllocationCallbacks* allocator) {
     if (!s) return;
     Run([=] {
-        if (!allocator && i == vk.guestInstance && s == vk.guestSurface) { DropSurface(); return VK_SUCCESS; }
+        if (!allocator && i == vk.guestInstance && s == vk.guestSurface && !vk.swapchain) { DropSurface(); return VK_SUCCESS; }
         LogLine("GRAPHICS_CAPABILITY_MISSING: guest Vulkan invalid surface destruction");
         return VK_ERROR_INITIALIZATION_FAILED;
     });
@@ -329,16 +395,426 @@ void VKAPI_CALL DestroySurface(VkInstance i, VkSurfaceKHR s, const VkAllocationC
 void VKAPI_CALL DestroyInstance(VkInstance i, const VkAllocationCallbacks* allocator) {
     if (!i) return;
     Run([=] {
-        if (!allocator && i == vk.guestInstance && !vk.surface) { Shutdown(); return VK_SUCCESS; }
+        if (!allocator && i == vk.guestInstance && !vk.surface && !vk.device) { Shutdown(); return VK_SUCCESS; }
         LogLine("GRAPHICS_CAPABILITY_MISSING: guest Vulkan invalid instance destruction (live surface or foreign handle)");
         return VK_ERROR_INITIALIZATION_FAILED;
     });
 }
 
+/// Lists only the swapchain extension, and only on devices whose ICD supports it.
+VkResult VKAPI_CALL DeviceExtensions(VkPhysicalDevice d, const char* layer, uint32_t* count, VkExtensionProperties* out) {
+    if (layer) return VK_ERROR_LAYER_NOT_PRESENT;
+    return Run([=] {
+        auto physical = Physical(d);
+        if (!physical) return VK_ERROR_INITIALIZATION_FAILED;
+        std::array<VkExtensionProperties, 512> all{};
+        uint32_t n = static_cast<uint32_t>(all.size());
+        const auto status = Driver<PFN_vkEnumerateDeviceExtensionProperties>("vkEnumerateDeviceExtensionProperties", vk.instance)
+            (physical, nullptr, &n, all.data());
+        if (status != VK_SUCCESS) return status;
+        for (uint32_t i = 0; i < n; ++i)
+            if (!std::strcmp(all[i].extensionName, VK_KHR_SWAPCHAIN_EXTENSION_NAME))
+                return Enumerate(1, &all[i], count, out);
+        return Enumerate<VkExtensionProperties>(0, nullptr, count, out);
+    });
+}
+
+/// Creates the sole device, with no feature chain and exactly one graphics/present queue.
+VkResult VKAPI_CALL CreateDevice(VkPhysicalDevice d, const VkDeviceCreateInfo* info,
+                                const VkAllocationCallbacks* allocator, VkDevice* out) {
+    if (!out) return VK_ERROR_INITIALIZATION_FAILED;
+    *out = VK_NULL_HANDLE;
+    if (!info || allocator || info->sType != VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO || info->pNext ||
+        info->flags || info->pEnabledFeatures || info->queueCreateInfoCount != 1 || !info->pQueueCreateInfos)
+        return VK_ERROR_FEATURE_NOT_PRESENT;
+    if (info->enabledLayerCount) return VK_ERROR_LAYER_NOT_PRESENT;
+    if (info->enabledExtensionCount != 1 || !info->ppEnabledExtensionNames ||
+        !info->ppEnabledExtensionNames[0] || std::strcmp(info->ppEnabledExtensionNames[0], VK_KHR_SWAPCHAIN_EXTENSION_NAME))
+        return VK_ERROR_EXTENSION_NOT_PRESENT;
+    const auto& q = info->pQueueCreateInfos[0];
+    if (q.sType != VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO || q.pNext || q.flags ||
+        q.queueCount != 1 || !q.pQueuePriorities || !(q.pQueuePriorities[0] >= 0.f && q.pQueuePriorities[0] <= 1.f))
+        return VK_ERROR_FEATURE_NOT_PRESENT;
+    return Run([&] {
+        const auto physical = Physical(d);
+        HWND window;
+        int w, h;
+        if (!physical) return VK_ERROR_INITIALIZATION_FAILED;
+        if (!vk.surface || vk.retired || !ResolveSurface(vk.native, window, w, h) || window != vk.window)
+            return VK_ERROR_SURFACE_LOST_KHR;
+        if (vk.device) return VK_ERROR_TOO_MANY_OBJECTS;
+        std::array<VkQueueFamilyProperties, 64> families{};
+        uint32_t count = static_cast<uint32_t>(families.size());
+        auto properties = Driver<PFN_vkGetPhysicalDeviceQueueFamilyProperties>("vkGetPhysicalDeviceQueueFamilyProperties", vk.instance);
+        properties(physical, &count, families.data());
+        if (q.queueFamilyIndex >= count || !(families[q.queueFamilyIndex].queueFlags & VK_QUEUE_GRAPHICS_BIT))
+            return VK_ERROR_FEATURE_NOT_PRESENT;
+        VkBool32 support = VK_FALSE;
+        auto result = Driver<PFN_vkGetPhysicalDeviceSurfaceSupportKHR>("vkGetPhysicalDeviceSurfaceSupportKHR", vk.instance)
+            (physical, q.queueFamilyIndex, vk.surface, &support);
+        if (result != VK_SUCCESS || !support) return result != VK_SUCCESS ? result : VK_ERROR_FEATURE_NOT_PRESENT;
+        auto proc = Driver<PFN_vkGetDeviceProcAddr>("vkGetDeviceProcAddr", vk.instance);
+        if (!proc) return VK_ERROR_INITIALIZATION_FAILED;
+        result = Driver<PFN_vkCreateDevice>("vkCreateDevice", vk.instance)(physical, info, nullptr, &vk.device);
+        if (result != VK_SUCCESS) return result;
+        vk.deviceProc = proc;
+        vk.family = q.queueFamilyIndex;
+        vk.devicePhysical = physical;
+        DeviceDriver<PFN_vkGetDeviceQueue>("vkGetDeviceQueue")(vk.device, vk.family, 0, &vk.queue);
+        vk.guestQueue = reinterpret_cast<VkQueue>(nextHandle++);
+        *out = vk.guestDevice = reinterpret_cast<VkDevice>(nextHandle++);
+        return VK_SUCCESS;
+    });
+}
+
+/// Returns only the queue owned by the one configured device.
+void VKAPI_CALL GetQueue(VkDevice d, uint32_t family, uint32_t index, VkQueue* out) {
+    if (!out) return;
+    *out = VK_NULL_HANDLE;
+    Run([=] {
+        if (d && d == vk.guestDevice && family == vk.family && index == 0) *out = vk.guestQueue;
+        return VK_SUCCESS;
+    });
+}
+
+/// Destroys the device after its guest-visible children have been retired.
+void VKAPI_CALL DestroyDevice(VkDevice d, const VkAllocationCallbacks* allocator) {
+    Run([=] {
+        if (!allocator && d && d == vk.guestDevice && !vk.swapchain && !vk.pool && !vk.fence) DropDevice();
+        else LogLine("GRAPHICS_CAPABILITY_MISSING: guest Vulkan invalid device destruction");
+        return VK_SUCCESS;
+    });
+}
+
+/// Resolves the live managed extent without allowing a stale or detached window into the ICD.
+VkResult SurfaceExtent(VkExtent2D& extent) {
+    HWND window;
+    int w, h;
+    if (!vk.surface || vk.retired || !ResolveSurface(vk.native, window, w, h) || window != vk.window)
+        return VK_ERROR_SURFACE_LOST_KHR;
+    extent = {static_cast<uint32_t>(w), static_cast<uint32_t>(h)};
+    return VK_SUCCESS;
+}
+
+/// Detects resize/minimize without replacing the caller's swapchain silently.
+VkResult CheckSwapchain() {
+    VkExtent2D extent;
+    const auto result = SurfaceExtent(extent);
+    if (result != VK_SUCCESS) return result;
+    if (vk.swapchainError != VK_SUCCESS) return vk.swapchainError;
+    if (extent.width != vk.extent.width || extent.height != vk.extent.height)
+        vk.swapchainError = VK_ERROR_OUT_OF_DATE_KHR;
+    return vk.swapchainError;
+}
+
+/// Creates a FIFO transfer-destination swapchain on the exact current client extent.
+VkResult VKAPI_CALL CreateSwapchain(VkDevice d, const VkSwapchainCreateInfoKHR* info,
+                                   const VkAllocationCallbacks* allocator, VkSwapchainKHR* out) {
+    if (!out) return VK_ERROR_INITIALIZATION_FAILED;
+    *out = VK_NULL_HANDLE;
+    if (!info || allocator || info->sType != VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR || info->pNext ||
+        info->flags || info->imageArrayLayers != 1 || info->imageUsage != VK_IMAGE_USAGE_TRANSFER_DST_BIT ||
+        info->imageSharingMode != VK_SHARING_MODE_EXCLUSIVE || info->queueFamilyIndexCount || info->oldSwapchain ||
+        info->presentMode != VK_PRESENT_MODE_FIFO_KHR) return VK_ERROR_FEATURE_NOT_PRESENT;
+    if (info->imageFormat != VK_FORMAT_B8G8R8A8_UNORM && info->imageFormat != VK_FORMAT_R8G8B8A8_UNORM)
+        return VK_ERROR_FORMAT_NOT_SUPPORTED;
+    return Run([=] {
+        if (!d || d != vk.guestDevice || vk.swapchain) return VK_ERROR_INITIALIZATION_FAILED;
+        if (!info->surface || info->surface != vk.guestSurface) return VK_ERROR_SURFACE_LOST_KHR;
+        VkExtent2D extent;
+        auto result = SurfaceExtent(extent);
+        if (result != VK_SUCCESS) return result;
+        if (!extent.width || !extent.height || info->imageExtent.width != extent.width || info->imageExtent.height != extent.height)
+            return VK_ERROR_OUT_OF_DATE_KHR;
+        VkSurfaceCapabilitiesKHR caps{};
+        result = Driver<PFN_vkGetPhysicalDeviceSurfaceCapabilitiesKHR>("vkGetPhysicalDeviceSurfaceCapabilitiesKHR", vk.instance)
+            (vk.devicePhysical, vk.surface, &caps);
+        if (result != VK_SUCCESS) return result;
+        if (!(caps.supportedUsageFlags & VK_IMAGE_USAGE_TRANSFER_DST_BIT) ||
+            !(caps.supportedTransforms & info->preTransform) || !(caps.supportedCompositeAlpha & info->compositeAlpha) ||
+            info->minImageCount < caps.minImageCount || (caps.maxImageCount && info->minImageCount > caps.maxImageCount))
+            return VK_ERROR_FEATURE_NOT_PRESENT;
+        uint32_t count = 64;
+        VkSurfaceFormatKHR formats[64];
+        result = Driver<PFN_vkGetPhysicalDeviceSurfaceFormatsKHR>("vkGetPhysicalDeviceSurfaceFormatsKHR", vk.instance)
+            (vk.devicePhysical, vk.surface, &count, formats);
+        if (result != VK_SUCCESS) return result;
+        bool match = false;
+        for (uint32_t i = 0; i < count; ++i)
+            match |= formats[i].format == info->imageFormat && formats[i].colorSpace == info->imageColorSpace;
+        if (!match) return VK_ERROR_FORMAT_NOT_SUPPORTED;
+        auto host = *info;
+        host.surface = vk.surface;
+        result = DeviceDriver<PFN_vkCreateSwapchainKHR>("vkCreateSwapchainKHR")(vk.device, &host, nullptr, &vk.swapchain);
+        if (result != VK_SUCCESS) return result;
+        std::array<VkImage, 16> images{};
+        vk.imageCount = static_cast<uint32_t>(images.size());
+        result = DeviceDriver<PFN_vkGetSwapchainImagesKHR>("vkGetSwapchainImagesKHR")
+            (vk.device, vk.swapchain, &vk.imageCount, images.data());
+        if (result != VK_SUCCESS || !vk.imageCount) {
+            DropSwapchain();
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+        for (uint32_t i = 0; i < vk.imageCount; ++i) vk.images[i] = {images[i], reinterpret_cast<VkImage>(nextHandle++)};
+        vk.extent = extent;
+        *out = vk.guestSwapchain = reinterpret_cast<VkSwapchainKHR>(nextHandle++);
+        return VK_SUCCESS;
+    });
+}
+
+/// Lists only the opaque images of the named swapchain.
+VkResult VKAPI_CALL Images(VkDevice d, VkSwapchainKHR s, uint32_t* count, VkImage* out) {
+    return Run([=] {
+        if (!d || d != vk.guestDevice || !s || s != vk.guestSwapchain) return VK_ERROR_INITIALIZATION_FAILED;
+        std::array<VkImage, 16> tokens{};
+        for (uint32_t i = 0; i < vk.imageCount; ++i) tokens[i] = vk.images[i].guest;
+        return Enumerate(vk.imageCount, tokens.data(), count, out);
+    });
+}
+
+/// Destroys the named swapchain; driver commands have been drained before tokens are invalidated.
+void VKAPI_CALL DestroySwapchain(VkDevice d, VkSwapchainKHR s, const VkAllocationCallbacks* allocator) {
+    Run([=] {
+        if (!allocator && d && d == vk.guestDevice && s && s == vk.guestSwapchain &&
+            (vk.frame == Frame::Idle || vk.frame == Frame::Ready || vk.frame == Frame::Complete)) DropSwapchain();
+        else LogLine("GRAPHICS_CAPABILITY_MISSING: guest Vulkan invalid swapchain destruction");
+        return VK_SUCCESS;
+    });
+}
+
+/// Creates a real unsignaled fence for the one acquired image.
+VkResult VKAPI_CALL CreateFence(VkDevice d, const VkFenceCreateInfo* info, const VkAllocationCallbacks* allocator, VkFence* out) {
+    if (!out) return VK_ERROR_INITIALIZATION_FAILED;
+    *out = VK_NULL_HANDLE;
+    if (!info || allocator || info->sType != VK_STRUCTURE_TYPE_FENCE_CREATE_INFO || info->pNext || info->flags)
+        return VK_ERROR_FEATURE_NOT_PRESENT;
+    return Run([=] {
+        if (!d || d != vk.guestDevice || vk.fence) return VK_ERROR_INITIALIZATION_FAILED;
+        const auto result = DeviceDriver<PFN_vkCreateFence>("vkCreateFence")(vk.device, info, nullptr, &vk.fence);
+        if (result == VK_SUCCESS) *out = vk.guestFence = reinterpret_cast<VkFence>(nextHandle++);
+        return result;
+    });
+}
+
+/// Waits for the real acquire fence and makes the image eligible for recording.
+VkResult VKAPI_CALL WaitFence(VkDevice d, uint32_t n, const VkFence* fences, VkBool32 all, uint64_t timeout) {
+    return Run([=] {
+        if (!d || d != vk.guestDevice || n != 1 || !fences || !*fences || *fences != vk.guestFence || vk.frame != Frame::Acquired)
+            return VK_ERROR_INITIALIZATION_FAILED;
+        const auto result = DeviceDriver<PFN_vkWaitForFences>("vkWaitForFences")(vk.device, 1, &vk.fence, all, std::min(timeout, kWaitNs));
+        if (result == VK_SUCCESS) vk.frame = Frame::Ready;
+        return result;
+    });
+}
+
+/// Resets the acquire fence only after the previous frame completed.
+VkResult VKAPI_CALL ResetFence(VkDevice d, uint32_t n, const VkFence* fences) {
+    return Run([=] {
+        if (!d || d != vk.guestDevice || n != 1 || !fences || !*fences || *fences != vk.guestFence || vk.frame != Frame::Idle)
+            return VK_ERROR_INITIALIZATION_FAILED;
+        return DeviceDriver<PFN_vkResetFences>("vkResetFences")(vk.device, 1, &vk.fence);
+    });
+}
+
+/// Destroys the acquire fence only when no acquire operation can still signal it.
+void VKAPI_CALL DestroyFence(VkDevice d, VkFence fence, const VkAllocationCallbacks* allocator) {
+    Run([=] {
+        if (!allocator && d && d == vk.guestDevice && fence && fence == vk.guestFence && vk.frame != Frame::Acquired) {
+            DeviceDriver<PFN_vkDestroyFence>("vkDestroyFence")(vk.device, vk.fence, nullptr);
+            vk.fence = vk.guestFence = VK_NULL_HANDLE;
+        }
+        return VK_SUCCESS;
+    });
+}
+
+/// Acquires one real image with a bounded wait and the caller's own fence token.
+VkResult VKAPI_CALL AcquireImage(VkDevice d, VkSwapchainKHR s, uint64_t timeout, VkSemaphore semaphore, VkFence fence, uint32_t* index) {
+    return Run([=] {
+        if (!d || d != vk.guestDevice || !s || s != vk.guestSwapchain || !fence || fence != vk.guestFence ||
+            !index || semaphore || vk.frame != Frame::Idle) return VK_ERROR_INITIALIZATION_FAILED;
+        if (auto result = CheckSwapchain(); result != VK_SUCCESS) return result;
+        if (DeviceDriver<PFN_vkGetFenceStatus>("vkGetFenceStatus")(vk.device, vk.fence) != VK_NOT_READY)
+            return VK_ERROR_INITIALIZATION_FAILED;
+        const auto result = DeviceDriver<PFN_vkAcquireNextImageKHR>("vkAcquireNextImageKHR")
+            (vk.device, vk.swapchain, std::min(timeout, kWaitNs), VK_NULL_HANDLE, vk.fence, index);
+        if (result == VK_SUCCESS || result == VK_SUBOPTIMAL_KHR) {
+            vk.imageIndex = *index;
+            vk.frame = Frame::Acquired;
+        } else if (result < 0) vk.swapchainError = result;
+        return result;
+    });
+}
+
+/// Allocates the one command pool on the admitted queue family.
+VkResult VKAPI_CALL CreatePool(VkDevice d, const VkCommandPoolCreateInfo* info, const VkAllocationCallbacks* allocator, VkCommandPool* out) {
+    if (!out) return VK_ERROR_INITIALIZATION_FAILED;
+    *out = VK_NULL_HANDLE;
+    if (!info || allocator || info->sType != VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO || info->pNext ||
+        info->flags != VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT) return VK_ERROR_FEATURE_NOT_PRESENT;
+    return Run([=] {
+        if (!d || d != vk.guestDevice || vk.pool || info->queueFamilyIndex != vk.family) return VK_ERROR_INITIALIZATION_FAILED;
+        const auto result = DeviceDriver<PFN_vkCreateCommandPool>("vkCreateCommandPool")(vk.device, info, nullptr, &vk.pool);
+        if (result == VK_SUCCESS) *out = vk.guestPool = reinterpret_cast<VkCommandPool>(nextHandle++);
+        return result;
+    });
+}
+
+/// Releases the command pool and its one buffer, never while a submission is pending.
+void VKAPI_CALL DestroyPool(VkDevice d, VkCommandPool pool, const VkAllocationCallbacks* allocator) {
+    Run([=] {
+        if (!allocator && d && d == vk.guestDevice && pool && pool == vk.guestPool && vk.frame == Frame::Idle) {
+            DeviceDriver<PFN_vkDestroyCommandPool>("vkDestroyCommandPool")(vk.device, vk.pool, nullptr);
+            vk.pool = vk.guestPool = VK_NULL_HANDLE;
+            vk.command = vk.guestCommand = VK_NULL_HANDLE;
+        }
+        return VK_SUCCESS;
+    });
+}
+
+/// Allocates one primary command buffer without exposing a host pointer.
+VkResult VKAPI_CALL AllocateCommand(VkDevice d, const VkCommandBufferAllocateInfo* info, VkCommandBuffer* out) {
+    if (!out) return VK_ERROR_INITIALIZATION_FAILED;
+    *out = VK_NULL_HANDLE;
+    if (!info || info->sType != VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO || info->pNext ||
+        info->level != VK_COMMAND_BUFFER_LEVEL_PRIMARY || info->commandBufferCount != 1) return VK_ERROR_FEATURE_NOT_PRESENT;
+    return Run([=] {
+        if (!d || d != vk.guestDevice || !info->commandPool || info->commandPool != vk.guestPool || vk.command)
+            return VK_ERROR_INITIALIZATION_FAILED;
+        auto host = *info;
+        host.commandPool = vk.pool;
+        const auto result = DeviceDriver<PFN_vkAllocateCommandBuffers>("vkAllocateCommandBuffers")(vk.device, &host, &vk.command);
+        if (result == VK_SUCCESS) *out = vk.guestCommand = reinterpret_cast<VkCommandBuffer>(nextHandle++);
+        return result;
+    });
+}
+
+/// Begins recording after the image's acquire fence has signaled.
+VkResult VKAPI_CALL BeginCommand(VkCommandBuffer cmd, const VkCommandBufferBeginInfo* info) {
+    if (!info || info->sType != VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO || info->pNext || info->pInheritanceInfo ||
+        info->flags != VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT) return VK_ERROR_FEATURE_NOT_PRESENT;
+    return Run([=] {
+        if (!cmd || cmd != vk.guestCommand || vk.frame != Frame::Ready) return VK_ERROR_INITIALIZATION_FAILED;
+        const auto result = DeviceDriver<PFN_vkBeginCommandBuffer>("vkBeginCommandBuffer")(vk.command, info);
+        if (result == VK_SUCCESS) { vk.frame = Frame::Recording; vk.commands = 0; }
+        return result;
+    });
+}
+
+/// Accepts exactly the single color subresource of the swapchain image.
+bool ColorRange(const VkImageSubresourceRange& range) {
+    return range.aspectMask == VK_IMAGE_ASPECT_COLOR_BIT && !range.baseMipLevel && range.levelCount == 1 &&
+           !range.baseArrayLayer && range.layerCount == 1;
+}
+
+/// Records only the explicit transitions into transfer-dst and out to presentation.
+void VKAPI_CALL Barrier(VkCommandBuffer cmd, VkPipelineStageFlags src, VkPipelineStageFlags dst, VkDependencyFlags flags,
+    uint32_t memoryCount, const VkMemoryBarrier*, uint32_t bufferCount, const VkBufferMemoryBarrier*,
+    uint32_t count, const VkImageMemoryBarrier* barriers) {
+    Run([=] {
+        if (!cmd || cmd != vk.guestCommand || vk.frame != Frame::Recording) return VK_ERROR_INITIALIZATION_FAILED;
+        const auto& image = vk.images[vk.imageIndex];
+        const bool before = vk.commands == 0 && src == VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT && dst == VK_PIPELINE_STAGE_TRANSFER_BIT;
+        const bool after = vk.commands == 2 && src == VK_PIPELINE_STAGE_TRANSFER_BIT && dst == VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT;
+        if (!flags && !memoryCount && !bufferCount && count == 1 && barriers && (before || after)) {
+            auto host = barriers[0];
+            if (host.sType == VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER && !host.pNext && host.image == image.guest &&
+                ColorRange(host.subresourceRange) && host.srcQueueFamilyIndex == VK_QUEUE_FAMILY_IGNORED &&
+                host.dstQueueFamilyIndex == VK_QUEUE_FAMILY_IGNORED &&
+                (before ? (host.oldLayout == VK_IMAGE_LAYOUT_UNDEFINED && host.newLayout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL &&
+                           !host.srcAccessMask && host.dstAccessMask == VK_ACCESS_TRANSFER_WRITE_BIT) :
+                          (host.oldLayout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL && host.newLayout == VK_IMAGE_LAYOUT_PRESENT_SRC_KHR &&
+                           host.srcAccessMask == VK_ACCESS_TRANSFER_WRITE_BIT && !host.dstAccessMask))) {
+                host.image = image.host;
+                DeviceDriver<PFN_vkCmdPipelineBarrier>("vkCmdPipelineBarrier")(vk.command, src, dst, 0, 0, nullptr, 0, nullptr, 1, &host);
+                ++vk.commands;
+                return VK_SUCCESS;
+            }
+        }
+        vk.frame = Frame::Invalid;
+        return VK_ERROR_FEATURE_NOT_PRESENT;
+    });
+}
+
+/// Records a clear of only the acquired image, with its transfer layout established.
+void VKAPI_CALL ClearImage(VkCommandBuffer cmd, VkImage image, VkImageLayout layout, const VkClearColorValue* color,
+                           uint32_t count, const VkImageSubresourceRange* range) {
+    Run([=] {
+        if (!cmd || cmd != vk.guestCommand || vk.frame != Frame::Recording) return VK_ERROR_INITIALIZATION_FAILED;
+        const auto& expected = vk.images[vk.imageIndex];
+        if (vk.commands != 1 || image != expected.guest || layout != VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL ||
+            !color || count != 1 || !range || !ColorRange(*range)) {
+            vk.frame = Frame::Invalid;
+            return VK_ERROR_FEATURE_NOT_PRESENT;
+        }
+        DeviceDriver<PFN_vkCmdClearColorImage>("vkCmdClearColorImage")(vk.command, expected.host, layout, color, 1, range);
+        ++vk.commands;
+        return VK_SUCCESS;
+    });
+}
+
+/// Ends one complete transfer-clear recording; incomplete recordings cannot be submitted.
+VkResult VKAPI_CALL EndCommand(VkCommandBuffer cmd) {
+    return Run([=] {
+        if (!cmd || cmd != vk.guestCommand ||
+            (vk.frame != Frame::Recording && vk.frame != Frame::Invalid)) return VK_ERROR_INITIALIZATION_FAILED;
+        const bool complete = vk.frame == Frame::Recording && vk.commands == 3;
+        const auto result = DeviceDriver<PFN_vkEndCommandBuffer>("vkEndCommandBuffer")(vk.command);
+        vk.frame = complete && result == VK_SUCCESS ? Frame::Executable : Frame::Ready;
+        return complete ? result : VK_ERROR_FEATURE_NOT_PRESENT;
+    });
+}
+
+/// Submits one audited command buffer; no semaphores or foreign objects are accepted.
+VkResult VKAPI_CALL Submit(VkQueue q, uint32_t n, const VkSubmitInfo* info, VkFence fence) {
+    return Run([=] {
+        if (!q || q != vk.guestQueue || n != 1 || !info || info->sType != VK_STRUCTURE_TYPE_SUBMIT_INFO ||
+            info->pNext || info->waitSemaphoreCount || info->signalSemaphoreCount || fence ||
+            info->commandBufferCount != 1 || !info->pCommandBuffers || *info->pCommandBuffers != vk.guestCommand ||
+            vk.frame != Frame::Executable) return VK_ERROR_INITIALIZATION_FAILED;
+        auto host = *info;
+        host.pCommandBuffers = &vk.command;
+        const auto result = DeviceDriver<PFN_vkQueueSubmit>("vkQueueSubmit")(vk.queue, 1, &host, VK_NULL_HANDLE);
+        vk.frame = result == VK_SUCCESS ? Frame::Submitted : Frame::Ready;
+        return result;
+    });
+}
+
+/// Synchronizes the one queue without holding JVM or surface registry locks.
+VkResult VKAPI_CALL QueueIdle(VkQueue q) {
+    return Run([=] {
+        if (!q || q != vk.guestQueue) return VK_ERROR_INITIALIZATION_FAILED;
+        const auto result = DeviceDriver<PFN_vkQueueWaitIdle>("vkQueueWaitIdle")(vk.queue);
+        if (vk.frame == Frame::Submitted) vk.frame = result == VK_SUCCESS ? Frame::Complete : Frame::Ready;
+        return result;
+    });
+}
+
+/// Presents only the acquired and completed image; returns raw WSI status without silent fallback.
+VkResult VKAPI_CALL Present(VkQueue q, const VkPresentInfoKHR* info) {
+    return Run([=] {
+        if (!q || q != vk.guestQueue || !info || info->sType != VK_STRUCTURE_TYPE_PRESENT_INFO_KHR ||
+            info->pNext || info->waitSemaphoreCount || info->swapchainCount != 1 || !info->pSwapchains ||
+            *info->pSwapchains != vk.guestSwapchain || !info->pImageIndices || *info->pImageIndices != vk.imageIndex ||
+            vk.frame != Frame::Complete) return VK_ERROR_INITIALIZATION_FAILED;
+        auto result = CheckSwapchain();
+        if (result == VK_SUCCESS) {
+            auto host = *info;
+            host.pSwapchains = &vk.swapchain;
+            result = DeviceDriver<PFN_vkQueuePresentKHR>("vkQueuePresentKHR")(vk.queue, &host);
+        } else if (info->pResults) *info->pResults = result;
+        vk.frame = Frame::Idle;
+        vk.imageIndex = UINT32_MAX;
+        if (result == VK_SUCCESS || result == VK_SUBOPTIMAL_KHR) vk.presented = true;
+        else if (result < 0) vk.swapchainError = result;
+        return result;
+    });
+}
+
 PFN_vkVoidFunction VKAPI_CALL Proc(VkInstance instance, const char* name);
+PFN_vkVoidFunction VKAPI_CALL DeviceProc(VkDevice device, const char* name);
 
 /// Describes one audited fixed-signature import and its resolution scope.
-enum class Scope { Global, Instance, Surface, AndroidSurface };
+enum class Scope { Global, Instance, Surface, AndroidSurface, Device };
 struct Entry { guest::HostSymbol symbol; Scope scope; };
 #define ENTRY(name, fn, scope) {{#name, reinterpret_cast<void*>(&fn)}, Scope::scope}
 const Entry entries[] = {
@@ -356,6 +832,29 @@ const Entry entries[] = {
     ENTRY(vkGetPhysicalDeviceSurfaceCapabilitiesKHR, Capabilities, Surface),
     ENTRY(vkGetPhysicalDeviceSurfaceFormatsKHR, Formats, Surface),
     ENTRY(vkGetPhysicalDeviceSurfacePresentModesKHR, PresentModes, Surface),
+    ENTRY(vkEnumerateDeviceExtensionProperties, DeviceExtensions, Instance),
+    ENTRY(vkCreateDevice, CreateDevice, Instance),
+    ENTRY(vkGetDeviceProcAddr, DeviceProc, Instance),
+    ENTRY(vkGetDeviceQueue, GetQueue, Device),
+    ENTRY(vkDestroyDevice, DestroyDevice, Device),
+    ENTRY(vkCreateSwapchainKHR, CreateSwapchain, Device),
+    ENTRY(vkGetSwapchainImagesKHR, Images, Device),
+    ENTRY(vkDestroySwapchainKHR, DestroySwapchain, Device),
+    ENTRY(vkAcquireNextImageKHR, AcquireImage, Device),
+    ENTRY(vkCreateFence, CreateFence, Device),
+    ENTRY(vkWaitForFences, WaitFence, Device),
+    ENTRY(vkResetFences, ResetFence, Device),
+    ENTRY(vkDestroyFence, DestroyFence, Device),
+    ENTRY(vkCreateCommandPool, CreatePool, Device),
+    ENTRY(vkDestroyCommandPool, DestroyPool, Device),
+    ENTRY(vkAllocateCommandBuffers, AllocateCommand, Device),
+    ENTRY(vkBeginCommandBuffer, BeginCommand, Device),
+    ENTRY(vkCmdPipelineBarrier, Barrier, Device),
+    ENTRY(vkCmdClearColorImage, ClearImage, Device),
+    ENTRY(vkEndCommandBuffer, EndCommand, Device),
+    ENTRY(vkQueueSubmit, Submit, Device),
+    ENTRY(vkQueueWaitIdle, QueueIdle, Device),
+    ENTRY(vkQueuePresentKHR, Present, Device),
 };
 #undef ENTRY
 
@@ -376,6 +875,16 @@ PFN_vkVoidFunction VKAPI_CALL Proc(VkInstance instance, const char* name) {
     return nullptr;
 }
 
+/// Resolves only device commands on the live device, never an ICD function pointer.
+PFN_vkVoidFunction VKAPI_CALL DeviceProc(VkDevice device, const char* name) {
+    if (!device || !name || strnlen(name, 128) == 128) return nullptr;
+    for (const auto& entry : entries)
+        if (entry.scope == Scope::Device && !std::strcmp(entry.symbol.name, name))
+            return Run([=] { return device == vk.guestDevice ? VK_SUCCESS : VK_ERROR_INITIALIZATION_FAILED; }) == VK_SUCCESS
+                ? reinterpret_cast<PFN_vkVoidFunction>(entry.symbol.address) : nullptr;
+    return nullptr;
+}
+
 } // namespace
 
 void AddGuestVulkanLibrary(std::vector<guest::BuiltinLibrary>& libraries) {
@@ -385,6 +894,9 @@ void AddGuestVulkanLibrary(std::vector<guest::BuiltinLibrary>& libraries) {
 }
 
 bool GuestVulkanOwnsWindow() { return vk.surface && !vk.retired; }
+
+/// Allows Win32 to validate paint without overwriting the active swapchain's contents.
+bool GuestVulkanPresents(HWND window) { return vk.window == window && !vk.retired && vk.presented; }
 
 void RetireGuestVulkan(HWND window, bool closing) {
     if (closing && (!vk.window || vk.window == window)) Shutdown();

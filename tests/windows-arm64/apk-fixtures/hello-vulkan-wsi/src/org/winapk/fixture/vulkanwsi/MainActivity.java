@@ -14,6 +14,7 @@ public final class MainActivity extends Activity {
     private static final String TAG = "T13.wsi";
     private static native int open(Surface surface);
     private static native long extent();
+    private static native int present(boolean resized);
     private static native boolean replace(Surface surface);
 
     @Override public void onCreate(Bundle state) {
@@ -38,10 +39,21 @@ public final class MainActivity extends Activity {
                     stopped = true;
                     Log.e(TAG, "FAIL extent=" + size);
                 } else if (initial == 0) {
+                    int status = present(false);
+                    if (status != 0) {
+                        stopped = true;
+                        Log.e(TAG, "FAIL initial-present=" + status);
+                        return;
+                    }
                     initial = size;
                     logSize("initial", size);
                 } else if (size != initial) {
                     stopped = true;
+                    int status = present(true);
+                    if (status != 0) {
+                        Log.e(TAG, "FAIL resized-present=" + status);
+                        return;
+                    }
                     logSize("resized", size);
                     main.post(new Runnable() {
                         @Override public void run() { installReplacement(); }
