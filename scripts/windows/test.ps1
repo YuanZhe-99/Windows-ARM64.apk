@@ -779,13 +779,13 @@ function Test-ApkJni {
         $policy = [WinApkTestWin]::GetProcessMitigationPolicy($p.Handle, 7, [ref]$cfg, [UIntPtr]4)
         Write-Host "diagnostic T09.apk.$($variant.Name).cfg=$($cfg -band 1) query=$policy"
         $result = Wait-Log $log 'JNI: native\.(value|error)=(.*)' 10
-        $ready = Wait-Log $log 'delivering window focus to org\.winapk\.fixture\.jni\.MainActivity \(surface ready\)' 15
+        $ready = Wait-Log $log 'ViewCanvasDriver: macapkDrawFrame fire #1 present \d+x\d+ nonzero=[1-9]\d*/'
         $ok = $result -and $(if ($mode -eq 'off') {
             $result.Groups[1].Value -eq 'error' -and $result.Groups[2].Value.StartsWith('GUEST_NATIVE_DISABLED:')
         } else { $result.Groups[1].Value -eq 'value' -and $result.Groups[2].Value.Trim() -eq '43 checks=PASS matrix=PASS' })
         $ok = $ok -and $policy -and $h -ne [IntPtr]::Zero -and $null -ne $ready -and
               (Read-Log $log) -notmatch 'WARNING in native method|FATAL ERROR in native method'
-        Check "T09.apk.$($variant.Name)" $ok "$(if ($result) { $result.Value })"
+        Check "T09.apk.$($variant.Name)" $ok "$(if ($result) { $result.Value }); frame=$($null -ne $ready)"
         if ($variant.Name -eq 'restricted' -and $ok -and $h -ne [IntPtr]::Zero) {
             $layout = Wait-Log $log 'JNI: refusal.bounds=(\d+,\d+,\d+,\d+)' 5
             if ($layout) {

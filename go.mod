@@ -2,6 +2,8 @@ module github.com/YuanZhe-99/Windows-ARM64.apk
 
 go 1.27.4
 
+ignore ./build
+
 tool github.com/egoist/mygo/cmd/mygo
 
 require github.com/egoist/mygo v0.9.2

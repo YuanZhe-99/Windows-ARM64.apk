@@ -34,6 +34,10 @@ The runtime's commands are in the next section.
 
 ## Building and testing the runtime
 
+The Go module ignores `./build` when expanding package wildcards. This generated/download
+tree can contain large third-party checkouts; it is not product Go source. Root `cmd`,
+`internal`, `locales` and `tools` remain covered by the standard Go commands.
+
 ```powershell
 .\scripts\windows\check-requirements.ps1
 .\scripts\windows\build.ps1 -Component All          # or Java, FrameworkRes, Fixtures, Host, NativeProbe, JniProbe
@@ -175,7 +179,10 @@ loads, Android naming, late-class exports and missing/outside-directory refusal.
 checks strings/arrays, long/float/double and instance results, exception propagation/clearing,
 dependency-only exports, dependency hook separation, cached bad-version refusal and an attached
 guest worker's nested callback. The positive matrix runs with CheckJNI; all launches wait for the
-actual surface-ready event. The refusal button calls MonitorEnter and must exit 3 with slot 217,
+actual first bitmap frame, not a window-focus notification (which need not fire when unfocused).
+Use the existing 30-second log deadline: CheckJNI/font drawing can put the first frame near
+the old 15-second limit. There is no fixed startup sleep or automatic retry.
+The refusal button calls MonitorEnter and must exit 3 with slot 217,
 not return a stand-in result. The screenshot is `T09-apk-activity.png`, not a substitute for values.
 ZIP traversal is refused before DEX conversion or boot. `hello-jni.json` records source/links,
 SONAME arguments and hashes; no broad app sweep or duplicate pressure loop is added.

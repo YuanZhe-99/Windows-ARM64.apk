@@ -27,6 +27,9 @@ go run ./tools/checkdocs           # doc/en-us and doc/zh-cn mirror each other
 
 ## 构建和测试运行时
 
+Go 模块展开包通配符时忽略 `./build`。该生成/下载目录可能包含大型第三方 checkout，
+不是产品 Go 源码。根目录的 `cmd`、`internal`、`locales` 和 `tools` 仍由标准 Go 命令覆盖。
+
 ```powershell
 .\scripts\windows\check-requirements.ps1
 .\scripts\windows\build.ps1 -Component All          # or Java, FrameworkRes, Fixtures, Host, NativeProbe, JniProbe
@@ -143,7 +146,9 @@ JVM 专属 `1bad` 声明即使有匹配导出也保持未解析，符合 JNI 歧
 仅一次 System/Runtime 加载、Android 命名、后加载类导出及缺失/目录外拒绝。
 还检查字符串/数组、long/float/double 和实例结果、异常传播/清除、仅由依赖导出的方法、
 依赖 hook 分离、错误版本拒绝缓存及附着 guest worker 的嵌套回调。
-正例矩阵启用 CheckJNI；全部启动等待真实 surface-ready 事件。
+正例矩阵启用 CheckJNI；全部启动等待真实首个位图帧，不等待窗口焦点通知（无焦点时不一定触发）。
+使用既有的 30 秒日志截止时间：CheckJNI/字体绘制可能使首帧接近此前的 15 秒上限。
+不添加固定启动休眠或自动重试。
 拒绝按钮调用 MonitorEnter，必须退出 3 并报告槽位 217，不返回替代结果。
 截图为 `T09-apk-activity.png`，不替代数值检查。ZIP 路径穿越在 DEX 转换或 boot 之前拒绝。
 `hello-jni.json` 记录源码/链接、SONAME 参数及哈希；不增加大范围应用扫描或重复压力循环。
