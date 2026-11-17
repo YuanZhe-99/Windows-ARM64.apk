@@ -159,7 +159,7 @@ What the N0 loader (`runtime/guest/loader`, [native-profiles.md](native-profiles
 ## Next
 
 P2's profile N0 is done (G2). P3 now has a separate T08 thread foundation (managed pthreads,
-errno, keys/destructors and C emulated TLS), implemented under `runtime/guest/bionic` rather
+errno, keys/destructors, C emulated TLS and untimed mutex/condition synchronization), implemented under `runtime/guest/bionic` rather
 than porting Darwin's shim. N1 dependencies/constructors, the remaining Bionic groups and guest
 fault boundaries are still open ([native-profiles.md](native-profiles.md)); then P4 routes an
 APK's libraries and `System.load` to the loader. P1's open items are a density

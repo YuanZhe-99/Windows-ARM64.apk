@@ -35,6 +35,7 @@ go run ./tools/checkdocs           # doc/en-us and doc/zh-cn mirror each other
 .\scripts\windows\test.ps1 -Suite Native
 .\scripts\windows\test.ps1 -Suite Bionic
 .\build\windows-arm64\bin\native-probe.exe suite .\tests\fixtures\elf\libn0abi.so
+.\build\windows-arm64\bin\native-probe.exe sync .\tests\fixtures\elf\libsync.so
 .\build\windows-arm64\bin\winapk.exe doctor --json
 .\build\windows-arm64\bin\winapk.exe inspect .\tests\fixtures\hello-java.apk --json
 .\build\windows-arm64\bin\winapk.exe run .\tests\fixtures\hello-java.apk --native=off
@@ -62,8 +63,13 @@ clang-cl 把 `winapk.exe`、`winapk-bridge.dll`、`native-probe.exe` 和 `winapk
 `test.ps1 -Suite Bionic` 通过 `native-probe.exe threads` 运行 P3 线程基础（T08），并非 G3：8/32 个同时存在
 的 worker、errno/key/仿真 TLS 隔离及析构、明确不支持的用例，再执行 200 轮（1600 个 worker），检查注册表清空和句柄。
 每个探测进程有 60 秒期限。还使用 P3 导入表检查 ELF TLS、裸系统调用、平台保留寄存器仍被拒绝。夹具刻意使用
-`-nostdlib -femulated-tls`；不能据此证明依赖加载、mutex/cond、其他 Bionic 功能组或 JNI。
+`-nostdlib -femulated-tls`；不能据此证明依赖加载、其他 Bionic 功能组或 JNI。
 源码、预期结果与二进制哈希仍记录在夹具配方/清单中。
+
+同一套件通过 `native-probe.exe sync` 运行 `libsync.so`：normal/recursive/error-checking mutex、
+八线程竞争、带谓词循环的 signal/broadcast、等待/重锁与忙碌销毁保护、过期/复制标记和不支持的属性。
+还运行 200 轮同步循环（1600 个 worker），检查超时等待导入被拒绝、仍持有对象时销毁运行时会带诊断终止。
+这个无依赖夹具不开放 N1 或 JNI；超时等待/加锁及属性 API 仍不支持（[native-profiles.md](native-profiles.md)）。
 
 `winapk run` 把每个应用的数据放在 `%LOCALAPPDATA%\Windows-ARM64.apk\Apps` 下（`--data-dir` 可改）：`android\`
 是应用看到的 Android 根目录（`data\data\<package>`、`sdcard`），`code\<package>\` 是转换后的代码及缓存戳，

@@ -8,9 +8,19 @@
 # Flags: added to Common. From + Mutation: a copy of another fixture with one field patched
 # (build.ps1, Write-ElfMutation). Expect: the error category. Reason: text the refusal contains.
 # Result: expected success/fatal output in the generated manifest. Exit: a runtime fatal's code.
+# Command/Cases: T08 probe command and required positive case count (threads/9 by default).
 @{
     Common   = @('-shared', '-fPIC', '-fno-stack-protector', '-Wall', '-Wextra', '-Werror')
     Fixtures = @(
+        @{ Name = 'libsync.so'; Id = 'T08'; Source = 'threads/sync.c'; Target = 'aarch64-linux-android30'
+           Flags = @('-O2', '-nostdlib'); Command = 'sync'; Cases = 8; Result = 'T08 PASS' }
+        @{ Name = 'neg-sync-timedwait.so'; Id = 'T08'; Source = 'threads/sync.c'; Target = 'aarch64-linux-android30'
+           Flags = @('-O2', '-nostdlib', '-DT08_SYNC_MISSING', '-Wno-unused-function'); Command = 'sync'
+           Expect = 'GUEST_SYMBOL_UNRESOLVED'; Reason = 'pthread_cond_timedwait' }
+        @{ Name = 'neg-sync-owned.so'; Id = 'T08'; Source = 'threads/sync.c'; Target = 'aarch64-linux-android30'
+           Flags = @('-O2', '-nostdlib', '-DT08_SYNC_OWNED', '-Wno-unused-function'); Command = 'sync'
+           Exit = 3; Reason = 'GUEST_ABI_UNSUPPORTED thread runtime: runtime destroyed with owned or waited-on synchronization objects'
+           Result = 'exit 3: GUEST_ABI_UNSUPPORTED thread runtime: runtime destroyed with owned or waited-on synchronization objects' }
         # T08: no ELF TLS or dependencies; only the audited P3 thread imports.
         @{ Name = 'libthreads.so'; Id = 'T08'; Source = 'threads/threads.c'; Target = 'aarch64-linux-android30'
            Flags = @('-O2', '-nostdlib', '-femulated-tls'); Result = 'T08 PASS' }

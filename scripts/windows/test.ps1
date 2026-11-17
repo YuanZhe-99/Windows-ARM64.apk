@@ -32,7 +32,8 @@ profile ELF files, each refused with its category and reason). Build first:
 build.ps1 -Component NativeProbe.
 
 Suite Bionic is the P3 thread foundation (T08), not G3: managed pthreads, guest
-errno, TLS keys/destructors and explicitly emulated C TLS; unsupported imports
+errno, TLS keys/destructors, explicitly emulated C TLS and untimed mutex/condition
+synchronization; unsupported imports
 and hardware TLS/syscall/register access remain refused. Each probe has a
 60-second deadline. Build first: build.ps1 -Component NativeProbe.
 
@@ -551,7 +552,8 @@ function Test-Bionic {
         if (-not $rec -or $rec.sha256 -ne $sha) { continue }
         $stdout = Join-Path $logs "T08-$($f.Name).out"
         $stderr = Join-Path $logs "T08-$($f.Name).err"
-        $p = Start-Process $probe -ArgumentList @('threads', "`"$file`"") -PassThru -NoNewWindow -RedirectStandardOutput $stdout -RedirectStandardError $stderr
+        $command = if ($f.ContainsKey('Command')) { $f.Command } else { 'threads' }
+        $p = Start-Process $probe -ArgumentList @($command, "`"$file`"") -PassThru -NoNewWindow -RedirectStandardOutput $stdout -RedirectStandardError $stderr
         try {
             if (-not $p.WaitForExit(60000)) {
                 $p.Kill()
@@ -568,7 +570,8 @@ function Test-Bionic {
             } else {
                 $cases = [regex]::Matches($o, '(?m)^case (T08\.\S+) (PASS|FAIL): (.*)')
                 foreach ($c in $cases) { Check $c.Groups[1].Value ($c.Groups[2].Value -eq 'PASS') $c.Groups[3].Value.TrimEnd() }
-                $ok = $p.ExitCode -eq 0 -and $cases.Count -eq 9 -and $o -match 'result T08 PASS'
+                $expectedCases = if ($f.ContainsKey('Cases')) { $f.Cases } else { 9 }
+                $ok = $p.ExitCode -eq 0 -and $cases.Count -eq $expectedCases -and $o -match 'result T08 PASS'
                 Check "T08.$($f.Name).result" $ok "exit $($p.ExitCode), $($cases.Count) cases$(if (-not $ok) { '; ' + $o + $err })"
             }
         } finally { $p.Dispose() }

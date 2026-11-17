@@ -64,13 +64,14 @@ Verified on Windows 11 ARM64 (2026-11-16): build 26300.9974, Snapdragon Compute 
 | On real ARM64 | PASS | the machine above; `native-probe.exe` and `capstone.dll` ARM64 |
 | `abi-compatibility.md` | PASS | [abi-compatibility.md](abi-compatibility.md): direct, thunk and unsupported signatures with their cases |
 
-## P3 thread foundation checks
+## P3 thread and synchronization checks
 
-`test.ps1 -Suite Bionic`, 2026-11-16: 25/25 checks PASS on the Windows ARM64 machine above. This is T08, not G3;
-the guest fixture is built with NDK r30, API 30, `-O2 -nostdlib -femulated-tls -fno-stack-protector`.
+`test.ps1 -Suite Bionic`, 2026-11-16: 39/39 checks PASS on the Windows ARM64 machine above. This is T08, not G3;
+the thread fixture is built with NDK r30, API 30, `-O2 -nostdlib -femulated-tls -fno-stack-protector`;
+the separate sync fixture uses `-O2 -nostdlib -fno-stack-protector` and no TLS.
 Its hash and exact flags are in `tests/fixtures/elf/fixtures.json`
 (generated, not committed); output is in `build/windows-arm64/test-data/logs/T08-*`.
-The foundation's positive probe has nine cases; its checked refusal/fatal files are not evidence
+The thread probe has nine cases, the sync probe eight; their refusal/fatal files are not evidence
 that dependency or JNI integration works.
 
 | Item (`PLAN.md` §10) | Result | Evidence |
@@ -79,6 +80,9 @@ that dependency or JNI integration works.
 | TLS initialization, alignment and destruction | PASS | initialized value 41, zero-filled values, 64-byte alignment; cleared keys before destructor callbacks; re-armed keys called twice or limited to four rounds; emutls still usable in every callback |
 | Explicit errors and byte shim | PASS | deleted/invalid keys → `EINVAL`, 129th live key → `EAGAIN`, non-null thread attributes → `ENOTSUP`, self join → `EDEADLK`, unknown/already-joined thread → `ESRCH`; guest errno unchanged; `memset` return/bounds/zero length/byte conversion |
 | Thread resource cleanup | PASS | 200 cycles / 1600 workers after warm-up: handle delta +0; thread/context/key/emutls registries empty after every call; 5413 host-state callbacks, no x18/sp/errno violation |
+| Mutex kinds, layout and lifecycle | PASS | 40-byte, four-byte-aligned storage with sentinels; normal, recursive (2048 limit), error-checking; eight workers × 256 increments = 2048; copied/stale/destroyed objects and wrong owner diagnosed; explicit reinit; errno unchanged |
+| Condition wait/signal/broadcast | PASS | 48-byte storage with sentinels; 256 request/ack signal handshakes; eight waiters broadcast; mutex owned on every return; busy condition/mutex destruction refused, including an unlocked mutex pinned by condition waits; a second mutex binding and recursive depth >1 refused |
+| Sync resource cleanup and refusals | PASS | 200 cycles / 1600 workers, handle delta +0, sync registries empty; 1916 host-state callbacks without violations; timed-wait import refused before entry, owned-mutex runtime teardown exits 3 with a diagnostic |
 | Out-of-scope native behavior | PASS | missing `pthread_detach` import refused before entry; ELF PT_TLS, raw `svc`, TPIDR_EL0 and x18 still refused with the P3 import table; malformed emutls descriptor and unjoined-worker teardown both terminate with a diagnostic and exit 3 |
 | N1 dependency loading and JNI integration | NOT_RUN | T07 and T09 not implemented; `winapk run` native loading remains disabled |
 

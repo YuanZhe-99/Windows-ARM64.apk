@@ -69,8 +69,29 @@
   resolver 必须是绑定到本 shim 的未定义导入，不能是客体库内嵌的另一份 compiler-rt。
 - 调用方必须保持所有模块映射，直到上下文与回调结束。运行时销毁时仍有未 join 的 worker、从未管理线程调用有状态 shim、
   emutls 描述符损坏或编译器 TLS resolver 分配失败时，探测进程带诊断终止，绝不伪造 TLS 地址。
-  不允许异常经客体代码展开。客体故障范围处理、mutex/cond、`pthread_exit`、detach/取消、文件/时间/日志 shim
+  不允许异常经客体代码展开。客体故障范围处理、`pthread_exit`、detach/取消、文件/时间/日志 shim
   和依赖加载仍是 P3 后续工作；JNI 属于 P4。
+
+P3 同步子集通过独立的 `native-probe sync`（T08）测试：
+
+- Android LP64 mutex/condition 存储为 40/48 字节，按 4 字节对齐。shim 只在其中写入私有代际标记；
+  所有者、递归次数、等待者与宿主条件变量均保留在运行时的地址表中。将存活标记复制到另一个地址、使用旧代际或已销毁
+  对象返回 `EINVAL`，绝不跨 ABI 传递宿主锁布局。
+- `pthread_mutex_init`（空属性）、`lock`、`trylock`、`unlock`、`destroy` 支持默认 normal mutex。
+  识别 NDK 的 normal、recursive、error-checking 静态初始化值；递归所有权计数，error-checking 重锁返回
+  `EDEADLK`，递归次数限制为 Bionic 的 2048 次获取，忙碌的 trylock 返回 `EBUSY`。
+  normal mutex 的阻塞式自身重锁仍会死锁。
+  非所有者 unlock 返回 `EPERM`；销毁已持有、有竞争等待者或绑定条件等待的 mutex 返回 `EBUSY`。
+  销毁后必须显式重新初始化。
+- `pthread_cond_init`（空属性）、`wait`、`signal`、`broadcast`、`destroy` 支持全零静态初始化值和进程私有、
+  无超时等待。wait 在运行时注册表锁保护下原子释放逻辑 mutex 所有权并注册条件等待，返回前重新取得 mutex。
+  允许伪唤醒，调用方须使用谓词循环。同时存在的等待者必须使用同一个 mutex，否则返回 `EINVAL`。
+  有等待者时销毁返回 `EBUSY`；未持有 mutex 时等待返回 `EPERM`。
+- 非空 mutex/condition 属性和 monotonic 条件变量静态初始化值返回 `ENOTSUP`；超时等待/加锁、属性 API、
+  进程共享、robust/PI mutex 与 futex 系统调用尚未实现。递归深度大于一时条件等待返回 `ENOTSUP`，
+  不释放任何所有权。延迟分配可能返回 Linux `ENOMEM`。这些 pthread 调用均不修改客体 errno。
+- 等待者引用阻止销毁仍被阻塞加锁或条件等待使用的 mutex。测试在运行时 idle 检查前销毁对象；
+  运行时销毁不得释放仍被持有或等待的同步对象。
 
 T08 检查损坏描述符与仍有未 join worker 时销毁运行时导致的终止、8 与 32 个同时存在的客体线程的隔离、精确 join
 指针、主线程状态、初始值/零值/对齐 TLS、析构重设值与轮数
@@ -112,6 +133,8 @@ NativeProbe` 把它们构建到 `tests/fixtures/elf`（生成产物，从不提�
 | T06 派生所得 | 修补了一个字段的 `libn0abi.so`（`build.ps1`，`Write-ElfMutation`） | — |
 | T08 `libthreads.so` | `threads/threads.c`：受管理 pthread、errno、key/析构、C 仿真 TLS 与编译器需要的 `memset`；九个探测用例必须 PASS | API 30、`-O2 -nostdlib -femulated-tls`，公共选项与 T05 相同 |
 | T08 负例文件 | 同一源码：缺失 `pthread_detach`（加载时拒绝）、损坏的仿真 TLS 描述符和仍有未 join worker 时销毁运行时（诊断，退出码 3） | `T08_MISSING`、`T08_BAD_EMUTLS`、`T08_UNJOINED`；完整配方/结果在 `fixtures.psd1` |
+| T08 `libsync.so` | `threads/sync.c`：六个 mutex/condition 用例、压力测试与宿主状态检查 | API 30、`-O2 -nostdlib`，公共选项与 T05 相同；断言 NDK 头文件布局 |
+| T08 同步负例文件 | 同一源码：缺失 `pthread_cond_timedwait`（加载时拒绝），仍持有 mutex 时销毁运行时（诊断，退出码 3） | `T08_SYNC_MISSING`、`T08_SYNC_OWNED`；完整配方/结果在 `fixtures.psd1` |
 
 每个夹具都由 NDK 自带的 clang 和链接器构建；除其选项所表明的以外，没有哪个是可以代表普通 NDK 产物的特制构建
 （`PLAN.md` §5.3）。

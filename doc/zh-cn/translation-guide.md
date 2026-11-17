@@ -62,6 +62,10 @@ Microsoft），以及 API 与格式名称（JNI、ELF、PE、DEX、Bionic、EGL�
 | homogeneous floating-point aggregate (HFA) | 同质浮点聚合（HFA） |
 | variant calling convention | 变体调用约定 |
 | emulated TLS | 仿真 TLS |
+| generation marker | 代际标记 |
+| predicate loop | 谓词循环 |
+| spurious wakeup | 伪唤醒 |
+| process-private | 进程私有 |
 
 ## 6. 审阅清单
 

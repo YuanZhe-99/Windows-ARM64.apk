@@ -53,6 +53,7 @@ moves. The Mac.apk points below hold at `3f35611` (merged 2026-11-16); "read" me
 | NDK r30 links with a 16 KiB maximum page size and, at API 30, packs relative relocations as `DT_ANDROID_RELR` | segments share a 4 KiB host page only with the same permissions; RELR is applied | verified (T05 builds) |
 | ELF TLS has several access models and TLSDESC (AOSP `elf-tls.md`) | each model is supported or refused explicitly | read |
 | Bionic LP64 `pthread_t` is a 64-bit `long`, key is signed 32-bit; LLVM emutls uses size/alignment/object/initializer descriptor fields | explicit guest types and a managed resolver, never Windows `long`, CRT pthread objects or hardware thread-pointer swapping | read in NDK r30 headers and compiler-rt `emutls.c`; T08 verifies C emutls initialization/alignment and thread/key semantics |
+| NDK LP64 mutex/condition layouts are 40/48 bytes, alignment 4; static kind/clock bits are in `pthread.h`; Bionic non-PI recursion has an 11-bit depth-minus-one counter | guest-sized markers and host-side object tables, not copied host locks; unsupported attributes/clocks fail explicitly | NDK r30 headers and AOSP `pthread_mutex.cpp` / `pthread_cond.cpp` read; T08 `sync` covers the declared subset |
 
 ## MyGo
 

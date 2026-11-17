@@ -9,3 +9,4 @@
 - 2026-11-05: development stopped after G2; 0.1.0 was never released or tagged ([README.md](README.md#project-status)).
 - 2026-11-16: development resumed; moved to Go 1.27.4, MyGo v0.9.2 and Mac.apk `main` at `3f35611` (upstream's v1.0.2379 sync), and re-verified G0–G2 ([platform-notes.md](platform-notes.md)).
 - 2026-11-16: backend P3 thread foundation started (T08); Go 1.27.4, MyGo v0.9.2 and Mac.apk `3f35611` checked, unchanged; version remains 0.1.0, unreleased.
+- 2026-11-16: added P3 process-private mutex/condition synchronization (T08 `sync`); Go 1.27.4, MyGo v0.9.2 and Mac.apk `3f35611` checked, unchanged; no new gate or release.

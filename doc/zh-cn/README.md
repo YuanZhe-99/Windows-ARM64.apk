@@ -31,7 +31,8 @@ ABI 测试集；MyGo 界面对接示例数据（`winapk.Mock`），尚不启动�
 Go 1.27.4 和 MyGo v0.9.2。
 
 后续工作按 `PLAN.md` §10（P3：Bionic、线程、errno、TLS）和 §11（P4：JNI，以及在 `winapk run` 中加载 APK 的库）推进。
-独立 T08 线程基础现已覆盖受管理 pthread、errno、key/析构和显式仿真 C TLS；它不开放 N1 或 APK 原生库加载。
+独立 T08 线程基础现已覆盖受管理 pthread、errno、key/析构、显式仿真 C TLS 与无超时 mutex/condition 同步；
+它不开放 N1 或 APK 原生库加载。
 优先推进后端，暂缓前端集成。
 
 ## 上游版本

@@ -7,14 +7,14 @@ namespace winapk::guest {
 
 struct ThreadState;
 
-/// Owns joinable guest threads and TLS keys, without exposing host handles to Android code.
+/// Owns guest threads, TLS keys and synchronization tables without exposing host locks/handles.
 /// Notes: host code only; all guest modules must outlive this runtime and every Call.
 /// Only default attributes and normal entry-point return are supported. No JNI attachment yet.
 class ThreadRuntime {
 public:
     /// Creates an empty thread/key registry.
     ThreadRuntime();
-    /// Releases the registry; terminates with a diagnostic if a worker has not been joined.
+    /// Releases the registry; terminates for unjoined workers, active contexts or busy synchronization.
     ~ThreadRuntime();
     ThreadRuntime(const ThreadRuntime&) = delete;
     ThreadRuntime& operator=(const ThreadRuntime&) = delete;
@@ -28,7 +28,7 @@ public:
     /// may unwind into the host. Guest execution faults are not recovered here.
     void* Call(void* (*entry)(void*), void* argument);
 
-    /// Reports whether all contexts, TLS blocks, keys and joinable workers have been released.
+    /// Reports whether all contexts, TLS blocks, keys, workers and synchronization records are released.
     bool Idle() const;
 
 private:

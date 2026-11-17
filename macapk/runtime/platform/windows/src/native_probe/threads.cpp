@@ -26,7 +26,7 @@ int HostState(const int32_t* guestErrno) {
 
 }  // namespace
 
-int ProbeThreads(const std::wstring& path) {
+int ProbeThreads(const std::wstring& path, bool sync) {
     using winapk::guest::ThreadRuntime;
     auto imports = ThreadRuntime::Imports();
     std::vector<winapk::guest::HostSymbol> symbols(imports.begin(), imports.end());
@@ -47,7 +47,9 @@ int ProbeThreads(const std::wstring& path) {
     }
     // Registry destruction precedes module destruction, including every key callback.
     ThreadRuntime runtime;
-    const char* cases[] = {"threads8", "threads32", "destructor-limit", "deleted-keys", "key-exhaustion", "errors", "memset"};
+    const char* threadCases[] = {"threads8", "threads32", "destructor-limit", "deleted-keys", "key-exhaustion", "errors", "memset"};
+    const char* syncCases[] = {"mutex-contention8", "mutex-kinds", "mutex-lifecycle", "cond-signal", "cond-broadcast", "cond-errors"};
+    const auto cases = sync ? std::span(syncCases) : std::span<const char* const>(threadCases);
     int failed = 0;
     for (uintptr_t i = 0; i < std::size(cases); i++) {
         void* result = runtime.Call(entry, reinterpret_cast<void*>(i));
@@ -69,12 +71,12 @@ int ProbeThreads(const std::wstring& path) {
         if (runtime.Call(entry, nullptr) || !runtime.Idle()) cycles = false;
     GetProcessHandleCount(GetCurrentProcess(), &after);
     const bool clean = cycles && after <= before;
-    std::printf("case T08.stress %s: 200 cycles, 1600 workers, handle delta %+lld, registry %s\n",
-                clean ? "PASS" : "FAIL", static_cast<long long>(after) - before, runtime.Idle() ? "empty" : "not empty");
+    std::printf("case T08.%sstress %s: 200 cycles, 1600 workers, handle delta %+lld, registry %s\n",
+                sync ? "sync-" : "", clean ? "PASS" : "FAIL", static_cast<long long>(after) - before, runtime.Idle() ? "empty" : "not empty");
     failed += !clean;
     const bool host = callbacks > 0 && violations == 0;
-    std::printf("case T08.host-state %s: %zu callbacks, %zu x18/sp/errno violations\n",
-                host ? "PASS" : "FAIL", callbacks.load(), violations.load());
+    std::printf("case T08.%shost-state %s: %zu callbacks, %zu x18/sp/errno violations\n",
+                sync ? "sync-" : "", host ? "PASS" : "FAIL", callbacks.load(), violations.load());
     failed += !host;
     std::printf("result T08 %s\n", failed ? "FAIL" : "PASS");
     return failed ? 3 : 0;

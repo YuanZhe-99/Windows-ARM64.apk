@@ -83,8 +83,36 @@ ordinary NDK output works. N0's original ABI suite and imports are unchanged.
   An unjoined worker at runtime destruction, an unmanaged stateful shim entry, a malformed emutls
   descriptor or an allocation failure in the compiler TLS resolver terminates the probe with
   a diagnostic, never a fabricated TLS address. No exception is unwound through guest code.
-  Guest fault-range handling, mutex/cond, `pthread_exit`, detach/cancellation, file/time/log
+  Guest fault-range handling, `pthread_exit`, detach/cancellation, file/time/log
   shims and dependency loading remain P3 work; JNI remains P4.
+
+The P3 synchronization subset is exercised separately by `native-probe sync` (T08):
+
+- Android LP64 mutex/condition storage is 40/48 bytes, aligned to 4 bytes. The shim stores only
+  a private generation marker in it; owner, recursion, waiters and host condition variables
+  stay in runtime-owned address tables. Copying a live marker to another address, using an old
+  generation or using a destroyed object returns `EINVAL`. No host lock layout crosses the ABI.
+- `pthread_mutex_init` (null attributes), `lock`, `trylock`, `unlock` and `destroy` support
+  default normal mutexes. The NDK's normal, recursive and error-checking static initializers
+  are recognized; recursive ownership is counted, error-checking relock returns `EDEADLK`,
+  recursion is limited to Bionic's 2048 acquisitions, and a busy trylock returns `EBUSY`.
+  A normal mutex's blocking self-lock still deadlocks.
+  Unlock without ownership returns `EPERM`; destroying an owned, contended or condition-bound
+  mutex returns `EBUSY`. Explicit reinitialization is required after destruction.
+- `pthread_cond_init` (null attributes), `wait`, `signal`, `broadcast` and `destroy` support
+  the zero static initializer and untimed, process-private waits. Wait atomically releases
+  logical mutex ownership and registers with the condition under the runtime registry lock;
+  it reacquires the mutex before returning. Spurious wakeups are allowed: use a predicate loop.
+  Simultaneous waiters must use the same mutex; a different binding returns `EINVAL`.
+  Destroy with waiters returns `EBUSY`; waiting without owning the mutex returns `EPERM`.
+- Non-null mutex/condition attributes and the monotonic condition static initializer return
+  `ENOTSUP`; timed waits/locks, attribute APIs, process sharing, robust/PI mutexes and futex
+  syscalls are not implemented. A condition wait with recursive depth greater than one returns
+  `ENOTSUP` without releasing any ownership. Lazy allocation can return Linux `ENOMEM`.
+  All these pthread calls leave guest errno unchanged.
+- Waiter pins prevent destroying a mutex while a blocked lock or condition wait still uses it.
+  Tests destroy their objects before the runtime's idle check; runtime teardown must not free
+  owned or waited-on synchronization objects.
 
 T08 checks fatal refusal of malformed descriptors and unjoined-worker teardown, isolation in
 8 and 32 simultaneous guest threads, exact join pointers, main-thread
@@ -131,6 +159,8 @@ and expected refusal; `build.ps1 -Component NativeProbe` builds them into `tests
 | T06 derived | `libn0abi.so` with one field patched (`build.ps1`, `Write-ElfMutation`) | — |
 | T08 `libthreads.so` | `threads/threads.c`: managed pthreads, errno, keys/destructors, C emutls and compiler-required `memset`; nine probe cases must PASS | API 30, `-O2 -nostdlib -femulated-tls`, common flags as T05 |
 | T08 negative files | same source, missing `pthread_detach` (load refusal), malformed emutls descriptor and unjoined-worker teardown (diagnostic, exit 3) | `T08_MISSING`, `T08_BAD_EMUTLS`, `T08_UNJOINED`; exact recipes/results in `fixtures.psd1` |
+| T08 `libsync.so` | `threads/sync.c`: six mutex/condition cases, stress and host-state checks | API 30, `-O2 -nostdlib`, common flags as T05; NDK header layout assertions |
+| T08 sync negative files | same source: missing `pthread_cond_timedwait` (load refusal), owned-mutex teardown (diagnostic, exit 3) | `T08_SYNC_MISSING`, `T08_SYNC_OWNED`; exact recipes/results in `fixtures.psd1` |
 
 Every fixture is built by the NDK's own clang and linker; none is a special build that would stand
 for ordinary NDK output beyond what its flags say (`PLAN.md` §5.3).

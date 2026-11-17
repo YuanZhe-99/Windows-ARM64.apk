@@ -64,13 +64,14 @@
 | 在真实 ARM64 上 | PASS | 上述机器；`native-probe.exe` 和 `capstone.dll` 为 ARM64 |
 | `abi-compatibility.md` | PASS | [abi-compatibility.md](abi-compatibility.md)：直通、需 thunk 和不支持的签名及其用例 |
 
-## P3 线程基础检查
+## P3 线程与同步检查
 
-`test.ps1 -Suite Bionic`，2026-11-16，在上述 Windows ARM64 机器上 25/25 项检查 PASS。这是 T08，不是 G3；
-客体夹具用 NDK r30、API 30、`-O2 -nostdlib -femulated-tls -fno-stack-protector` 构建。
+`test.ps1 -Suite Bionic`，2026-11-16，在上述 Windows ARM64 机器上 39/39 项检查 PASS。这是 T08，不是 G3；
+线程夹具用 NDK r30、API 30、`-O2 -nostdlib -femulated-tls -fno-stack-protector` 构建；
+独立同步夹具使用 `-O2 -nostdlib -fno-stack-protector`，没有 TLS。
 哈希与完整选项在 `tests/fixtures/elf/fixtures.json`（生成产物，不提交）；
 输出在 `build/windows-arm64/test-data/logs/T08-*`。
-基础正例探测包含九个用例；已检查的拒绝/终止文件不证明依赖加载或 JNI 集成已可用。
+线程探测包含九个用例，同步探测包含八个；拒绝/终止文件不证明依赖加载或 JNI 集成已可用。
 
 | 条目（`PLAN.md` §10） | 结果 | 证据 |
 |---|---|---|
@@ -78,6 +79,9 @@
 | TLS 初始值、对齐与析构 | PASS | 初始值 41、零初始化、64 字节对齐；析构回调前 key 值已清空；重新设置 key 后回调两轮或受四轮上限约束；每次回调均可使用仿真 TLS |
 | 明确错误与字节 shim | PASS | 已删除/无效 key → `EINVAL`，第 129 个存活 key → `EAGAIN`，非空线程属性 → `ENOTSUP`，自身 join → `EDEADLK`，未知/已 join 线程 → `ESRCH`；客体 errno 不变；`memset` 返回值/范围/零长度/字节转换 |
 | 线程资源清理 | PASS | 预热后 200 轮 / 1600 个 worker：句柄增量 +0；每次调用后线程/上下文/key/仿真 TLS 注册表均清空；5413 次宿主状态回调，没有 x18/sp/errno 违规 |
+| Mutex 类型、布局与生命周期 | PASS | 40 字节、四字节对齐存储带哨兵；normal、recursive（2048 上限）、error-checking；八 worker × 256 次递增 = 2048；诊断复制/过期/已销毁对象和非所有者；显式重新初始化；errno 不变 |
+| 条件等待/signal/broadcast | PASS | 48 字节存储带哨兵；256 次请求/应答 signal 握手；八等待者 broadcast；每次返回均持有 mutex；拒绝销毁忙碌 condition/mutex，包括被条件等待引用的未锁定 mutex；拒绝第二个 mutex 绑定和递归深度 >1 |
+| 同步资源清理与拒绝 | PASS | 200 轮 / 1600 个 worker，句柄增量 +0，同步注册表清空；1916 次宿主状态回调无违规；超时等待导入在入口前被拒绝，仍持有 mutex 时销毁运行时带诊断退出 3 |
 | 范围外原生行为 | PASS | 缺失的 `pthread_detach` 导入在入口前拒绝；使用 P3 导入表时 ELF PT_TLS、裸 `svc`、TPIDR_EL0 和 x18 仍被拒绝；损坏的 emutls 描述符与仍有未 join worker 时销毁运行时均带诊断终止，退出码 3 |
 | N1 依赖加载与 JNI 集成 | NOT_RUN | T07 与 T09 尚未实现；`winapk run` 的原生库加载仍关闭 |
 

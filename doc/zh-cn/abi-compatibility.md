@@ -36,7 +36,8 @@ Native`）；下文的用例名即其本身的名称。2026-11-04 在 [platform-
 | 宿主的可变参数函数（`printf`、`__android_log_print`） | — | 需要一个读取客体参数、再调用类型明确的宿主函数的 thunk；不在 N0 中 | 尚无（P3） |
 | `va_list` | 绝不 | 绝不 | — |
 | 通过导入共享的数据（客体经 GLOB_DAT 读写的宿主变量） | — | 两侧布局相同的类型可直通 | `import.call` |
-| 布局不同的结构体（`stat`、`timespec`、`sockaddr`、pthread 类型） | 显式的客体布局与转换（P3） | 同左 | 尚无 |
+| 布局不同的结构体（`stat`、`timespec`、`sockaddr`） | 显式的客体布局与转换（P3） | 同左 | 尚无 |
+| Android mutex/condition 对象 | 不透明客体存储，40/48 字节，按 4 字节对齐；绝不在其中存放宿主锁 | 固定指针签名；代际/地址表拥有宿主状态 | T08（`sync`）：类型、竞争、等待/重锁、生命周期与拒绝用例 |
 | 线程/key shim 与 C 仿真 TLS | 固定整数/指针签名；Android `pthread_t` 用 `int64_t`，key 用 `int32_t` | 显式包装；不把宿主 pthread/CRT 对象交给客体 | T08（`threads`）；见 [native-profiles.md](native-profiles.md) |
 | `long double`、C++ 类、异常 | 不受支持 | 不受支持 | — |
 

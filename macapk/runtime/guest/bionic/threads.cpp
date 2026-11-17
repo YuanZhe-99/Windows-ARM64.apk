@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <condition_variable>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -23,6 +24,7 @@ namespace {
 
 // Linux/Bionic values, deliberately not the host's errno macros.
 constexpr int kAgain = 11, kInvalid = 22, kDeadlock = 35, kNoThread = 3, kNotSupported = 95;
+constexpr int kBusy = 16, kPermission = 1, kNoMemory = 12;
 constexpr size_t kKeys = 128;
 using GuestThread = int64_t;  // Android pthread_t is long, not Windows long.
 using GuestKey = int32_t;
@@ -75,6 +77,30 @@ struct Worker {
     ~Worker() { if (handle) CloseHandle(handle); }
 };
 
+/// Owns host-only state for a guest mutex; every field is protected by ThreadState::mutex.
+struct MutexState {
+    uint64_t generation;
+    int kind;  // Android NORMAL=0, RECURSIVE=1, ERRORCHECK=2.
+    GuestThread owner = 0;
+    uint32_t depth = 0;
+    size_t contenders = 0, conditionWaiters = 0;
+    std::condition_variable available;
+
+    /// Creates a fresh unlocked mutex record with no host object in guest memory.
+    MutexState(uint64_t id, int type) : generation(id), kind(type) {}
+};
+
+/// Owns a guest condition's wait queue and dynamic mutex binding, outside guest storage.
+struct ConditionState {
+    uint64_t generation;
+    size_t waiters = 0;
+    MutexState* binding = nullptr;
+    std::condition_variable changed;
+
+    /// Creates an untimed process-private condition record.
+    explicit ConditionState(uint64_t id) : generation(id) {}
+};
+
 }  // namespace
 
 /// Holds one runtime's synchronized token tables and exact cleanup counters.
@@ -82,6 +108,9 @@ struct ThreadState {
     std::mutex mutex;
     std::map<GuestThread, std::unique_ptr<Worker>> workers;
     std::array<Key, kKeys> keys{};
+    std::map<void*, std::unique_ptr<MutexState>> mutexes;
+    std::map<void*, std::unique_ptr<ConditionState>> conditions;
+    uint64_t nextSync = 1;
     GuestThread nextThread = 1;
     GuestKey nextKey = 1;
     std::atomic<size_t> contexts = 0, tlsBlocks = 0;
@@ -291,6 +320,266 @@ void* EmutlsAddress(const EmutlsControl* control) {
     return pointer;
 }
 
+// Android LP64 pthread_mutex_t / pthread_cond_t: 10 / 12 int32 words, alignment 4.
+// Guest bytes contain only these private markers, never a host lock or an address.
+constexpr uint32_t kMutexMarker = 0x57414d58, kConditionMarker = 0x57414356, kDestroyed = 0xffffffff;
+
+/// Builds a guest-sized generation marker, with every reserved word explicitly zero.
+template <size_t N>
+std::array<uint32_t, N> Marker(uint32_t tag, uint64_t generation = 0) {
+    std::array<uint32_t, N> words{};
+    words[0] = tag;
+    words[1] = static_cast<uint32_t>(generation);
+    words[2] = static_cast<uint32_t>(generation >> 32);
+    return words;
+}
+
+/// Reads opaque guest bytes without treating Android storage as a C++ host lock object.
+template <size_t N>
+std::array<uint32_t, N> Words(const void* object) {
+    std::array<uint32_t, N> words;
+    std::memcpy(words.data(), object, sizeof words);
+    return words;
+}
+
+/// Writes only the guest-sized private marker, using its four-byte-aligned byte representation.
+template <size_t N>
+void Stamp(void* object, uint32_t tag, uint64_t generation = 0) {
+    const auto words = Marker<N>(tag, generation);
+    std::memcpy(object, words.data(), sizeof words);
+}
+
+/// Decodes NDK static initializer words, refusing unknown storage and unsupported features.
+template <size_t N>
+int StaticKind(const std::array<uint32_t, N>& words, int* kind) {
+    if (std::any_of(words.begin() + 1, words.end(), [](uint32_t word) { return word != 0; })) return kInvalid;
+    if constexpr (N == 10) {
+        if (words[0] == 0 || words[0] == 0x4000 || words[0] == 0x8000) {
+            *kind = static_cast<int>(words[0] >> 14);
+            return 0;
+        }
+        if (words[0] == 0x2000 || words[0] == 0x6000 || words[0] == 0xa000) return kNotSupported;
+    } else {
+        if (words[0] == 0) { *kind = 0; return 0; }
+        if (words[0] <= 3) return kNotSupported;  // process-shared and/or monotonic
+    }
+    return kInvalid;
+}
+
+/// Looks up or lazily creates a mutex record while the caller holds the registry lock.
+MutexState* GetMutex(ThreadState& runtime, void* object, int* error) {
+    if (!object) { *error = kInvalid; return nullptr; }
+    const auto words = Words<10>(object);
+    auto it = runtime.mutexes.find(object);
+    if (it != runtime.mutexes.end()) {
+        if (words == Marker<10>(kMutexMarker, it->second->generation)) return it->second.get();
+        *error = kInvalid;
+        return nullptr;
+    }
+    int kind;
+    *error = StaticKind(words, &kind);
+    if (*error) return nullptr;
+    if (runtime.nextSync == UINT64_MAX) { *error = kAgain; return nullptr; }
+    const uint64_t generation = runtime.nextSync++;
+    auto mutex = std::make_unique<MutexState>(generation, kind);
+    auto* result = mutex.get();
+    runtime.mutexes.emplace(object, std::move(mutex));
+    Stamp<10>(object, kMutexMarker, generation);
+    return result;
+}
+
+/// Looks up or lazily creates an untimed condition while the registry lock is held.
+ConditionState* GetCondition(ThreadState& runtime, void* object, int* error) {
+    if (!object) { *error = kInvalid; return nullptr; }
+    const auto words = Words<12>(object);
+    auto it = runtime.conditions.find(object);
+    if (it != runtime.conditions.end()) {
+        if (words == Marker<12>(kConditionMarker, it->second->generation)) return it->second.get();
+        *error = kInvalid;
+        return nullptr;
+    }
+    int kind;
+    *error = StaticKind(words, &kind);
+    if (*error) return nullptr;
+    if (runtime.nextSync == UINT64_MAX) { *error = kAgain; return nullptr; }
+    const uint64_t generation = runtime.nextSync++;
+    auto condition = std::make_unique<ConditionState>(generation);
+    auto* result = condition.get();
+    runtime.conditions.emplace(object, std::move(condition));
+    Stamp<12>(object, kConditionMarker, generation);
+    return result;
+}
+
+/// Initializes a normal guest mutex, preserving storage on unsupported attributes or allocation failure.
+int MutexInit(void* object, const void* attributes) {
+    auto& runtime = Context().runtime;
+    if (!object) return kInvalid;
+    if (attributes) return kNotSupported;
+    try {
+        std::lock_guard lock(runtime.mutex);
+        if (runtime.mutexes.contains(object)) return kBusy;
+        if (runtime.nextSync == UINT64_MAX) return kAgain;
+        const uint64_t generation = runtime.nextSync++;
+        auto mutex = std::make_unique<MutexState>(generation, 0);
+        runtime.mutexes.emplace(object, std::move(mutex));
+        Stamp<10>(object, kMutexMarker, generation);
+        return 0;
+    } catch (const std::bad_alloc&) { return kNoMemory; }
+}
+
+/// Acquires logical mutex ownership; pins contended records until their waits end.
+int Acquire(void* object, bool attempt) {
+    auto& context = Context();
+    try {
+        std::unique_lock lock(context.runtime.mutex);
+        int error = 0;
+        auto* mutex = GetMutex(context.runtime, object, &error);
+        if (!mutex) return error;
+        if (mutex->owner == context.token && mutex->kind == 1) {
+            if (mutex->depth == 2048) return kAgain;  // Bionic non-PI recursion counter: 11 bits, depth minus one.
+            mutex->depth++;
+            return 0;
+        }
+        if (attempt && mutex->owner) return kBusy;
+        if (mutex->owner == context.token && mutex->kind == 2) return kDeadlock;
+        mutex->contenders++;
+        while (mutex->owner) mutex->available.wait(lock);
+        mutex->contenders--;
+        mutex->owner = context.token;
+        mutex->depth = 1;
+        return 0;
+    } catch (const std::bad_alloc&) { return kNoMemory; }
+      catch (const std::system_error&) { Fatal("host mutex wait failed"); }
+}
+
+/// Blocks for a guest mutex, preserving normal/recursive/error-checking relock semantics.
+int MutexLock(void* object) { return Acquire(object, false); }
+
+/// Attempts a guest mutex acquisition without waiting, returning Linux EBUSY when owned.
+int MutexTryLock(void* object) { return Acquire(object, true); }
+
+/// Releases one level of guest ownership and wakes a contender only on the final unlock.
+int MutexUnlock(void* object) {
+    auto& context = Context();
+    try {
+        std::lock_guard lock(context.runtime.mutex);
+        int error = 0;
+        auto* mutex = GetMutex(context.runtime, object, &error);
+        if (!mutex) return error;
+        if (mutex->owner != context.token) return kPermission;
+        if (--mutex->depth == 0) {
+            mutex->owner = 0;
+            mutex->available.notify_one();
+        }
+        return 0;
+    } catch (const std::bad_alloc&) { return kNoMemory; }
+}
+
+/// Destroys only an unowned mutex with no lock/condition waiters; leaves a tombstone in guest storage.
+int MutexDestroy(void* object) {
+    auto& runtime = Context().runtime;
+    if (!object) return kInvalid;
+    std::lock_guard lock(runtime.mutex);
+    auto it = runtime.mutexes.find(object);
+    if (it == runtime.mutexes.end()) {
+        int kind;
+        if (int error = StaticKind(Words<10>(object), &kind)) return error;
+    } else {
+        auto& mutex = *it->second;
+        if (Words<10>(object) != Marker<10>(kMutexMarker, mutex.generation)) return kInvalid;
+        if (mutex.owner || mutex.contenders || mutex.conditionWaiters) return kBusy;
+        runtime.mutexes.erase(it);
+    }
+    Stamp<10>(object, kDestroyed);
+    return 0;
+}
+
+/// Initializes an untimed process-private condition without sharing host lock bytes.
+int ConditionInit(void* object, const void* attributes) {
+    auto& runtime = Context().runtime;
+    if (!object) return kInvalid;
+    if (attributes) return kNotSupported;
+    try {
+        std::lock_guard lock(runtime.mutex);
+        if (runtime.conditions.contains(object)) return kBusy;
+        if (runtime.nextSync == UINT64_MAX) return kAgain;
+        const uint64_t generation = runtime.nextSync++;
+        auto condition = std::make_unique<ConditionState>(generation);
+        runtime.conditions.emplace(object, std::move(condition));
+        Stamp<12>(object, kConditionMarker, generation);
+        return 0;
+    } catch (const std::bad_alloc&) { return kNoMemory; }
+}
+
+/// Atomically releases a guest mutex for a condition wait and reacquires it before returning.
+int ConditionWait(void* object, void* mutexObject) {
+    auto& context = Context();
+    try {
+        std::unique_lock lock(context.runtime.mutex);
+        int error = 0;
+        auto* mutex = GetMutex(context.runtime, mutexObject, &error);
+        if (!mutex) return error;
+        if (mutex->owner != context.token) return kPermission;
+        if (mutex->depth != 1) return kNotSupported;
+        auto* condition = GetCondition(context.runtime, object, &error);
+        if (!condition) return error;
+        if (condition->waiters && condition->binding != mutex) return kInvalid;
+        condition->binding = mutex;
+        condition->waiters++;
+        mutex->conditionWaiters++;
+        mutex->owner = 0;
+        mutex->depth = 0;
+        mutex->available.notify_one();
+        condition->changed.wait(lock);  // Predicate belongs to the guest; spurious wakes are legal.
+        while (mutex->owner) mutex->available.wait(lock);
+        mutex->owner = context.token;
+        mutex->depth = 1;
+        mutex->conditionWaiters--;
+        if (--condition->waiters == 0) condition->binding = nullptr;
+        return 0;
+    } catch (const std::bad_alloc&) { return kNoMemory; }
+      catch (const std::system_error&) { Fatal("host condition wait failed"); }
+}
+
+/// Wakes one or all current condition waiters without retaining a notification for future waits.
+int Wake(void* object, bool all) {
+    auto& runtime = Context().runtime;
+    try {
+        std::lock_guard lock(runtime.mutex);
+        int error = 0;
+        auto* condition = GetCondition(runtime, object, &error);
+        if (!condition) return error;
+        if (all) condition->changed.notify_all();
+        else condition->changed.notify_one();
+        return 0;
+    } catch (const std::bad_alloc&) { return kNoMemory; }
+}
+
+/// Signals one guest condition waiter, if any.
+int ConditionSignal(void* object) { return Wake(object, false); }
+
+/// Broadcasts to every current guest condition waiter.
+int ConditionBroadcast(void* object) { return Wake(object, true); }
+
+/// Destroys only a condition with no waiter still referencing its host record.
+int ConditionDestroy(void* object) {
+    auto& runtime = Context().runtime;
+    if (!object) return kInvalid;
+    std::lock_guard lock(runtime.mutex);
+    auto it = runtime.conditions.find(object);
+    if (it == runtime.conditions.end()) {
+        int kind;
+        if (int error = StaticKind(Words<12>(object), &kind)) return error;
+    } else {
+        auto& condition = *it->second;
+        if (Words<12>(object) != Marker<12>(kConditionMarker, condition.generation)) return kInvalid;
+        if (condition.waiters) return kBusy;
+        runtime.conditions.erase(it);
+    }
+    Stamp<12>(object, kDestroyed);
+    return 0;
+}
+
 }  // namespace
 
 ThreadRuntime::ThreadRuntime() : state_(std::make_unique<ThreadState>()) {}
@@ -299,6 +588,15 @@ ThreadRuntime::~ThreadRuntime() {
     std::lock_guard lock(state_->mutex);
     if (!state_->workers.empty() || state_->contexts != 0)
         Fatal("runtime destroyed with unjoined workers or active contexts");
+    for (const auto& [object, mutex] : state_->mutexes) {
+        (void)object;
+        if (mutex->owner || mutex->contenders || mutex->conditionWaiters)
+            Fatal("runtime destroyed with owned or waited-on synchronization objects");
+    }
+    for (const auto& [object, condition] : state_->conditions) {
+        (void)object;
+        if (condition->waiters) Fatal("runtime destroyed with owned or waited-on synchronization objects");
+    }
 }
 
 std::span<const HostSymbol> ThreadRuntime::Imports() {
@@ -314,6 +612,16 @@ std::span<const HostSymbol> ThreadRuntime::Imports() {
         {"pthread_getspecific", reinterpret_cast<void*>(&GetSpecific)},
         {"__emutls_get_address", reinterpret_cast<void*>(&EmutlsAddress)},
         {"memset", reinterpret_cast<void*>(&BytesSet)},
+        {"pthread_mutex_init", reinterpret_cast<void*>(&MutexInit)},
+        {"pthread_mutex_lock", reinterpret_cast<void*>(&MutexLock)},
+        {"pthread_mutex_trylock", reinterpret_cast<void*>(&MutexTryLock)},
+        {"pthread_mutex_unlock", reinterpret_cast<void*>(&MutexUnlock)},
+        {"pthread_mutex_destroy", reinterpret_cast<void*>(&MutexDestroy)},
+        {"pthread_cond_init", reinterpret_cast<void*>(&ConditionInit)},
+        {"pthread_cond_wait", reinterpret_cast<void*>(&ConditionWait)},
+        {"pthread_cond_signal", reinterpret_cast<void*>(&ConditionSignal)},
+        {"pthread_cond_broadcast", reinterpret_cast<void*>(&ConditionBroadcast)},
+        {"pthread_cond_destroy", reinterpret_cast<void*>(&ConditionDestroy)},
     };
     return imports;
 }
@@ -332,6 +640,7 @@ void* ThreadRuntime::Call(Entry entry, void* argument) {
 bool ThreadRuntime::Idle() const {
     std::lock_guard lock(state_->mutex);
     return state_->workers.empty() && state_->contexts == 0 && state_->tlsBlocks == 0 &&
+           state_->mutexes.empty() && state_->conditions.empty() &&
            std::all_of(state_->keys.begin(), state_->keys.end(), [](const Key& key) { return key.token == 0; });
 }
 

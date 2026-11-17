@@ -42,6 +42,7 @@ The runtime's commands are in the next section.
 .\scripts\windows\test.ps1 -Suite Native
 .\scripts\windows\test.ps1 -Suite Bionic
 .\build\windows-arm64\bin\native-probe.exe suite .\tests\fixtures\elf\libn0abi.so
+.\build\windows-arm64\bin\native-probe.exe sync .\tests\fixtures\elf\libsync.so
 .\build\windows-arm64\bin\winapk.exe doctor --json
 .\build\windows-arm64\bin\winapk.exe inspect .\tests\fixtures\hello-java.apk --json
 .\build\windows-arm64\bin\winapk.exe run .\tests\fixtures\hello-java.apk --native=off
@@ -79,8 +80,15 @@ not G3: 8/32 simultaneous workers, errno/key/emulated-TLS isolation and destruct
 unsupported cases, then 200 cycles (1600 workers) with empty-registry and handle checks. Each
 probe has a 60-second deadline. It also checks the unchanged refusals for ELF TLS, raw syscalls
 and platform-reserved registers using the P3 import table. The fixture deliberately uses
-`-nostdlib -femulated-tls`; dependencies, mutex/cond, other Bionic groups and JNI are not proved
+`-nostdlib -femulated-tls`; dependencies, other Bionic groups and JNI are not proved
 by it. Sources, expected results and binary hashes remain in the fixture recipe/manifest.
+
+The same suite runs `native-probe.exe sync` on `libsync.so`: normal/recursive/error-checking
+mutexes, eight-thread contention, signal and broadcast with predicate loops, wait/relock and
+busy-destroy protection, stale/copied markers and unsupported attributes. It also runs 200
+sync cycles (1600 workers) and checks that timed-wait imports are refused and owned-object
+teardown terminates diagnostically. This no-dependency fixture does not enable N1 or JNI;
+timed waits/locks and attribute APIs remain unsupported ([native-profiles.md](native-profiles.md)).
 
 `winapk run` keeps each app's data under `%LOCALAPPDATA%\Windows-ARM64.apk\Apps` (`--data-dir`
 moves it): `android\` is the Android root the app sees (`data\data\<package>`, `sdcard`),

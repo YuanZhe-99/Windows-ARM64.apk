@@ -3,6 +3,7 @@
 //   native-probe load <elf>                  load and report, or print the refusal
 //   native-probe suite <elf>                 T05: call every n0_* export, compare exact values
 //   native-probe threads <elf>               T08: managed pthread/errno/emulated TLS
+//   native-probe sync <elf>                  T08: guest mutex/condition synchronization
 //   native-probe stress <elf> [--iterations N] [--copies K] [--rejected <elf>]
 //
 // Exit codes: 0 every check passed; 1 usage or unreadable input; 2 the module was refused
@@ -456,6 +457,7 @@ int UsageError() {
     std::fputs("usage: native-probe load <elf>\n"
                "       native-probe suite <elf>\n"
                "       native-probe threads <elf>             T08: managed pthread/errno/emutls\n"
+               "       native-probe sync <elf>                T08: mutex/condition synchronization\n"
                "       native-probe stress <elf> [--iterations N] [--copies K] [--rejected <elf>]\n", stderr);
     return 1;
 }
@@ -471,6 +473,7 @@ int wmain(int argc, wchar_t** argv) {
     }
     PrintHost();
     if (cmd == L"threads" && argc == 3) return ProbeThreads(path);
+    if (cmd == L"sync" && argc == 3) return ProbeThreads(path, true);
     if (cmd == L"load" || cmd == L"suite") {
         auto m = LoadOrReport(path);
         if (!m) return 2;
