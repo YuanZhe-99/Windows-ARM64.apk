@@ -26,6 +26,9 @@ static_assert(sizeof(VkExtensionProperties) == 260 && sizeof(VkQueueFamilyProper
 static_assert(sizeof(VkDeviceQueueCreateInfo) == 40 && sizeof(VkDeviceCreateInfo) == 72 &&
               sizeof(VkSwapchainCreateInfoKHR) == 104 && sizeof(VkImageMemoryBarrier) == 72 &&
               sizeof(VkSubmitInfo) == 72 && sizeof(VkPresentInfoKHR) == 64);
+static_assert(sizeof(VkBufferCreateInfo) == 56 && sizeof(VkMemoryAllocateInfo) == 32 &&
+              sizeof(VkMemoryRequirements) == 24 && sizeof(VkPhysicalDeviceMemoryProperties) == 520 &&
+              sizeof(VkBufferMemoryBarrier) == 56);
 
 /// Owns the bridge's single instance and window surface; unrelated to ANGLE, even under Dozen.
 struct Vulkan {
@@ -57,6 +60,11 @@ struct Vulkan {
     VkCommandPool pool = VK_NULL_HANDLE, guestPool = VK_NULL_HANDLE;
     VkCommandBuffer command = VK_NULL_HANDLE, guestCommand = VK_NULL_HANDLE;
     VkFence fence = VK_NULL_HANDLE, guestFence = VK_NULL_HANDLE;
+    VkBuffer buffer = VK_NULL_HANDLE, guestBuffer = VK_NULL_HANDLE;
+    VkDeviceMemory memory = VK_NULL_HANDLE, guestMemory = VK_NULL_HANDLE;
+    VkDeviceSize bufferSize = 0;
+    VkMemoryRequirements memoryRequirements{};
+    bool bound = false, mapped = false, bufferReadable = false;
     enum class Frame { Idle, Acquired, Ready, Recording, Executable, Submitted, Complete, Invalid };
     Frame frame = Frame::Idle;
     unsigned commands = 0;
@@ -64,6 +72,7 @@ struct Vulkan {
 uintptr_t nextHandle = 1;
 using Frame = Vulkan::Frame;
 constexpr uint64_t kWaitNs = 1000000000; // at most one second per guest-requested wait on the HWND thread
+constexpr VkDeviceSize kMaxBufferSize = 64 * 1024;
 
 /// Runs a synchronous command on the HWND owner, without holding a registry/JVM lock while waiting.
 template<class F> VkResult Run(F&& fn) {
@@ -84,6 +93,25 @@ template<class P> P Driver(const char* name, VkInstance instance = VK_NULL_HANDL
 /// Resolves a device-side driver entry privately against the owned device.
 template<class P> P DeviceDriver(const char* name) {
     return reinterpret_cast<P>(vk.deviceProc(vk.device, name));
+}
+
+/// Releases the one transfer buffer after the queue is drained or before any work is recorded.
+void DropBuffer() {
+    if (!vk.buffer) return;
+    DeviceDriver<PFN_vkDestroyBuffer>("vkDestroyBuffer")(vk.device, vk.buffer, nullptr);
+    vk.buffer = vk.guestBuffer = VK_NULL_HANDLE;
+    vk.bufferSize = 0;
+    vk.memoryRequirements = {};
+    vk.bound = vk.bufferReadable = false;
+}
+
+/// Unmaps and releases the allocation once its buffer has been released.
+void DropMemory() {
+    if (!vk.memory) return;
+    if (vk.mapped) DeviceDriver<PFN_vkUnmapMemory>("vkUnmapMemory")(vk.device, vk.memory);
+    DeviceDriver<PFN_vkFreeMemory>("vkFreeMemory")(vk.device, vk.memory, nullptr);
+    vk.memory = vk.guestMemory = VK_NULL_HANDLE;
+    vk.mapped = false;
 }
 
 /// Drains the one queue before destroying the backing swapchain and invalidating its tokens.
@@ -113,6 +141,8 @@ bool DropDevice() {
     DropSwapchain();
     if (vk.pool) DeviceDriver<PFN_vkDestroyCommandPool>("vkDestroyCommandPool")(vk.device, vk.pool, nullptr);
     if (vk.fence) DeviceDriver<PFN_vkDestroyFence>("vkDestroyFence")(vk.device, vk.fence, nullptr);
+    DropBuffer();
+    DropMemory();
     DeviceDriver<PFN_vkDestroyDevice>("vkDestroyDevice")(vk.device, nullptr);
     vk.device = vk.guestDevice = VK_NULL_HANDLE;
     vk.deviceProc = nullptr;
@@ -480,8 +510,127 @@ void VKAPI_CALL GetQueue(VkDevice d, uint32_t family, uint32_t index, VkQueue* o
 /// Destroys the device after its guest-visible children have been retired.
 void VKAPI_CALL DestroyDevice(VkDevice d, const VkAllocationCallbacks* allocator) {
     Run([=] {
-        if (!allocator && d && d == vk.guestDevice && !vk.swapchain && !vk.pool && !vk.fence) DropDevice();
+        if (!allocator && d && d == vk.guestDevice && !vk.swapchain && !vk.pool && !vk.fence && !vk.buffer && !vk.memory)
+            DropDevice();
         else LogLine("GRAPHICS_CAPABILITY_MISSING: guest Vulkan invalid device destruction");
+        return VK_SUCCESS;
+    });
+}
+
+/// Reports the ICD's memory types with their original indices for the transfer allocation.
+void VKAPI_CALL MemoryProperties(VkPhysicalDevice d, VkPhysicalDeviceMemoryProperties* out) {
+    if (!out) return;
+    *out = {};
+    Run([=] {
+        const auto physical = Physical(d);
+        if (!physical) return VK_ERROR_INITIALIZATION_FAILED;
+        Driver<PFN_vkGetPhysicalDeviceMemoryProperties>("vkGetPhysicalDeviceMemoryProperties", vk.instance)(physical, out);
+        return VK_SUCCESS;
+    });
+}
+
+/// Creates one exclusive bounded transfer-destination buffer and captures its requirements.
+VkResult VKAPI_CALL CreateBuffer(VkDevice d, const VkBufferCreateInfo* info, const VkAllocationCallbacks* allocator, VkBuffer* out) {
+    if (!out) return VK_ERROR_INITIALIZATION_FAILED;
+    *out = VK_NULL_HANDLE;
+    if (!info || info->sType != VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO || info->pNext || info->flags || allocator ||
+        info->size == 0 || info->size > kMaxBufferSize || info->size % 4 || info->usage != VK_BUFFER_USAGE_TRANSFER_DST_BIT ||
+        info->sharingMode != VK_SHARING_MODE_EXCLUSIVE || info->queueFamilyIndexCount) return VK_ERROR_FEATURE_NOT_PRESENT;
+    return Run([=] {
+        if (!d || d != vk.guestDevice || vk.buffer || vk.memory || vk.frame != Frame::Idle)
+            return VK_ERROR_INITIALIZATION_FAILED;
+        auto result = DeviceDriver<PFN_vkCreateBuffer>("vkCreateBuffer")(vk.device, info, nullptr, &vk.buffer);
+        if (result != VK_SUCCESS) return result;
+        DeviceDriver<PFN_vkGetBufferMemoryRequirements>("vkGetBufferMemoryRequirements")(vk.device, vk.buffer, &vk.memoryRequirements);
+        vk.bufferSize = info->size;
+        *out = vk.guestBuffer = reinterpret_cast<VkBuffer>(nextHandle++);
+        return VK_SUCCESS;
+    });
+}
+
+/// Copies the real requirements for the named buffer; returns zero for a stale token.
+void VKAPI_CALL BufferRequirements(VkDevice d, VkBuffer buffer, VkMemoryRequirements* out) {
+    if (!out) return;
+    *out = {};
+    Run([=] {
+        if (d && d == vk.guestDevice && buffer && buffer == vk.guestBuffer) *out = vk.memoryRequirements;
+        return VK_SUCCESS;
+    });
+}
+
+/// Allocates only the buffer's required size from a compatible host-visible coherent memory type.
+VkResult VKAPI_CALL AllocateMemory(VkDevice d, const VkMemoryAllocateInfo* info, const VkAllocationCallbacks* allocator, VkDeviceMemory* out) {
+    if (!out) return VK_ERROR_INITIALIZATION_FAILED;
+    *out = VK_NULL_HANDLE;
+    if (!info || info->sType != VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO || info->pNext || allocator)
+        return VK_ERROR_FEATURE_NOT_PRESENT;
+    return Run([=] {
+        if (!d || d != vk.guestDevice || !vk.buffer || vk.memory || vk.frame != Frame::Idle)
+            return VK_ERROR_INITIALIZATION_FAILED;
+        VkPhysicalDeviceMemoryProperties props{};
+        Driver<PFN_vkGetPhysicalDeviceMemoryProperties>("vkGetPhysicalDeviceMemoryProperties", vk.instance)
+            (vk.devicePhysical, &props);
+        const auto i = info->memoryTypeIndex;
+        constexpr auto required = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
+        if (info->allocationSize != vk.memoryRequirements.size || i >= props.memoryTypeCount || i >= 32 ||
+            !(vk.memoryRequirements.memoryTypeBits & (uint32_t{1} << i)) ||
+            (props.memoryTypes[i].propertyFlags & required) != required) return VK_ERROR_FEATURE_NOT_PRESENT;
+        const auto result = DeviceDriver<PFN_vkAllocateMemory>("vkAllocateMemory")(vk.device, info, nullptr, &vk.memory);
+        if (result == VK_SUCCESS) *out = vk.guestMemory = reinterpret_cast<VkDeviceMemory>(nextHandle++);
+        return result;
+    });
+}
+
+/// Binds the exact compatible allocation at offset zero.
+VkResult VKAPI_CALL BindBuffer(VkDevice d, VkBuffer buffer, VkDeviceMemory memory, VkDeviceSize offset) {
+    return Run([=] {
+        if (!d || d != vk.guestDevice || !buffer || buffer != vk.guestBuffer || !memory || memory != vk.guestMemory ||
+            vk.bound || offset || vk.frame != Frame::Idle) return VK_ERROR_FEATURE_NOT_PRESENT;
+        const auto result = DeviceDriver<PFN_vkBindBufferMemory>("vkBindBufferMemory")(vk.device, vk.buffer, vk.memory, 0);
+        vk.bound = result == VK_SUCCESS;
+        return result;
+    });
+}
+
+/// Maps the logical written range only after the GPU-to-host barrier and queue completion.
+VkResult VKAPI_CALL MapMemory(VkDevice d, VkDeviceMemory memory, VkDeviceSize offset, VkDeviceSize size, VkMemoryMapFlags flags, void** out) {
+    if (!out) return VK_ERROR_MEMORY_MAP_FAILED;
+    *out = nullptr;
+    return Run([=] {
+        if (!d || d != vk.guestDevice || !memory || memory != vk.guestMemory || !vk.bufferReadable || vk.mapped ||
+            (vk.frame != Frame::Idle && vk.frame != Frame::Complete) || offset || size != vk.bufferSize || flags)
+            return VK_ERROR_MEMORY_MAP_FAILED;
+        const auto result = DeviceDriver<PFN_vkMapMemory>("vkMapMemory")(vk.device, vk.memory, 0, size, 0, out);
+        vk.mapped = result == VK_SUCCESS;
+        return result;
+    });
+}
+
+/// Ends access to the named mapped allocation before GPU writes may resume.
+void VKAPI_CALL UnmapMemory(VkDevice d, VkDeviceMemory memory) {
+    Run([=] {
+        if (d && d == vk.guestDevice && memory && memory == vk.guestMemory && vk.mapped) {
+            DeviceDriver<PFN_vkUnmapMemory>("vkUnmapMemory")(vk.device, vk.memory);
+            vk.mapped = false;
+        }
+        return VK_SUCCESS;
+    });
+}
+
+/// Destroys the transfer buffer only when no recording or pending submit can use it.
+void VKAPI_CALL DestroyBuffer(VkDevice d, VkBuffer buffer, const VkAllocationCallbacks* allocator) {
+    Run([=] {
+        if (d && d == vk.guestDevice && buffer && buffer == vk.guestBuffer && !allocator && !vk.mapped &&
+            vk.frame == Frame::Idle) DropBuffer();
+        return VK_SUCCESS;
+    });
+}
+
+/// Frees the allocation only after the linked buffer has been destroyed.
+void VKAPI_CALL FreeMemory(VkDevice d, VkDeviceMemory memory, const VkAllocationCallbacks* allocator) {
+    Run([=] {
+        if (d && d == vk.guestDevice && memory && memory == vk.guestMemory && !allocator && !vk.bound && !vk.mapped &&
+            vk.frame == Frame::Idle) DropMemory();
         return VK_SUCCESS;
     });
 }
@@ -706,12 +855,25 @@ bool ColorRange(const VkImageSubresourceRange& range) {
            !range.baseArrayLayer && range.layerCount == 1;
 }
 
-/// Records only the explicit transitions into transfer-dst and out to presentation.
+/// Records the admitted image transitions and the optional transfer-to-host buffer barrier.
 void VKAPI_CALL Barrier(VkCommandBuffer cmd, VkPipelineStageFlags src, VkPipelineStageFlags dst, VkDependencyFlags flags,
-    uint32_t memoryCount, const VkMemoryBarrier*, uint32_t bufferCount, const VkBufferMemoryBarrier*,
+    uint32_t memoryCount, const VkMemoryBarrier*, uint32_t bufferCount, const VkBufferMemoryBarrier* buffers,
     uint32_t count, const VkImageMemoryBarrier* barriers) {
     Run([=] {
         if (!cmd || cmd != vk.guestCommand || vk.frame != Frame::Recording) return VK_ERROR_INITIALIZATION_FAILED;
+        if (vk.commands == 4 && !flags && !memoryCount && !count && bufferCount == 1 && buffers &&
+            src == VK_PIPELINE_STAGE_TRANSFER_BIT && dst == VK_PIPELINE_STAGE_HOST_BIT) {
+            auto host = buffers[0];
+            if (host.sType == VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER && !host.pNext && host.buffer == vk.guestBuffer &&
+                host.srcAccessMask == VK_ACCESS_TRANSFER_WRITE_BIT && host.dstAccessMask == VK_ACCESS_HOST_READ_BIT &&
+                host.srcQueueFamilyIndex == VK_QUEUE_FAMILY_IGNORED && host.dstQueueFamilyIndex == VK_QUEUE_FAMILY_IGNORED &&
+                !host.offset && host.size == vk.bufferSize) {
+                host.buffer = vk.buffer;
+                DeviceDriver<PFN_vkCmdPipelineBarrier>("vkCmdPipelineBarrier")(vk.command, src, dst, 0, 0, nullptr, 1, &host, 0, nullptr);
+                ++vk.commands;
+                return VK_SUCCESS;
+            }
+        }
         const auto& image = vk.images[vk.imageIndex];
         const bool before = vk.commands == 0 && src == VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT && dst == VK_PIPELINE_STAGE_TRANSFER_BIT;
         const bool after = vk.commands == 2 && src == VK_PIPELINE_STAGE_TRANSFER_BIT && dst == VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT;
@@ -752,12 +914,26 @@ void VKAPI_CALL ClearImage(VkCommandBuffer cmd, VkImage image, VkImageLayout lay
     });
 }
 
-/// Ends one complete transfer-clear recording; incomplete recordings cannot be submitted.
+/// Records a whole-buffer fill after the swapchain image transitions to present.
+void VKAPI_CALL FillBuffer(VkCommandBuffer cmd, VkBuffer buffer, VkDeviceSize offset, VkDeviceSize size, uint32_t value) {
+    Run([=] {
+        if (!cmd || cmd != vk.guestCommand || vk.frame != Frame::Recording) return VK_ERROR_INITIALIZATION_FAILED;
+        if (vk.commands != 3 || !buffer || buffer != vk.guestBuffer || !vk.bound || vk.mapped || offset || size != vk.bufferSize) {
+            vk.frame = Frame::Invalid;
+            return VK_ERROR_FEATURE_NOT_PRESENT;
+        }
+        DeviceDriver<PFN_vkCmdFillBuffer>("vkCmdFillBuffer")(vk.command, vk.buffer, 0, size, value);
+        ++vk.commands;
+        return VK_SUCCESS;
+    });
+}
+
+/// Ends a transfer clear with or without the optional fill and its required barrier.
 VkResult VKAPI_CALL EndCommand(VkCommandBuffer cmd) {
     return Run([=] {
         if (!cmd || cmd != vk.guestCommand ||
             (vk.frame != Frame::Recording && vk.frame != Frame::Invalid)) return VK_ERROR_INITIALIZATION_FAILED;
-        const bool complete = vk.frame == Frame::Recording && vk.commands == 3;
+        const bool complete = vk.frame == Frame::Recording && (vk.commands == 3 || vk.commands == 5);
         const auto result = DeviceDriver<PFN_vkEndCommandBuffer>("vkEndCommandBuffer")(vk.command);
         vk.frame = complete && result == VK_SUCCESS ? Frame::Executable : Frame::Ready;
         return complete ? result : VK_ERROR_FEATURE_NOT_PRESENT;
@@ -773,6 +949,7 @@ VkResult VKAPI_CALL Submit(VkQueue q, uint32_t n, const VkSubmitInfo* info, VkFe
             vk.frame != Frame::Executable) return VK_ERROR_INITIALIZATION_FAILED;
         auto host = *info;
         host.pCommandBuffers = &vk.command;
+        if (vk.commands == 5) vk.bufferReadable = false;
         const auto result = DeviceDriver<PFN_vkQueueSubmit>("vkQueueSubmit")(vk.queue, 1, &host, VK_NULL_HANDLE);
         vk.frame = result == VK_SUCCESS ? Frame::Submitted : Frame::Ready;
         return result;
@@ -784,7 +961,10 @@ VkResult VKAPI_CALL QueueIdle(VkQueue q) {
     return Run([=] {
         if (!q || q != vk.guestQueue) return VK_ERROR_INITIALIZATION_FAILED;
         const auto result = DeviceDriver<PFN_vkQueueWaitIdle>("vkQueueWaitIdle")(vk.queue);
-        if (vk.frame == Frame::Submitted) vk.frame = result == VK_SUCCESS ? Frame::Complete : Frame::Ready;
+        if (vk.frame == Frame::Submitted) {
+            vk.frame = result == VK_SUCCESS ? Frame::Complete : Frame::Ready;
+            if (result == VK_SUCCESS && vk.commands == 5) vk.bufferReadable = true;
+        }
         return result;
     });
 }
@@ -826,6 +1006,7 @@ const Entry entries[] = {
     ENTRY(vkDestroyInstance, DestroyInstance, Instance),
     ENTRY(vkEnumeratePhysicalDevices, PhysicalDevices, Instance),
     ENTRY(vkGetPhysicalDeviceQueueFamilyProperties, Queues, Instance),
+    ENTRY(vkGetPhysicalDeviceMemoryProperties, MemoryProperties, Instance),
     ENTRY(vkCreateAndroidSurfaceKHR, CreateSurface, AndroidSurface),
     ENTRY(vkDestroySurfaceKHR, DestroySurface, Surface),
     ENTRY(vkGetPhysicalDeviceSurfaceSupportKHR, PresentSupport, Surface),
@@ -851,6 +1032,15 @@ const Entry entries[] = {
     ENTRY(vkBeginCommandBuffer, BeginCommand, Device),
     ENTRY(vkCmdPipelineBarrier, Barrier, Device),
     ENTRY(vkCmdClearColorImage, ClearImage, Device),
+    ENTRY(vkCreateBuffer, CreateBuffer, Device),
+    ENTRY(vkGetBufferMemoryRequirements, BufferRequirements, Device),
+    ENTRY(vkAllocateMemory, AllocateMemory, Device),
+    ENTRY(vkBindBufferMemory, BindBuffer, Device),
+    ENTRY(vkMapMemory, MapMemory, Device),
+    ENTRY(vkUnmapMemory, UnmapMemory, Device),
+    ENTRY(vkDestroyBuffer, DestroyBuffer, Device),
+    ENTRY(vkFreeMemory, FreeMemory, Device),
+    ENTRY(vkCmdFillBuffer, FillBuffer, Device),
     ENTRY(vkEndCommandBuffer, EndCommand, Device),
     ENTRY(vkQueueSubmit, Submit, Device),
     ENTRY(vkQueueWaitIdle, QueueIdle, Device),

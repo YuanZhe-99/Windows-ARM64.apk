@@ -14,7 +14,8 @@ independent; enabling guest native does not enable GLES or guest Vulkan.
 | Guest GLES/N2 | PASS for the bounded T11 profile | normal NDK APK; texture/FBO, blended shader, resize, surface replacement, and explicit Vulkan refusal |
 | Guest Vulkan instance/WSI | PASS for T13.wsi on Dozen | real APK, Android→Win32 surface, actual support/capabilities, resize, replacement and refusal; no drawing |
 | Guest Vulkan transfer-clear | PASS for the bounded T13 profile on Dozen | real guest device/queue, command buffer and swapchain; three presents across resize |
-| Guest Vulkan shader/buffer profile and G4 | NOT_RUN | shader pipelines, general buffers/images, callbacks and validation-layer run |
+| Guest Vulkan transfer buffer | PASS for the bounded T13 profile on Dozen | coherent allocation and GPU fill, exact 16-word readback and lifecycle refusals |
+| Guest Vulkan shader/general resources and G4 | NOT_RUN | shader pipelines, general buffers/images, callbacks and validation-layer run |
 | Vendor ARM64 Vulkan ICD | BLOCKED | a machine with that driver; Dozen results cannot fill this row |
 
 ## ANGLE source build
@@ -172,7 +173,7 @@ One logical device and present queue, one FIFO swapchain and one primary command
 form a separate, bounded profile. The guest records image transitions and a color clear
 against a token for the acquired image, submits on the owned queue and presents. The
 driver’s device, queue, swapchain and image handles stay private. The profile does not
-implement shader pipelines, general buffers/images, custom allocators or debug callbacks.
+implement shader pipelines, general images, custom allocators or debug callbacks.
 
 The `VulkanWsi` suite checks three transfer clears/presents in one positive process:
 at launch, after restoring the minimized window, and after resizing it. Acquire on a
@@ -180,3 +181,11 @@ minimized zero-size surface returns `VK_ERROR_OUT_OF_DATE_KHR`; the old swapchai
 stale after restore at the original extent. The guest destroys and recreates it on
 restore and on resize. The fixture checks actual present return values, not swapchain
 pixel readback. This is not vendor Vulkan or G4 acceptance.
+
+### Transfer buffer readback
+
+The same APK process also exercises one bounded transfer-destination buffer and one
+host-visible, coherent device-memory allocation. The bridge translates both tokens, records
+an actual fill and transfer-to-host barrier, and admits mapping only after the queue
+completes. The APK checks every word against a known pattern. This is a transfer test,
+not shader execution, general resource support or swapchain pixel readback.

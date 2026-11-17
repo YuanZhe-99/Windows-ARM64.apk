@@ -281,6 +281,12 @@ ApkJni 8、GraphicsHost 6、GraphicsJava 4、Surface 4、GraphicsGuest 4 均通�
 acquire 拒绝旧交换链，夹具恢复原尺寸后重建并呈现，resize 后再次重建呈现。
 日志为 `T13-restore-directed.log`。
 
+传输缓冲区增量在 ARM64 Dozen 上通过 `VulkanWsi` 三项检查（日志 `T13-transfer-directed.log`，
+APK SHA-256 为 `9fbcdea8730a473a050c7e9b5dcbacad704ddaac1c5587e61d400a330bdb3a33`）。
+原正例启动验证真实 Vulkan 填充，并在 transfer→host barrier 及队列完成后逐字核对 16 个值。
+另验证外来分配、同步之前映射和已销毁缓冲区令牌的拒绝。没有新增帧或启动；
+shader、通用图像和分配/调试回调仍为 `NOT_RUN`。
+
 ## P7 本地 CLI 包
 
 Release CLI 及四个 DLL 均为 ARM64，不导入 Debug CRT。`Package` 四项通过：产物和源码清单、

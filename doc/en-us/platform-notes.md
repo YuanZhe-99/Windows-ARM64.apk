@@ -300,6 +300,14 @@ or frame. The minimized surface reports zero extent, acquire refuses the stale s
 and the fixture rebuilds and presents at the original extent and again after resize.
 Log: `T13-restore-directed.log`.
 
+The transfer-buffer increment passed all three `VulkanWsi` checks on ARM64 Dozen
+(`T13-transfer-directed.log`, APK SHA-256
+`9fbcdea8730a473a050c7e9b5dcbacad704ddaac1c5587e61d400a330bdb3a33`).
+The same positive launch verifies an actual Vulkan fill and exact CPU readback of all
+16 words after a transfer-to-host barrier and queue completion. It also checks a foreign
+allocation, mapping before synchronization, and a destroyed buffer token. No extra frames
+or launches were added; shaders, general images and allocation/debug callbacks remain `NOT_RUN`.
+
 ## P7 local CLI package
 
 The Release CLI and its four DLLs are ARM64, with no Debug CRT imports. `Package` passed

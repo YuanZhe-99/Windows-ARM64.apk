@@ -19,6 +19,9 @@ static VkSwapchainKHR swapchain;
 static VkCommandPool pool;
 static VkCommandBuffer command;
 static VkFence acquired;
+static VkBuffer readback;
+static VkDeviceMemory storage;
+enum { readback_words = 16 };
 static uint32_t family;
 static ANativeWindow* native;
 static PFN_vkCreateAndroidSurfaceKHR create_surface;
@@ -29,6 +32,9 @@ static PFN_vkQueuePresentKHR present_frame;
 _Static_assert(sizeof(VkDeviceQueueCreateInfo) == 40 && sizeof(VkDeviceCreateInfo) == 72 &&
     sizeof(VkSwapchainCreateInfoKHR) == 104 && sizeof(VkImageMemoryBarrier) == 72 &&
     sizeof(VkSubmitInfo) == 72 && sizeof(VkPresentInfoKHR) == 64, "render ABI");
+_Static_assert(sizeof(VkBufferCreateInfo) == 56 && sizeof(VkMemoryAllocateInfo) == 32 &&
+    sizeof(VkMemoryRequirements) == 24 && sizeof(VkPhysicalDeviceMemoryProperties) == 520 &&
+    sizeof(VkBufferMemoryBarrier) == 56, "transfer ABI");
 
 /** Creates real WSI and checks that the bridge, rather than the guest, retains its native window. */
 static int attach(JNIEnv* env, jobject holder) {
@@ -175,7 +181,32 @@ static int start_swapchain(void) {
     return vkCreateSwapchainKHR(device, &info, NULL, &swapchain) == VK_SUCCESS ? 0 : 28;
 }
 
-/** Records the guest's layout transitions and color, then submits and presents the acquired image. */
+/** Reserves a small real buffer and checks refusal of a foreign allocation and premature mapping. */
+static int start_readback(void) {
+    const VkBufferCreateInfo info = { .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+        .size = readback_words * sizeof(uint32_t), .usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+        .sharingMode = VK_SHARING_MODE_EXCLUSIVE };
+    if (vkCreateBuffer(device, &info, NULL, &readback) || !readback) return 40;
+    VkMemoryRequirements req;
+    vkGetBufferMemoryRequirements(device, readback, &req);
+    VkPhysicalDeviceMemoryProperties props;
+    vkGetPhysicalDeviceMemoryProperties(physical, &props);
+    const VkMemoryPropertyFlags want = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
+    uint32_t type = 0;
+    for (; type < props.memoryTypeCount && type < 32; ++type)
+        if ((req.memoryTypeBits & (1u << type)) && (props.memoryTypes[type].propertyFlags & want) == want) break;
+    if (type >= props.memoryTypeCount || type >= 32 || req.size < info.size) return 41;
+    const VkMemoryAllocateInfo allocation = { .sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
+        .allocationSize = req.size, .memoryTypeIndex = type };
+    if (vkAllocateMemory(device, &allocation, NULL, &storage) || !storage) return 42;
+    if (vkBindBufferMemory(device, readback, (VkDeviceMemory)(uintptr_t)UINTPTR_MAX, 0) != VK_ERROR_FEATURE_NOT_PRESENT ||
+        vkBindBufferMemory(device, readback, storage, 0)) return 43;
+    void* mapped = (void*)(uintptr_t)1;
+    if (vkMapMemory(device, storage, 0, info.size, 0, &mapped) != VK_ERROR_MEMORY_MAP_FAILED || mapped) return 44;
+    return 0;
+}
+
+/** Records layout transitions, color and optional transfer readback, then submits and presents. */
 static int show_frame(float red, float blue) {
     VkImage images[16];
     uint32_t count = 16, index;
@@ -204,9 +235,31 @@ static int show_frame(float red, float blue) {
     barrier.newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
     vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
         0, 0, NULL, 0, NULL, 1, &barrier);
+    const uint32_t pattern = UINT32_C(0x13579bdf);
+    if (readback) {
+        const VkBufferMemoryBarrier host_read = {
+            .sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
+            .srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT, .dstAccessMask = VK_ACCESS_HOST_READ_BIT,
+            .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED, .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+            .buffer = readback, .size = readback_words * sizeof(uint32_t)
+        };
+        vkCmdFillBuffer(command, readback, 0, host_read.size, pattern);
+        vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_HOST_BIT,
+            0, 0, NULL, 1, &host_read, 0, NULL);
+    }
     if (vkEndCommandBuffer(command)) return 34;
     const VkSubmitInfo submit = {.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO, .commandBufferCount = 1, .pCommandBuffers = &command};
     if (vkQueueSubmit(queue, 1, &submit, VK_NULL_HANDLE) || vkQueueWaitIdle(queue)) return 35;
+    if (readback) {
+        void* mapped = NULL;
+        if (vkMapMemory(device, storage, 0, readback_words * sizeof(uint32_t), 0, &mapped) || !mapped) return 45;
+        const uint32_t* words = mapped;
+        int matches = 1;
+        for (uint32_t i = 0; i < readback_words; ++i)
+            if (words[i] != pattern) matches = 0;
+        vkUnmapMemory(device, storage);
+        if (!matches) return 46;
+    }
     VkResult single = VK_ERROR_INITIALIZATION_FAILED;
     const VkPresentInfoKHR present = {
         .sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR, .swapchainCount = 1, .pSwapchains = &swapchain,
@@ -230,10 +283,22 @@ JNIEXPORT jint JNICALL Java_org_winapk_fixture_vulkanwsi_MainActivity_present(JN
     } else {
         int status = start_device();
         if (status) return status;
+        status = start_readback();
+        if (status) return status;
     }
     int status = start_swapchain();
     if (status) return status;
-    return resized ? show_frame(0.125f, 0.75f) : show_frame(0.75f, 0.125f);
+    status = resized ? show_frame(0.125f, 0.75f) : show_frame(0.75f, 0.125f);
+    if (!resized && !status) {
+        vkDestroyBuffer(device, readback, NULL);
+        vkFreeMemory(device, storage, NULL);
+        VkMemoryRequirements stale;
+        vkGetBufferMemoryRequirements(device, readback, &stale);
+        if (stale.size || stale.alignment || stale.memoryTypeBits) return 47;
+        readback = VK_NULL_HANDLE;
+        storage = VK_NULL_HANDLE;
+    }
+    return status;
 }
 
 /** Validates the retained surface's extent and that minimize invalidates acquisition. */
