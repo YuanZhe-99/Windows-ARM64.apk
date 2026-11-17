@@ -38,11 +38,11 @@ and hardware TLS/syscall/register access remain refused. Each probe has a
 60-second deadline. Build first: build.ps1 -Component NativeProbe.
 
 .PARAMETER Suite
-Host, Java, Native or Bionic.
+Host, Java, Native, Bionic, Jni, or a targeted Bionic subset.
 #>
 [CmdletBinding()]
 param(
-    [ValidateSet('Host', 'Java', 'Native', 'Bionic', 'Modules', 'Memory', 'Io', 'Faults', 'Format', 'Libraries')]
+    [ValidateSet('Host', 'Java', 'Native', 'Bionic', 'Modules', 'Memory', 'Io', 'Faults', 'Format', 'Libraries', 'Jni')]
     [string]$Suite = 'Host'
 )
 Set-StrictMode -Version Latest
@@ -690,7 +690,57 @@ function Test-Libraries {
     } finally { $p.Dispose() }
 }
 
-switch ($Suite) { 'Host' { Test-Host } 'Java' { Test-Java } 'Native' { Test-Native } 'Bionic' { Test-Bionic } 'Modules' { Test-Modules } 'Memory' { Test-Bionic -Command memory } 'Io' { Test-Bionic -Command io } 'Faults' { Test-Bionic -Command faults } 'Format' { Test-Bionic -Command format } 'Libraries' { Test-Libraries } }
+<# Runs T09's compact real-JVM JNI foundation and fatal boundary variants; never reports G3. #>
+function Test-Jni {
+    $fixture = Join-Path $repo 'tests\fixtures\elf\libjni-probe.so'
+    $record = (Get-Content (Join-Path $repo 'tests\fixtures\elf\fixtures.json') -Raw | ConvertFrom-Json).fixtures |
+        Where-Object name -EQ 'libjni-probe.so'
+    $hash = (Get-FileHash $fixture -Algorithm SHA256).Hash.ToLower()
+    Check 'T09.fixture.hash' ($null -ne $record -and $record.sha256 -eq $hash) $hash
+    if (-not $record -or $record.sha256 -ne $hash) { return }
+    $helper = Join-Path $out 'bin\guest\libwinapk-jni.so'
+    $helperRecord = Get-Content (Join-Path $out 'bin\guest\jni.json') -Raw | ConvertFrom-Json
+    $helperHash = (Get-FileHash $helper -Algorithm SHA256).Hash.ToLower()
+    Check 'T09.helper.hash' ($helperHash -eq $helperRecord.sha256) $helperHash
+    if ($helperHash -ne $helperRecord.sha256) { return }
+    $logs = Join-Path $out 'test-data\logs'
+    New-Item -ItemType Directory -Force $logs | Out-Null
+    $jdk = Find-Jdk
+    foreach ($variant in @(
+        @{ Name = 'positive'; Extra = @(); Reason = ''; Exit = 0 },
+        @{ Name = 'unsupported'; Extra = @('4'); Reason = 'GUEST_ABI_UNSUPPORTED JNI: unsupported entry \(slot 217\)'; Exit = 3 },
+        @{ Name = 'thread'; Extra = @('5'); Reason = 'GUEST_ABI_UNSUPPORTED JNI: foreign, detached or cross-thread JNIEnv'; Exit = 3 },
+        @{ Name = 'trap'; Extra = @('6'); Reason = 'GUEST_EXECUTION_FAULT libjni-probe.so vaddr 0x.*Windows exception 0xc000001d'; Exit = 3 },
+        @{ Name = 'access'; Extra = @('7'); Reason = 'GUEST_EXECUTION_FAULT libjni-probe.so vaddr 0x.*Windows exception 0xc0000005'; Exit = 3 }
+    )) {
+        $stdout = Join-Path $logs "T09-$($variant.Name).out"
+        $stderr = Join-Path $logs "T09-$($variant.Name).err"
+        $arguments = @("`"$jdk`"", "`"$fixture`"", "`"$helper`"") + $variant.Extra
+        $p = Start-Process (Join-Path $out 'bin\jni-probe.exe') -ArgumentList $arguments -NoNewWindow -PassThru -RedirectStandardOutput $stdout -RedirectStandardError $stderr
+        try {
+            if (-not $p.WaitForExit(15000)) {
+                $p.Kill(); $p.WaitForExit()
+                Check "T09.$($variant.Name).deadline" $false 'exceeded 15 seconds'
+                continue
+            }
+            $text = [string](Get-Content $stdout -Raw)
+            $err = [string](Get-Content $stderr -Raw)
+            if ($variant.Name -eq 'positive') {
+                $cases = [regex]::Matches($text, '(?m)^case (T09\.\S+) (PASS|FAIL)')
+                foreach ($c in $cases) { Check $c.Groups[1].Value ($c.Groups[2].Value -eq 'PASS') $c.Groups[2].Value }
+                $compilation = [IO.File]::ReadAllText((Join-Path $logs 'T09-compilation.xml'))
+                $ok = $p.ExitCode -eq 0 -and $cases.Count -eq 4 -and $text -match 'result T09.foundation PASS \(not G3\)' -and
+                      [string]::IsNullOrWhiteSpace($err) -and $text -notmatch '(?i)WARNING|FATAL ERROR' -and
+                      $compilation -match "<nmethod\b[^>]*method='com.winapk.probe.GuestJniProbe implicit \(I\)I'"
+            } else {
+                $ok = $p.ExitCode -eq $variant.Exit -and $err -match $variant.Reason -and $text -notmatch 'result T09.foundation PASS'
+            }
+            Check "T09.$($variant.Name).result" $ok "exit $($p.ExitCode)$(if (-not $ok) { '; ' + $text + $err })"
+        } finally { $p.Dispose() }
+    }
+}
+
+switch ($Suite) { 'Host' { Test-Host } 'Java' { Test-Java } 'Native' { Test-Native } 'Bionic' { Test-Bionic } 'Modules' { Test-Modules } 'Memory' { Test-Bionic -Command memory } 'Io' { Test-Bionic -Command io } 'Faults' { Test-Bionic -Command faults } 'Format' { Test-Bionic -Command format } 'Libraries' { Test-Libraries } 'Jni' { Test-Jni } }
 if ($script:failed -gt 0) { Write-Host "$script:failed check(s) failed"; exit 1 }
 Write-Host 'all checks passed'
 exit 0

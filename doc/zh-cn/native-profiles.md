@@ -170,6 +170,26 @@ T08 format 测试寄存器/栈整数参数、客体 va_copy/V 调用、范围/�
 T08 io 合并读写/seek/stat、open/追加标志、映射/错误拒绝与时钟/sleep 检查。
 宿主侧检查确认 Unicode 映射文件，以及拒绝 junction 路径时没有截断映射根目录之外的文件。
 
+## P4 JNI 基础（T09，不是 G3）
+
+首个 JNI 增量是独立的真实 JVM 探测，不是 APK 准入。私有客体 `JavaVM` 表及每线程 `JNIEnv`
+代理只转发经审计的固定签名。不透明 JNI 引用及 ID 仍是 JVM 所有的标识；
+不向客体暴露宿主表或环境地址。不支持的槽位以 `GUEST_ABI_UNSUPPORTED` 及槽号终止。
+查询方法时记录描述符，限定为 64 个参数，并在调用前检查。
+固定子集包含异常查询/throw/clear、局部/全局/弱引用、父类及实例检查、方法与字段查询/访问、
+UTF-16/modified-UTF8 字符串及 region、原生类型/对象数组及 element/region 获取/释放。
+尚不开放反射、类定义、critical pinning、monitor、直接缓冲区及 native 注册。
+
+Android 构建的辅助库入口用客体 `va_copy`/`va_arg` 实现构造及实例/非虚/静态 `...`/V
+调用，包含默认参数提升，再进入代理的 A 入口。宿主 `va_list` 不跨域。
+A 调用使用经验证的 JNI union 固定布局。类查询使用配置的 ClassLoader，包含附着的 worker，
+初始化该类，并将查询缺失转换为 `NoClassDefFoundError`。
+代理清理绝不 detach 借用的 JVM 线程；桥所有的附着可显式 detach，或在宿主线程退出时、
+Bionic key/TLS 清理之后 detach。桥及映射必须晚于所有 worker 销毁。
+
+该增量不绑定 Java native 方法、不运行 `JNI_OnLoad`、不加载 APK 库，也不证明 G3。
+Java→guest 签名 thunk 及 APK/ClassLoader 加载仍是后续工作。
+
 ## P3 模块事务（T07）
 
 `ModuleSet` 为经审计的 C 库依赖图扩展加载器；原有 N0 `Load` API 仍拒绝依赖与构造函数。
@@ -225,14 +245,17 @@ T07 N1 运行一个普通链接的 API-30 NDK C 夹具及缺失 fork、未知版
 ## P3 客体故障边界（T08）
 
 加载器在任何初始化或导出调用前注册已完成链接/保护的映像，并在取消映射前移除。
-末尾优先级的 vectored handler 仅在故障 PC 属于当前注册客体映像的可执行段时，
+限定客体 PC 的 vectored handler 仅在故障 PC 属于当前注册客体映像的可执行段时，
 处理访问违规、非法/特权指令及断点。它写出 `GUEST_EXECUTION_FAULT`、
 模块基名、客体虚拟地址与 Windows 异常码，然后以退出码 3 终止进程。
 绝不恢复已损坏的客体状态、运行客体清理或让客体 C++ 展开到宿主。
 
 所有其他异常继续走正常 Windows 处理链：宿主/JVM/JIT 代码、宿主导入内部的故障，
 以及跳转到注册可执行段以外地址的故障，均不由本边界认领。
-它不替换 HotSpot 处理器，不实现信号、栈溢出恢复或 ELF 展开元数据。JVM/客体混合验证属于 P4。
+它不替换 HotSpot 处理器，不实现信号、栈溢出恢复或 ELF 展开元数据。
+处理器放在首位，但只处理已注册客体可执行 PC：所有 JVM/JIT、宿主、未知及被排除的故障
+均不变地继续正常处理链。锁定的 Microsoft JVM 对客体 trap 未到达末尾处理器；
+T09 同时保护客体归因及正常 Java/JIT 故障处理。这不允许拦截 JVM 所有的异常或恢复客体执行。
 注册表锁绝不跨客体执行或回调持有；故障报告使用有界栈缓冲及直接 Windows 写入，
 不分配内存、不回调客体。
 

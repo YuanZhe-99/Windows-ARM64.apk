@@ -12,19 +12,20 @@ bcprov. Component Host builds the native host (winapk.exe, native-probe.exe) and
 Java probe with CMake, Ninja and clang-cl from Visual Studio, for ARM64. Component
 NativeProbe builds native-probe.exe, the guest formatting helper and ELF fixtures (T05–T08)
 with the NDK.
+JniProbe builds the separate real-JVM JNI foundation probe, Android varargs helper and T09 fixture.
 
 Output goes to build/windows-arm64/ (lib/ and bin/). Nothing outside the
 repository is changed, and nothing is installed.
 
 .PARAMETER Component
-Java, FrameworkRes, Fixtures (the APKs), Host, NativeProbe, or All.
+Java, FrameworkRes, Fixtures (the APKs), Host, NativeProbe, JniProbe, or All.
 
 .PARAMETER Configuration
 Debug or Release (Host only).
 #>
 [CmdletBinding()]
 param(
-    [ValidateSet('Java', 'FrameworkRes', 'Fixtures', 'Host', 'NativeProbe', 'All')]
+    [ValidateSet('Java', 'FrameworkRes', 'Fixtures', 'Host', 'NativeProbe', 'JniProbe', 'All')]
     [string]$Component = 'All',
     [ValidateSet('Debug', 'Release')]
     [string]$Configuration = 'Debug'
@@ -466,6 +467,32 @@ function Build-GuestBionic {
     Write-Step "libwinapk-bionic.so: ELF64 AArch64, $($record.sha256.Substring(0, 16))"
 }
 
+<# Builds the Android-only JNI varargs helper and records its toolchain, flags and content hash. #>
+function Build-GuestJni {
+    $clang = Find-AndroidNdk
+    $lock = Get-Content (Join-Path $repo 'build-lock.json') -Raw | ConvertFrom-Json
+    $directory = Join-Path $out 'bin\guest'
+    New-Item -ItemType Directory -Force $directory | Out-Null
+    $library = Join-Path $directory 'libwinapk-jni.so'
+    $source = 'macapk/runtime/guest/jni/calls.c'
+    $arguments = @('--target=aarch64-linux-android30', '-shared', '-fPIC', '-fno-stack-protector',
+                   '-O2', '-nostdlib', '-fno-builtin', '-Wall', '-Wextra', '-Werror',
+                   '-Wl,-soname,libwinapk-jni.so', '-o', $library, (Join-Path $repo $source))
+    Invoke-Checked $clang $arguments
+    $bytes = [IO.File]::ReadAllBytes($library)
+    if ($bytes[0] -ne 0x7f -or $bytes[4] -ne 2 -or [BitConverter]::ToUInt16($bytes, 18) -ne 183) {
+        throw 'guest JNI helper is not ELF64 AArch64'
+    }
+    $record = [ordered]@{
+        source = $source; ndk = $lock.guest.androidNdk.version
+        compiler = (& $clang --version | Select-Object -First 1)
+        arguments = $arguments
+        sha256 = (Get-FileHash $library -Algorithm SHA256).Hash.ToLower()
+    }
+    $record | ConvertTo-Json -Depth 4 | Set-Content (Join-Path $directory 'jni.json') -Encoding utf8NoBOM
+    Write-Step "libwinapk-jni.so: ELF64 AArch64, $($record.sha256.Substring(0, 16))"
+}
+
 <# Builds winapk.exe, native-probe.exe and the Java probe into $out\bin (all targets, or only $Target). #>
 function Build-Host([string]$Target = '') {
     $vs = Find-VisualStudio
@@ -513,5 +540,6 @@ switch ($Component) {
     'Fixtures' { Build-Fixtures }
     'Host' { Build-Host }
     'NativeProbe' { Build-Host 'native-probe'; Build-GuestBionic; Build-ElfFixtures }
-    'All' { Build-Java; Build-FrameworkRes; Build-Fixtures; Build-Host; Build-GuestBionic; Build-ElfFixtures }
+    'JniProbe' { Build-Host 'jni-probe'; Build-GuestJni; Build-ElfFixtures }
+    'All' { Build-Java; Build-FrameworkRes; Build-Fixtures; Build-Host; Build-GuestBionic; Build-GuestJni; Build-ElfFixtures }
 }

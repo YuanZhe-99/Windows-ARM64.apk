@@ -25,7 +25,7 @@ Native`); the case names below are its own. Verified 2026-11-04 on the machine o
 | `TPIDR_EL0` | Android's thread pointer | reserved for Windows | guest code that reads or writes it is refused | T06 `neg-tpidr` |
 | Variadic functions | variadic arguments go like fixed ones (`v` registers for floating point) | every variadic argument goes in `x` registers and the stack, floating point too | a variadic prototype of one side never calls the other's variadic function | `va.fixed-prototype` |
 | `long double` | 128-bit IEEE quad, in `q` registers | 64-bit, the same as `double` | not supported in any signature between host and guest | none: refused by design |
-| Unwinding | DWARF `.eh_frame` | `.pdata`/`.xdata` and SEH | no exception crosses; a fault in guest code is not handled yet (P3) | none yet |
+| Unwinding | DWARF `.eh_frame` | `.pdata`/`.xdata` and SEH | no exception crosses; registered guest-PC fatal diagnostics do not unwind or recover | T08 faults; T09 mixed JVM/guest trap |
 
 ## Signatures
 
@@ -38,6 +38,7 @@ Native`); the case names below are its own. Verified 2026-11-04 on the machine o
 | A host variadic function (`printf`, etc.) | — | never bind a guest variadic import directly to it | no host va_list is shared |
 | Restricted guest formatter/log varargs | — | Android-ABI helper executes guest `...`/V calls; only fixed errno/bytes/log signatures enter the host | T08 `format`: integer register/stack spill, LP64, guest va_copy, truncation, refusals and exact UTF-8 logs |
 | `va_list` across ABI domains | never | never | T08 format keeps it inside the guest helper |
+| Guest JNI .../V/A calls | Java-to-guest native binding not yet implemented | Android helper decodes .../V by recorded descriptor into 8-byte jvalue slots; fixed proxy wrappers call host A entries with a thread-private host environment | T09: constructor, static/instance/nonvirtual, default float promotion, narrow and 64-bit values, integer/FP stack spill, references and repeated V calls |
 | Data shared through an import (a host variable a guest GLOB_DAT reads and writes) | — | direct, for a type of the same layout on both sides | `import.call` |
 | `stat`, `timespec` | explicit 128/16-byte guest layouts and conversion, never host CRT objects | the same | T08 `io`: NDK layout assertions, stat sentinels/values, wall-clock epoch/units and monotonic deadline |
 | Other differing layouts (`sockaddr`, etc.) | unsupported | unsupported | — |

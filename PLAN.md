@@ -320,6 +320,15 @@ P4 继续验证 JNI/APK 接入、线程 JNI 状态清理及 JVM/客体混合故�
 
 ## 11. P4 — JNI 与 APK 原生库集成
 
+进度（2026-11-17）：首个独立 T09 JNI 基础增量已真机验证，不是 G3。
+每线程 JNIEnv/JavaVM 代理、客体 ABI 的 .../V→A 解码、构造/静态/实例/非虚调用、
+引用/字符串/数组、pending exception、隔离 loader 查询及普通/daemon worker attach/detach 通过。
+JVM/客体 trap 与访问违规边界通过，热 Java 空指针/除零仍由 JVM 正常处理；
+仅注册客体 PC 的诊断不拦截 JVM 所有的异常。测试四组语义共用进程及四个短负例进程，共 11 项，不加重复压力。
+完整回归 requirements/build All、Host 23、Java 43、Native 58、Bionic 104、Jni 11 通过。
+长期契约与限制见 `doc/en-us/native-profiles.md`，证据见 `doc/en-us/platform-notes.md`。
+Java→guest native 签名 thunk、显式/导出名绑定、JNI_OnLoad 与 APK 加载仍待完成，§11.2/G3 不整体勾选。
+
 ### 11.1 不能省略的加载适配
 
 Windows JVM 的 `System.load()` 不能直接加载 ELF。上游 `NativeLoaderShim` 借助宿主动态库与 ClassLoader 的关联工作，因此不能只将 `.dylib` 字符串改成 `.dll`。[上游 NativeLoaderShim](https://github.com/kksimp/Mac.apk/blob/f87be03575a79c7eeed578f421ee852bf99a814b/runtime/java/com/macapk/loader/NativeLoaderShim.java)

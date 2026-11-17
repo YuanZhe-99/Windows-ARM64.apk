@@ -87,7 +87,9 @@ bool TrackModule(const Module* module) {
     auto& registry = Registry();
     AcquireSRWLockExclusive(&registry.lock);
     if (!registry.handler) {
-        registry.handler = AddVectoredExceptionHandler(0, GuestFault);  // Existing handlers run first.
+        // A JVM may terminate even for foreign native PCs before a tail handler is reached.
+        // Only registered guest executable PCs are ours; all JVM/host/unknown PCs continue unchanged.
+        registry.handler = AddVectoredExceptionHandler(1, GuestFault);
         if (!registry.handler) {
             ReleaseSRWLockExclusive(&registry.lock);
             return false;

@@ -36,7 +36,7 @@ The runtime's commands are in the next section.
 
 ```powershell
 .\scripts\windows\check-requirements.ps1
-.\scripts\windows\build.ps1 -Component All          # or Java, FrameworkRes, Fixtures, Host, NativeProbe
+.\scripts\windows\build.ps1 -Component All          # or Java, FrameworkRes, Fixtures, Host, NativeProbe, JniProbe
 .\scripts\windows\test.ps1 -Suite Host
 .\scripts\windows\test.ps1 -Suite Java
 .\scripts\windows\test.ps1 -Suite Native
@@ -47,6 +47,7 @@ The runtime's commands are in the next section.
 .\scripts\windows\test.ps1 -Suite Faults
 .\scripts\windows\test.ps1 -Suite Format
 .\scripts\windows\test.ps1 -Suite Libraries
+.\scripts\windows\test.ps1 -Suite Jni
 .\build\windows-arm64\bin\native-probe.exe suite .\tests\fixtures\elf\libn0abi.so
 .\build\windows-arm64\bin\native-probe.exe sync .\tests\fixtures\elf\libsync.so
 .\build\windows-arm64\bin\winapk.exe doctor --json
@@ -64,7 +65,7 @@ The runtime's commands are in the next section.
 `d8`, `zipalign` and `apksigner`, for `src/**/*.kt` kotlinc (the Kotlin standard library is
 dexed in) and, for `jni/*.c`, the NDK's clang; each gets a
 `<name>.json` with its build parameters and hashes, and every library is checked to be ELF64
-AArch64. `-Component Host` builds `winapk.exe`, `winapk-bridge.dll`, `native-probe.exe` and
+AArch64. `-Component Host` builds `winapk.exe`, `winapk-bridge.dll`, `native-probe.exe`, `jni-probe.exe` and
 `winapk-probe.jar` into `build/windows-arm64/bin` with clang-cl in Visual Studio's ARM64 developer
 environment, fetching the Vulkan headers, zlib, SQLite and Capstone through vcpkg the first time,
 and fails if any PE it makes is not ARM64. `-Component NativeProbe` builds `native-probe.exe` alone
@@ -133,6 +134,19 @@ import, a valid but unknown version name/hash, and a malformed version chain, be
 The single process also checks logical lookup scopes, real finalization and pinned callbacks at
 shutdown. `fixtures.json` records the exact normal-link flags; copies staged under ignored
 `test-data/n1-libraries` keep each variant's original SONAME without modifying source fixtures.
+
+`-Component JniProbe` builds only `jni-probe.exe`, its Java probe jar, the Android-ABI
+`libwinapk-jni.so` helper and the ELF fixture recipes. `-Suite Jni` runs T09's foundation,
+not G3: one real ARM64 JVM with `-Xcheck:jni` checks constructor/static/instance/nonvirtual
+.../V/A calls, references/strings/arrays, pending exceptions, and normal/daemon worker attachment.
+Four semantic groups share one process; four short fatal processes check unsupported JNI,
+cross-thread environment misuse, guest trap and access violation. Each has a 15-second deadline.
+Two content hashes and a summary make 11 checks. Warnings from CheckJNI fail the positive run.
+The positive run uses `-Xbatch` and checks `T09-compilation.xml` for an installed compilation
+of the Java implicit-fault method, rather than assuming a hot loop necessarily ran JIT code.
+The helper and fixture use `-O2 -nostdlib -fno-builtin -fno-stack-protector`; this is an explicit
+JNI experiment, not proof of ordinary NDK APK loading. The separate `native-probe` remains
+JVM-free. Logs and JVM error files stay under ignored `test-data/logs/T09-*` and `hs_err_pid*.log`.
 
 `winapk run` keeps each app's data under `%LOCALAPPDATA%\Windows-ARM64.apk\Apps` (`--data-dir`
 moves it): `android\` is the Android root the app sees (`data\data\<package>`, `sdcard`),

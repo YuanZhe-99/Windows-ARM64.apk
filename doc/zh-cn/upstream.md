@@ -42,7 +42,7 @@ Windows 11 ARM64 上构建或运行过（[port-audit.md](port-audit.md)）。
 | 展开使用专门的 `.pdata`/`.xdata` 元数据与 SEH | 客体 DWARF 展开与宿主 thunk 是两个不同的问题 | 已阅读 |
 | [精确 unbiased interrupt time](https://learn.microsoft.com/en-us/windows/win32/api/realtimeapiset/nf-realtimeapiset-queryunbiasedinterrupttimeprecise) 单位为 100 ns，不计挂起；SDK 导入库为 mincore | 显式 timespec 转换及相对 monotonic 期限；不使用墙钟 sleep | 已阅读；T08 io 检查单位、墙钟 epoch 及最短 sleep 期限；挂起 NOT_RUN |
 | [WriteFile](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-writefile) 的两个 OVERLAPPED offset 均为 `0xFFFFFFFF` 时写入 EOF；同步句柄等待并更新文件指针 | 追加不使用先 seek 后 write，不向客体暴露 OVERLAPPED 对象 | 已阅读；T08 io 验证 seek 到开头后追加 |
-| [AddVectoredExceptionHandler](https://learn.microsoft.com/en-us/windows/win32/api/errhandlingapi/nf-errhandlingapi-addvectoredexceptionhandler) 的 First=0 把处理器放在末尾；未识别异常必须继续搜索 | 仅归因于注册客体可执行 PC，绝不吞掉无关宿主/JVM 异常或恢复客体执行 | 已阅读；T08 faults 保留宿主 SEH 用例，对客体访问违规/trap 输出模块/偏移后终止；JVM/客体混合 NOT_RUN |
+| [AddVectoredExceptionHandler](https://learn.microsoft.com/en-us/windows/win32/api/errhandlingapi/nf-errhandlingapi-addvectoredexceptionhandler) 的 First=1 先于现有处理器；未知故障必须继续搜索 | 只处理已注册客体可执行 PC；JVM/JIT 及所有其他 PC 仍走正常链；不替换 HotSpot 处理器 | T08 宿主 SEH 及 T09 Java/JIT 异常、客体 trap：PASS；First=0 在锁定的 Microsoft JVM 中未收到客体 trap，由 JVM 退出 1 |
 
 | JVM 只在 `System.loadLibrary` 加载的库中查找 `Java_*` native，不在嵌入它的程序中查找 | 宿主 native 用 `RegisterNatives` 注册（[decisions.md](decisions.md)） | 已验证（T01） |
 | 在这台电脑上（Adreno 8cx Gen 3），Vulkan loader 只提供 Mesa Dozen，即转换到 Direct3D 12 的 Vulkan 1.2 | `doctor` 报告 `VULKAN_DRIVER_TRANSLATED`；图形关卡需要厂商驱动或一项已记录的决定 | 已验证（`doctor`） |
@@ -59,6 +59,14 @@ Windows 11 ARM64 上构建或运行过（[port-audit.md](port-audit.md)）。
 | AArch64 stat 为 128 字节，timespec 为两个有符号 64 位字段；open/open64 有可选整数 mode | 显式客体布局及三寄存器可选 mode 入口；绝不传递宿主 stat、long 或 va_list | 已阅读 NDK r30 `sys/stat.h`、`bits/timespec.h`、`fcntl.h`；T08 io 检查真实声明、哨兵范围、数值及带/不带 mode 调用 |
 | 普通链接的 API-30 NDK C 共享库需要 libc/libdl/liblog 及 `LIBC` 版本；CRT 启动文件还导入 `__cxa_atexit`、`__cxa_finalize`、`__register_atfork` | 声明显式逻辑提供方，验证版本需求，实现真实生命周期记录，绝不使用返回成功的空桩 | 已检查 NDK r30 普通链接及 llvm-readelf（2026-11-17）；T07 N1 运行所记录的源码/链接及回调 |
 | [DSO 对象析构 ABI](https://itanium-cxx-abi.github.io/cxx-abi/abi.html#dso-dtor) 注册函数/参数/DSO，逆序 finalization，可选单个 DSO 或全部，同一记录不得调用两次 | 独立客体注册表，在回调前移除记录，正常销毁运行时时在代码/堆仍有效时处理剩余记录 | 已阅读规范；T07 N1 验证选择、重入/仅一次及退出清理；不证明客体 C++ 异常支持 |
+
+## JNI
+
+| 要点 | 影响 | 已检查 |
+|---|---|---|
+| [JNI 函数](https://docs.oracle.com/en/java/javase/21/docs/specs/jni/functions.html)：稳定槽号、每线程环境、不透明引用/ID；jvalue 是 JNI 原生类型/引用的 union | 显式私有表、固定签名包装器及线程归属检查；绝不复制 JVM 表 | 已阅读规范；NDK/宿主静态布局断言及 T09 真实 JVM 调用、引用和误用用例 |
+| FindClass 使用原生库的 loader 并初始化类；查询缺失报告 NoClassDefFoundError | 使用带初始化的 Class.forName 及配置的 loader，仅转换 ClassNotFoundException；worker 使用同一 loader | T09 隔离 URLClassLoader、FindClass 副作用及缺失类 |
+| .../V 方法调用使用 C 默认参数提升；A 调用接受 jvalue 数组 | 客体按记录的方法签名 va_copy/va_arg，然后进入固定宿主 A 入口 | T09 混合寄存器/栈值、重复 V、构造及虚/非虚分派 |
 
 ## MyGo
 

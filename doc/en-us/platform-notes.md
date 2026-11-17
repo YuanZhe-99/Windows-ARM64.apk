@@ -21,7 +21,7 @@ Verified on Windows 11 ARM64 (2026-11-16): build 26300.9974, Snapdragon Compute 
 | Java side (Mac.apk `3f35611`) | `build.ps1 -Component Java`: compiles unchanged, no error, Android's `org.apache.http.legacy` unpacked into the framework jar as upstream does ([port-audit.md](port-audit.md)) |
 | Guest ELF fixtures | `build.ps1 -Component NativeProbe`: the 24 fixtures of T05 and T06 with NDK r30's clang 21, hashes in `tests/fixtures/elf/fixtures.json` ([native-profiles.md](native-profiles.md)) |
 | G2 native path | `test.ps1 -Suite Native`: 58 checks PASS (below); `native-probe.exe` and `capstone.dll` ARM64 |
-| T01 host and JVM | `test.ps1 -Suite Host`: 22 checks PASS — `winapk.exe`, `winapk-bridge.dll`, `native-probe.exe`, zlib, SQLite and Capstone ARM64; JVM `jvm.dll` ARM64 created in-process with upstream's module options; JNI host → Java → host; Java2D; 259 font families; patch modules; and the negative cases (no JVM found, an invalid `--java-home`) |
+| T01 host and JVM | `test.ps1 -Suite Host`: 23 checks PASS (2026-11-17) — `winapk.exe`, `winapk-bridge.dll`, `native-probe.exe`, `jni-probe.exe`, zlib, SQLite and Capstone ARM64; JVM `jvm.dll` ARM64 created in-process with upstream's module options; JNI host → Java → host; Java2D; 259 font families; patch modules; and the negative cases (no JVM found, an invalid `--java-home`) |
 | Vulkan | loader ARM64 available; two Mesa Dozen devices (Vulkan 1.2 on Direct3D 12); `doctor --present`: Win32 surface test passed. No vendor Vulkan driver |
 | Interface | `go tool mygo vet .` and `go tool mygo i18n check` pass; every screen of `design/` renders in `ui.Tester` in both languages and appearances; a pane dragged with the pointer in `ui.Tester` splits its target (updated for MyGo v0.9.2); the native window opens and stays up (smoke run, sample data) |
 
@@ -107,7 +107,7 @@ and libc/libdl/liblog, not `-nostdlib` or special TLS/stack-protector flags.
 | Restricted formatting/logging (T08 format) | PASS | LP64 minima/maxima and integer arguments spilling to the stack; flags/width/precision, guest va_copy and V variants; would-have-written counts, sentinel-preserving truncation and embedded NUL; `%n`, float/wide/positional formats and limits refused with errno; exact literal-percent/UTF-8 records through fixed host log entry; four host-state callbacks without violations. Floating-point varargs and general stdio are not supported |
 | NDK system-library admission (T07 N1) | PASS | normal NDK link runs its constructor and exact `N1:4294967297` result; `LIBC` requirements bind only to named logical providers; libc/log lookup isolation; fork, unknown version and malformed chain fail with no constructor or retained image; original N0 refusals unchanged |
 | Guest CRT lifetime (T07 N1) | PASS | reverse/DSO-selected/reentrant order `3412`, no duplicate callback; 128 atfork records, overflow and DSO removal without invoking hooks; null exit callback and 256-entry capacity errors, exactly 255 selected callbacks while one remains pending; close keeps code mapped; final callback runs with fresh errno, allocates/frees guest heap bytes, refuses new workers, preserves x18/sp and produces constructor/shutdown trace `19` |
-| APK native and JNI integration | NOT_RUN | T09 not implemented; `winapk run` native loading remains disabled |
+| APK native and JNI integration | NOT_RUN | standalone T09 JNI foundation passes below; `winapk run` native loading remains disabled |
 
 The same change set ran `check-requirements.ps1`, `build.ps1 -Component All` and
 `test.ps1 -Suite Host` (22 PASS), `-Suite Java` (43 PASS), `-Suite Native` (58 PASS).
@@ -119,6 +119,31 @@ quota/heap assertions. JNI/Java native calls are not part of these N1 C-library 
 All built host PE/DLL files are ARM64; positive AArch64 guest fixture architecture is checked
 by the build script. No new gate is claimed, no version bump, and no plan deviation.
 
+## P4 JNI foundation checks
+
+2026-11-17 on the ARM64 machine above, Microsoft JVM `21.0.13.0.2+1-LTS`:
+`build.ps1 -Component All`, then `test.ps1 -Suite Jni`: 11/11 PASS, with `-Xcheck:jni` and no
+warnings; a final rerun uses `-Xbatch` and verifies the installed Java implicit-fault method
+in `T09-compilation.xml`. One NDK-built fixture, one product guest helper, four semantic groups and four short
+fatal processes; no additional pressure loop. The final 11-check suite took 1.55 seconds on this
+machine (one run, not a performance guarantee). This is not G3.
+
+| Item | Result | Evidence |
+|---|---|---|
+| Guest → Java arguments/results | PASS | .../V/A constructor, static, instance and nonvirtual calls; mixed 25-argument signature spills integer/FP registers; narrow values, 64-bit long, promoted float/double, object and primitive-array descriptors; repeated V with the same va_list; virtual override differs by 100; all scalar result categories and object/void calls |
+| References and exceptions | PASS | UTF-16 embedded NUL roundtrips as modified UTF-8; array element commit/release and region values; local frame promotion, global/weak/local ref kinds; real pending IllegalArgumentException, missing methods, invalid descriptor/ID/category and missing-class NoClassDefFoundError; configured isolated loader and FindClass initialization |
+| JVM worker lifecycle | PASS | detached GetEnv and refused version; normal/daemon Attach, repeated Attach identity, explicit Detach or automatic host-thread-exit Detach after a Bionic key destructor that still calls JNI; borrowed main thread is not detached; exactly one main proxy after joins |
+| Fault and misuse boundary | PASS | unsupported slot 217 and cross-thread JNIEnv: exit 3 with explicit category; guest trap/access violation: registered module/offset and exit 3; hot Java null-pointer/division exceptions remain JVM-owned and complete normally; x18/sp checked read-only on main/workers |
+| Java → guest native binding and APK integration | NOT_RUN | no RegisterNatives/mangled-name binding or JNI_OnLoad yet; winapk run native admission remains off |
+
+The regression also passes requirements, Host 23, Native 58, Bionic 104 and Java 43;
+Go formatting/vet/tests (including CGO-disabled), MyGo vet/i18n and docs mirror pass.
+Logs are `build/windows-arm64/test-data/logs/P4-jni-*.log` and `T09-*`.
+The first mixed trap experiment failed: the JVM exited 1 before the tail guest handler ran.
+The repair installs a strictly guest-PC-scoped first handler, never replaces HotSpot's handlers
+and leaves every non-guest PC in its original chain. The retained T09 cases guard that boundary.
+No new gate, version bump or plan deviation; CFG-enabled and macOS runs remain NOT_RUN.
+
 ## Known limitations
 
 - Mac.apk's Windows changes: the `if(WIN32)` branch of `runtime/CMakeLists.txt`, the
@@ -127,7 +152,7 @@ by the build script. No new gate is claimed, no version bump, and no plan deviat
   `runtime/platform/windows` and `runtime/guest`. What of `NativeCocoa` and the other host natives Windows implements,
   and what stays unbound, is in [port-audit.md](port-audit.md).
 - The interface does not launch `winapk run` yet; it still uses `winapk.Mock`.
-- Guest native: profile N0 plus separate P3 T08 Bionic subsets and T07 module transactions, only in `native-probe.exe`; `winapk run` loads no APK library (P4). The guest-PC fault boundary diagnoses and terminates recognized guest execution faults, not host imports, JIT/JVM faults, out-of-range branch targets or stack overflow; mixed JVM/guest validation remains NOT_RUN (P4). Built with `winapk.exe`'s flags, Control Flow Guard off; a CFG build is NOT_RUN ([abi-compatibility.md](abi-compatibility.md)).
+- Guest native: profile N0, separate P3 T07/T08 subsets in `native-probe.exe`, and P4 JNI foundation in `jni-probe.exe`; `winapk run` loads no APK library (P4). The guest-PC fault boundary diagnoses recognized guest execution faults, not host imports, JIT/JVM faults, out-of-range branch targets or stack overflow. T09 covers the stated mixed-JVM boundary, not arbitrary JVM/guest failures. Built with `winapk.exe`'s flags, Control Flow Guard off; a CFG build is NOT_RUN ([abi-compatibility.md](abi-compatibility.md)).
 - This PC has no vendor Vulkan driver: Vulkan is Mesa Dozen on Direct3D 12 ([decisions.md](decisions.md)).
 - macOS build and smoke after the `CMakeLists.txt`, `AppClassLoader` and `native_sqlite.cpp` changes: NOT_RUN (no Mac here); the branch returns only under `WIN32`, the Java check is inert unless `winapk.guestNative` is set, and the CoreFoundation helpers are unchanged outside `_WIN32`.
 - DPI: the app's density is fixed when it starts. Moving its window to a display of another scale, or changing the scale while it runs, resizes the window to keep its size in points (`WM_DPICHANGED`) but the app keeps its first density: NOT_RUN, and not yet handled as Android's configuration change.

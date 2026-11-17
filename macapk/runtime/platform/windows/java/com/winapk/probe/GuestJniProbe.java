@@ -1,0 +1,94 @@
+package com.winapk.probe;
+
+/** Supplies deterministic real-JVM values and exceptions to the T09 guest JNI fixture. */
+public class GuestJniProbe {
+    public final long value;
+    public int count;
+    public static boolean initialized;
+    private static volatile Object absent;
+    private static volatile int zero;
+
+    /** Exposes FindClass initialization as an observable effect without a method lookup. */
+    public static class Initialized {
+        static { initialized = true; }
+    }
+
+    /** Creates an isolated loader so worker FindClass cannot pass via the system loader by accident. */
+    public static ClassLoader isolatedLoader() {
+        return new java.net.URLClassLoader(new java.net.URL[]{
+                GuestJniProbe.class.getProtectionDomain().getCodeSource().getLocation()}, null);
+    }
+
+    /** Retains a long and promoted float/double values for constructor validation. */
+    public GuestJniProbe(long value, float first, double second) {
+        this.value = value + (long) first + (long) second;
+    }
+
+    /** Returns one exact value from mixed register/stack, narrow, floating and reference arguments. */
+    public static double mix(boolean z, byte b, char c, short s, int i, long j, float f, double d,
+                             Object object, int a1, int a2, int a3, int a4, int a5, int a6,
+                             int a7, int a8, double d1, double d2, double d3, double d4,
+                             double d5, double d6, double d7, double d8) {
+        if (!z || b != -7 || c != 0x4e2d || s != -123 || i != 29 || j != 4294967297L ||
+                f != 1.5f || d != 2.25 || object == null ||
+                a1 != 1 || a2 != 2 || a3 != 3 || a4 != 4 || a5 != 5 || a6 != 6 ||
+                a7 != 7 || a8 != 8 || d1 != 1 || d2 != 2 || d3 != 3 || d4 != 4 ||
+                d5 != 5 || d6 != 6 || d7 != 7 || d8 != 8)
+            throw new AssertionError("JNI mixed arguments");
+        return 4294967297.75;
+    }
+
+    /** Returns an instance value, distinct from the subclass override. */
+    public long number(int increment) { return value + increment; }
+
+    /** Changes an observable field for void-call assertions. */
+    public void add(int increment) { count += increment; }
+
+    /** Throws an exact pending exception that the guest must observe and clear. */
+    public static void fail() { throw new IllegalArgumentException("T09 expected"); }
+
+    /** Returns an exact boolean through its JNI result category. */
+    public static boolean booleanValue() { return true; }
+    /** Returns an exact signed byte through its JNI result category. */
+    public static byte byteValue() { return -7; }
+    /** Returns an exact UTF-16 code unit through its JNI result category. */
+    public static char charValue() { return '\u4e2d'; }
+    /** Returns an exact signed short through its JNI result category. */
+    public static short shortValue() { return -123; }
+    /** Returns an exact int through its JNI result category. */
+    public static int intValue() { return -123456789; }
+    /** Returns an exact float through its JNI result category. */
+    public static float floatValue() { return 1.5f; }
+
+    /** Exercises implicit Java faults on a hot method while guest executable ranges are registered. */
+    private static int implicit(int value) {
+        try {
+            if ((value & 1) == 0) return absent.hashCode();
+            return value / zero;
+        } catch (NullPointerException | ArithmeticException expected) {
+            return 1;
+        }
+    }
+
+    /** Confirms Java/JIT-owned faults retain normal JVM handling, including after compilation. */
+    public static boolean vmFaults() {
+        int count = 0;
+        for (int i = 0; i < 20000; i++) count += implicit(i);
+        return count == 20000;
+    }
+
+    /** Returns reference and primitive array arguments without any intermediate conversion. */
+    public static String arrays(String text, int[] values) {
+        if (!text.equals("中\u0000文") || values.length != 3 || values[0] != -3 ||
+                values[1] != 42 || values[2] != 99) throw new AssertionError("JNI references");
+        return text;
+    }
+
+    /** Supplies a subclass to distinguish virtual from nonvirtual JNI calls. */
+    public static class Child extends GuestJniProbe {
+        /** Creates the same deterministic base state. */
+        public Child(long value, float first, double second) { super(value, first, second); }
+        /** Overrides the value so nonvirtual dispatch cannot accidentally pass as virtual. */
+        @Override public long number(int increment) { return super.number(increment) + 100; }
+    }
+}

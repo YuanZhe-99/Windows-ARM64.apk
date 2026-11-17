@@ -29,7 +29,7 @@ go run ./tools/checkdocs           # doc/en-us and doc/zh-cn mirror each other
 
 ```powershell
 .\scripts\windows\check-requirements.ps1
-.\scripts\windows\build.ps1 -Component All          # or Java, FrameworkRes, Fixtures, Host, NativeProbe
+.\scripts\windows\build.ps1 -Component All          # or Java, FrameworkRes, Fixtures, Host, NativeProbe, JniProbe
 .\scripts\windows\test.ps1 -Suite Host
 .\scripts\windows\test.ps1 -Suite Java
 .\scripts\windows\test.ps1 -Suite Native
@@ -40,6 +40,7 @@ go run ./tools/checkdocs           # doc/en-us and doc/zh-cn mirror each other
 .\scripts\windows\test.ps1 -Suite Faults
 .\scripts\windows\test.ps1 -Suite Format
 .\scripts\windows\test.ps1 -Suite Libraries
+.\scripts\windows\test.ps1 -Suite Jni
 .\build\windows-arm64\bin\native-probe.exe suite .\tests\fixtures\elf\libn0abi.so
 .\build\windows-arm64\bin\native-probe.exe sync .\tests\fixtures\elf\libsync.so
 .\build\windows-arm64\bin\winapk.exe doctor --json
@@ -54,7 +55,7 @@ go run ./tools/checkdocs           # doc/en-us and doc/zh-cn mirror each other
 `-Component Fixtures` 用 SDK 的 `aapt2`、`d8`、`zipalign`、`apksigner`，对 `src/**/*.kt` 用 kotlinc（Kotlin 标准库一并转为 DEX），以及（对 `jni/*.c`）NDK 的 clang，把
 `tests/windows-arm64/apk-fixtures` 的夹具 APK 构建到 `tests/fixtures`（从不提交）；每个夹具附带记录构建参数和
 哈希的 `<name>.json`，每个库都检查是否为 ELF64 AArch64。`-Component Host` 在 Visual Studio 的 ARM64 开发者环境中用
-clang-cl 把 `winapk.exe`、`winapk-bridge.dll`、`native-probe.exe` 和 `winapk-probe.jar` 构建到 `build/windows-arm64/bin`，首次构建时
+clang-cl 把 `winapk.exe`、`winapk-bridge.dll`、`native-probe.exe`、`jni-probe.exe` 和 `winapk-probe.jar` 构建到 `build/windows-arm64/bin`，首次构建时
 通过 vcpkg 获取 Vulkan 头文件、zlib、SQLite 和 Capstone，生成的任何 PE 不是 ARM64 时即失败。`-Component NativeProbe` 只构建
 `native-probe.exe`，并用 NDK 的 clang 把 `tests/windows-arm64/guest-elf/fixtures.psd1` 中的客体 ELF 夹具构建到 `tests/fixtures/elf`
 （从不提交；哈希在该目录的 `fixtures.json` 中）。
@@ -109,6 +110,18 @@ N0 的 `Native` 回归也在已有加载/卸载循环中覆盖新的可执行范
 同一进程还检查逻辑查询范围、真实 finalization 及保持映射的退出回调。
 `fixtures.json` 记录完整普通链接参数；被忽略的 `test-data/n1-libraries` 中的暂存副本保持各变体原有 SONAME，
 不修改源夹具。
+
+`-Component JniProbe` 只构建 `jni-probe.exe`、其 Java 探测 jar、Android ABI 的
+`libwinapk-jni.so` 辅助库及 ELF 夹具配方。`-Suite Jni` 运行 T09 基础，不是 G3：
+一个带 `-Xcheck:jni` 的真实 ARM64 JVM 检查构造/静态/实例/非虚 .../V/A 调用、
+引用/字符串/数组、pending exception，以及普通/daemon worker 附着。
+四组语义共用一个进程；四个短终止进程检查不支持的 JNI、跨线程环境误用、客体 trap 和访问违规。
+每个进程限时 15 秒。两个内容哈希及汇总构成 11 项检查。CheckJNI 警告会使正例失败。
+正例使用 `-Xbatch`，并检查 `T09-compilation.xml` 中是否安装了 Java 隐式故障方法的编译，
+而不假定热循环就一定运行了 JIT 代码。
+辅助库和夹具使用 `-O2 -nostdlib -fno-builtin -fno-stack-protector`；
+这是显式 JNI 实验，不证明普通 NDK APK 加载。独立的 `native-probe` 仍不含 JVM。
+日志及 JVM 错误文件保存在被忽略的 `test-data/logs/T09-*` 和 `hs_err_pid*.log`。
 
 `winapk run` 把每个应用的数据放在 `%LOCALAPPDATA%\Windows-ARM64.apk\Apps` 下（`--data-dir` 可改）：`android\`
 是应用看到的 Android 根目录（`data\data\<package>`、`sdcard`），`code\<package>\` 是转换后的代码及缓存戳，

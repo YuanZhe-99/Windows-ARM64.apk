@@ -73,6 +73,22 @@ target_compile_definitions(native-probe PRIVATE WINAPK_VERSION="${WINAPK_VERSION
 target_compile_options(native-probe PRIVATE /W4 /EHsc -Wno-missing-field-initializers)
 target_link_libraries(native-probe PRIVATE capstone::capstone psapi mincore)
 
+# P4's real JVM/guest JNI experiment is separate from G2's deliberately JVM-free process.
+add_executable(jni-probe
+  ${_win}/src/jni_probe.cpp
+  ${_win}/src/jvm_probe.cpp
+  ${_win}/src/host_probe.cpp
+  ${CMAKE_CURRENT_LIST_DIR}/../../guest/jni/bridge.cpp
+  ${CMAKE_CURRENT_LIST_DIR}/../../guest/bionic/threads.cpp
+  ${CMAKE_CURRENT_LIST_DIR}/../../guest/loader/faults.cpp
+  ${CMAKE_CURRENT_LIST_DIR}/../../guest/loader/elf_loader.cpp
+  ${_win}/winapk.manifest)
+target_include_directories(jni-probe PRIVATE "${JAVA_HOME}/include" "${JAVA_HOME}/include/win32"
+  "${CMAKE_CURRENT_LIST_DIR}/../../translator/include")
+target_compile_definitions(jni-probe PRIVATE UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX _CRT_SECURE_NO_WARNINGS)
+target_compile_options(jni-probe PRIVATE /W4 /EHsc -Wno-missing-field-initializers)
+target_link_libraries(jni-probe PRIVATE capstone::capstone mincore dxgi advapi32)
+
 if(WINAPK_BIN_DIR)
-  set_target_properties(winapk winapk-bridge native-probe PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${WINAPK_BIN_DIR}")
+  set_target_properties(winapk winapk-bridge native-probe jni-probe PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${WINAPK_BIN_DIR}")
 endif()

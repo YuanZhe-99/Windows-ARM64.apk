@@ -23,7 +23,7 @@ Native`）；下文的用例名即其本身的名称。2026-11-04 在 [platform-
 | `TPIDR_EL0` | Android 的线程指针 | 为 Windows 保留 | 读写它的客体代码被拒绝 | T06 `neg-tpidr` |
 | 可变参数函数 | 可变参数与固定参数传法相同（浮点用 `v` 寄存器） | 所有可变参数都走 `x` 寄存器和栈，浮点也是 | 一方的可变参数原型绝不用来调用另一方的可变参数函数 | `va.fixed-prototype` |
 | `long double` | 128 位 IEEE 四精度，用 `q` 寄存器 | 64 位，与 `double` 相同 | 在宿主与客体之间的任何签名中都不受支持 | 无：按设计拒绝 |
-| 栈展开 | DWARF `.eh_frame` | `.pdata`/`.xdata` 与 SEH | 任何异常都不跨越；客体代码中的故障尚未处理（P3） | 尚无 |
+| 栈展开 | DWARF `.eh_frame` | `.pdata`/`.xdata` 与 SEH | 异常不跨域；已注册客体 PC 的致命诊断不展开、不恢复 | T08 faults；T09 JVM/客体混合 trap |
 
 ## 签名
 
@@ -36,6 +36,7 @@ Native`）；下文的用例名即其本身的名称。2026-11-04 在 [platform-
 | 宿主的可变参数函数（`printf` 等） | — | 绝不把客体变参导入直接绑定到它 | 不共享宿主 va_list |
 | 受限客体格式化/日志变参 | — | Android ABI 辅助库执行客体 `...`/V 调用；只有固定 errno/字节/日志签名进入宿主 | T08 `format`：整数寄存器/栈溢出参数、LP64、客体 va_copy、截断、拒绝及精确 UTF-8 日志 |
 | 跨 ABI 域的 `va_list` | 绝不 | 绝不 | T08 format 把它保持在客体辅助库中 |
+| 客体 JNI .../V/A 调用 | 尚未实现 Java→guest native 绑定 | Android 辅助库按记录的描述符将 .../V 解码为八字节 jvalue 槽；固定代理包装器使用线程私有宿主环境调用宿主 A 入口 | T09：构造、静态/实例/非虚、float 默认提升、窄值及 64 位值、整数/浮点栈溢出、引用及重复 V 调用 |
 | 通过导入共享的数据（客体经 GLOB_DAT 读写的宿主变量） | — | 两侧布局相同的类型可直通 | `import.call` |
 | `stat`、`timespec` | 显式 128/16 字节客体布局及转换，绝不使用宿主 CRT 对象 | 同左 | T08 `io`：NDK 布局断言、stat 哨兵/值、墙钟 epoch/单位及 monotonic 期限 |
 | 其他不同布局（`sockaddr` 等） | 不支持 | 不支持 | — |

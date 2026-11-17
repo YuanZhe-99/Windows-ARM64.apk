@@ -1,5 +1,5 @@
 # The guest ELF fixtures (PLAN.md §9.3, §10, §16): T05's N0 ABI suite, T06's refused ELF files,
-# T07 module graphs and T08 Bionic groups. scripts/windows/build.ps1 -Component NativeProbe builds each
+# T07 module graphs, T08 Bionic groups and T09 JNI foundation. build.ps1 -Component NativeProbe/JniProbe builds each
 # entry with the NDK of build-lock.json into tests/fixtures/elf/ (generated, never committed) and
 # records its hash in tests/fixtures/elf/fixtures.json; test.ps1 -Suite Native runs T05 with
 # native-probe suite/stress and checks T06 refusals; Suite Bionic runs T07 and T08.
@@ -9,10 +9,13 @@
 # Libraries: NDK link names placed after source/objects. From + Mutation: a controlled defect
 # (build.ps1, Write-ElfMutation). Expect: the error category. Reason: text the refusal contains.
 # Result: expected success/fatal output in the generated manifest. Exit: a runtime fatal's code.
-# Command/Cases: T08 probe command and required positive case count (threads/9 by default).
+# Command/Cases: probe group and required positive case count (T08 threads/9 by default).
 @{
     Common   = @('-shared', '-fPIC', '-fno-stack-protector', '-Wall', '-Wextra', '-Werror')
     Fixtures = @(
+        @{ Name = 'libjni-probe.so'; Id = 'T09'; Source = 'jni/probe.c'; Target = 'aarch64-linux-android30'
+           Flags = @('-O2', '-nostdlib', '-fno-builtin'); Command = 'jni'
+           Result = 'T09 foundation PASS; not APK admission or G3' }
         @{ Name = 'libbionic.so'; Id = 'T07'; Source = 'modules/bionic.c'; Target = 'aarch64-linux-android30'
            Common = @('-shared', '-fPIC', '-Wall', '-Wextra', '-Werror'); Flags = @('-O2'); Libraries = @('log')
            Command = 'libraries'; Result = 'normal NDK-linked Bionic, LIBC versions and real lifecycle callbacks' }

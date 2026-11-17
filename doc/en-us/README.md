@@ -34,14 +34,16 @@ Win32 window; `native-probe.exe` loads profile-N0 guest ELF libraries and runs t
 them; the MyGo interface runs against sample data (`winapk.Mock`) and does not start the runtime
 yet. The current build uses Mac.apk `3f35611`, Go 1.27.4 and MyGo v0.9.2.
 
-Active work continues with `PLAN.md` §10 (P3: Bionic, threads, errno, TLS) and §11 (P4: JNI and
-loading an APK's libraries in `winapk run`). The independent T08 thread foundation now covers
+P3's declared subset is complete; active work continues with `PLAN.md` §11 (P4: JNI and
+loading an APK's libraries in `winapk run`). The independent T08 thread foundation covers
 managed pthreads, errno, keys/destructors, explicitly emulated C TLS and untimed mutex/condition
 synchronization. T07 adds transactional dependency graphs, constructors and guest dl APIs;
 T08 also covers private-heap allocation, byte/strings and mapped regular-file/time APIs.
 P3's declared C/Bionic admission now also passes a normally linked NDK C fixture with logical
 system libraries, versions and real CRT lifecycle callbacks. Full N1/JNI and APK native loading
-remain P4/G3 work. Front-end integration is deferred while the backend progresses.
+remain P4/G3 work. The separate real-JVM `jni-probe.exe` passes T09's guest-to-Java JNI foundation,
+references/exceptions and worker attachment; Java-to-guest native binding and APK integration
+are not yet implemented. Front-end integration is deferred while the backend progresses.
 
 ## Upstream versions
 

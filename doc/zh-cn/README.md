@@ -30,12 +30,14 @@ MyGo 前端在手机式窗格或独立窗口中打开每个应用，每个 APK �
 ABI 测试集；MyGo 界面对接示例数据（`winapk.Mock`），尚不启动运行时。当前构建使用 Mac.apk `3f35611`、
 Go 1.27.4 和 MyGo v0.9.2。
 
-后续工作按 `PLAN.md` §10（P3：Bionic、线程、errno、TLS）和 §11（P4：JNI，以及在 `winapk run` 中加载 APK 的库）推进。
+P3 已声明子集已完成；后续工作按 `PLAN.md` §11（P4：JNI，以及在 `winapk run` 中加载 APK 的库）推进。
 独立 T08 线程基础现已覆盖受管理 pthread、errno、key/析构、显式仿真 C TLS 与无超时 mutex/condition 同步；
 T07 新增事务式依赖图、构造函数与客体 dl API；两者均不开放完整 N1 或 APK 原生库加载。
 T08 还覆盖私有堆分配、字节/字符串及映射常规文件/时间 API。
 P3 已声明的 C/Bionic 准入现已通过普通 NDK 链接的 C 夹具，包含逻辑系统库、版本与真实 CRT 生命周期回调。
 完整 N1/JNI 及 APK 原生库加载仍属于 P4/G3。
+独立的真实 JVM `jni-probe.exe` 已通过 T09 客体→Java JNI 基础、引用/异常及 worker 附着；
+Java→guest native 绑定及 APK 集成尚未实现。
 优先推进后端，暂缓前端集成。
 
 ## 上游版本

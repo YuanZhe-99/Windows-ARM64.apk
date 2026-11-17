@@ -209,6 +209,29 @@ T08 io combines roundtrip/seek/stat, open/append flags, mapping/error refusals a
 checks. A host-side check confirms the Unicode-mapped file and that a refused junction path
 did not truncate a file outside the mapped root.
 
+## P4 JNI foundation (T09, not G3)
+
+The first JNI increment is a standalone, real-JVM probe, not APK admission. A private guest
+`JavaVM` table and per-thread `JNIEnv` proxy forward only audited fixed signatures. Opaque JNI
+references and IDs remain JVM-owned tokens; neither host table nor host environment address is
+exposed to guest code. Unsupported slots terminate with `GUEST_ABI_UNSUPPORTED` and the slot.
+Method descriptors are recorded on lookup, bounded to 64 arguments and checked before calls.
+The fixed subset covers exception queries/throw/clear, local/global/weak references, superclass
+and instance checks, method and field lookup/access, UTF-16/modified-UTF8 strings and regions,
+primitive/object arrays and element/region acquire/release. Reflection, class definition,
+critical pinning, monitors, direct buffers and native registration are not yet admitted.
+
+Android-built helper entries implement constructor and instance/nonvirtual/static `...`/V
+calls with guest `va_copy`/`va_arg`, including default promotions, then use the proxy's A
+entries. No host `va_list` crosses domains. A calls use the JNI union's verified fixed layout.
+Class lookup uses the configured ClassLoader, including on attached workers, initializes the
+class and translates lookup misses to `NoClassDefFoundError`. Borrowed JVM
+threads are never detached by proxy cleanup; bridge-owned attachments detach explicitly or at
+host thread exit after Bionic key/TLS cleanup. The bridge and mappings must outlive all workers.
+
+This increment does not bind Java native methods, run `JNI_OnLoad`, load APK libraries, or
+establish G3. Java-to-guest signature thunks and APK/ClassLoader loading remain subsequent work.
+
 ## P3 module transactions (T07)
 
 `ModuleSet` extends the loader for audited C-library graphs; the original N0 `Load` API still
@@ -276,7 +299,7 @@ and separate libc++/unwind/TLS validation; Windows SEH does not provide that sup
 ## P3 guest fault boundary (T08)
 
 The loader registers each fully linked/protected image before any initializer or exported call,
-and removes it before unmapping. A last-priority vectored handler considers access violations,
+and removes it before unmapping. A guest-PC-scoped vectored handler considers access violations,
 illegal/privileged instructions and breakpoints only when the fault PC belongs to an executable
 segment of a currently registered guest image. It writes `GUEST_EXECUTION_FAULT`, the module's
 basename, guest virtual address and Windows exception code, then terminates the process with 3.
@@ -285,7 +308,11 @@ It never resumes corrupted guest state, runs guest cleanup or unwinds guest C++ 
 All other exceptions continue through the normal Windows chain: host/JVM/JIT code, faults
 inside a host import and jumps to an address outside the registered executable segments are not
 claimed by this boundary. It does not replace HotSpot's handlers, implement signals, recover
-stack overflow or supply ELF unwind metadata. Mixed JVM/guest validation belongs to P4.
+stack overflow or supply ELF unwind metadata. The handler is placed first but acts only on
+registered guest executable PCs: every JVM/JIT, host, unknown and excluded fault continues
+unchanged through the normal chain. A tail handler was not reached for a guest trap with the
+locked Microsoft JVM; T09 guards both guest attribution and normal Java/JIT fault handling.
+This is not permission to intercept JVM-owned exceptions or recover guest execution.
 The registry lock is never held across guest execution or callbacks; fault reporting uses
 bounded stack buffers and a direct Windows write, not an allocation or guest callback.
 
