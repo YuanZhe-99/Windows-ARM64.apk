@@ -1155,6 +1155,17 @@ function Test-VulkanWsi {
             $wr = New-Object WinApkTestWin+RECT
             $rc = New-Object WinApkTestWin+RECT
             $initial = [WinApkTestWin]::GetClientRect($h, [ref]$rc) -and $first.Groups[2].Value -eq "$($rc.R)x$($rc.B)"
+            Send-SysCommand $h 0xF020
+            $minimized = Wait-Log $log 'T13\.wsi: (PASS minimized=VK_ERROR_OUT_OF_DATE_KHR|FAIL [^\r\n]+)' 5 $p
+            Send-SysCommand $h 0xF120
+            $initialExtent = $first.Groups[2].Value
+            $restore = if ($minimized -and $minimized.Value -eq 'T13.wsi: PASS minimized=VK_ERROR_OUT_OF_DATE_KHR') {
+                Wait-Log $log "T13\.wsi: (restored=$initialExtent\b|FAIL [^\r\n]+)" 5 $p
+            }
+            if (!$restore -or $restore.Value -ne "T13.wsi: restored=$initialExtent") {
+                Check 'T13.wsi.live' $false 'expected zero-size acquire refusal and present after restore; see APK log'
+                continue
+            }
             $resized = [WinApkTestWin]::GetWindowRect($h, [ref]$wr) -and
                 [WinApkTestWin]::SetWindowPos($h, [IntPtr]::Zero, 0, 0, ($wr.R - $wr.L + 64), ($wr.B - $wr.T + 32), 0x16) -and
                 [WinApkTestWin]::GetClientRect($h, [ref]$rc)
@@ -1165,7 +1176,7 @@ function Test-VulkanWsi {
             Check 'T13.wsi.live' ($initial -and $after -and $after.Value -eq 'T13.wsi: PASS replacement' -and
                 $extent -ne $first.Groups[2].Value -and $text -match "T13\.wsi: resized=$extent\b" -and $code -eq 0 -and
                 $text -match 'guest Vulkan instance teardown complete' -and
-                $text -notmatch 'WARNING in native method|FATAL ERROR in native method|T13\.wsi: FAIL') "three transfer-clear presents, resize to $extent, surface loss/replacement and teardown"
+                $text -notmatch 'WARNING in native method|FATAL ERROR in native method|T13\.wsi: FAIL') "three transfer-clear presents across minimize/restore and resize to $extent; replacement and teardown"
         } finally {
             if (!$p.HasExited) { $p.Kill(); $p.WaitForExit() }
             $p.Dispose()

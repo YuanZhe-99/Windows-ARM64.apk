@@ -174,7 +174,9 @@ against a token for the acquired image, submits on the owned queue and presents.
 driver’s device, queue, swapchain and image handles stay private. The profile does not
 implement shader pipelines, general buffers/images, custom allocators or debug callbacks.
 
-The existing `VulkanWsi` suite adds three transfer clears/presents to its positive process,
-without extra launches. The old swapchain returns `VK_ERROR_OUT_OF_DATE_KHR` after resize;
-the guest destroys and recreates it. The fixture checks actual present return values, not
-swapchain pixel readback. This is not vendor Vulkan or G4 acceptance.
+The `VulkanWsi` suite checks three transfer clears/presents in one positive process:
+at launch, after restoring the minimized window, and after resizing it. Acquire on a
+minimized zero-size surface returns `VK_ERROR_OUT_OF_DATE_KHR`; the old swapchain stays
+stale after restore at the original extent. The guest destroys and recreates it on
+restore and on resize. The fixture checks actual present return values, not swapchain
+pixel readback. This is not vendor Vulkan or G4 acceptance.

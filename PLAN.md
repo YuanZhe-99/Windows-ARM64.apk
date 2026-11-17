@@ -427,6 +427,7 @@ Vulkan GPU 命令和 SPIR-V 原则上交给 Windows 原生驱动；本层负责�
 - [x] T13.wsi 使用 System32 ARM64 Vulkan Loader 正常发现 ICD；不硬编码厂商驱动。
 - [x] T13.wsi 验证实例与物理设备令牌、实例 proc 分发、Android→Win32 surface、实际呈现支持查询及 resize/换挂载；不呈现帧。
 - [x] T13 清屏增量验证客体设备/队列、获取 fence、命令缓冲区、交换链三帧呈现及 resize 后重建；不覆盖 shader、通用缓冲区/图像或回调。
+- [x] T13 验证最小化零尺寸时拒绝 acquire，恢复到原尺寸后旧交换链仍过期，重建后呈现；仍用原正例进程。
 - [x] 为虚拟 `libvulkan.so` 提供上述受限 profile 的 bootstrap、instance/device dispatch 及版本拒绝。
 - [ ] 基于固定 `vk.xml` 生成签名/桥表或采用经过验证的等价方式；首轮可以只开放完成的命令集合。
 - [ ] 若只实现 Vulkan 核心命令的受限子集，产品能力报告标为 fixture/PoC profile；不能据此宣称符合某个完整 Vulkan 版本或通过 Khronos 一致性认证。
@@ -702,4 +703,4 @@ $zip = .\scripts\windows\package.ps1
 
 ## 20. 基线里程碑状态与当前起点
 
-P0 审计/锁定、Java MVP（G1）、N0 ELF/ABI（G2）及已声明 C/Bionic/JNI 子集与真实 APK 集成（G3）均已完成，证据见 `doc/en-us/platform-notes.md`。层 A/B 在该范围 PASS。P5 受限客体 EGL/GLES、P6 Dozen 上的 T13 清屏呈现、P7 本地 CLI 包和 DEX 子进程管理均单独验证。真实 context/device loss、客体 Vulkan 最小化/恢复、shader/通用资源与回调正例、T14 长期稳定性和独立机器验证仍未验收；本机只有 Mesa Dozen，厂商 Vulkan 路径需设备。前端暂缓，G4/G5 与层 C/D 未验收，不发布。
+P0 审计/锁定、Java MVP（G1）、N0 ELF/ABI（G2）及已声明 C/Bionic/JNI 子集与真实 APK 集成（G3）均已完成，证据见 `doc/en-us/platform-notes.md`。层 A/B 在该范围 PASS。P5 受限客体 EGL/GLES、P6 Dozen 上的 T13 清屏呈现及最小化/恢复、P7 本地 CLI 包和 DEX 子进程管理均单独验证。真实 context/device loss、shader/通用资源与回调正例、T14 长期稳定性和独立机器验证仍未验收；本机只有 Mesa Dozen，厂商 Vulkan 路径需设备。前端暂缓，G4/G5 与层 C/D 未验收，不发布。

@@ -4,6 +4,7 @@ import android.app.Activity;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.SystemClock;
 import android.util.Log;
 import android.view.Surface;
 import android.view.SurfaceHolder;
@@ -25,6 +26,37 @@ public final class MainActivity extends Activity {
         first.getHolder().addCallback(new SurfaceHolder.Callback() {
             private long initial;
             private boolean stopped;
+            private boolean minimized;
+            private boolean restored;
+            private long restoreDeadline;
+            private final Runnable restoreCheck = new Runnable() {
+                /** Checks the same Vulkan surface across the host window transition. */
+                @Override public void run() { checkRestore(); }
+            };
+
+            /** Observes zero extent, then rebuilds and presents after restore at the same size. */
+            private void checkRestore() {
+                if (stopped) return;
+                long size = extent();
+                if (size < 0 || SystemClock.uptimeMillis() >= restoreDeadline) {
+                    stopped = true;
+                    Log.e(TAG, "FAIL minimize/restore extent=" + size);
+                    return;
+                }
+                if (size == 0 && !minimized) {
+                    minimized = true;
+                    Log.i(TAG, "PASS minimized=VK_ERROR_OUT_OF_DATE_KHR");
+                } else if (size > 0 && minimized) {
+                    int status = size == initial ? present(true) : -1;
+                    restored = status == 0;
+                    stopped = !restored;
+                    if (restored) logSize("restored", size);
+                    else Log.e(TAG, "FAIL restored-present=" + status);
+                    return;
+                }
+                main.postDelayed(restoreCheck, 100);
+            }
+
             @Override public void surfaceCreated(SurfaceHolder holder) {
                 int status = open(holder.getSurface());
                 if (status == 0) return;
@@ -33,7 +65,7 @@ public final class MainActivity extends Activity {
                 else Log.e(TAG, "FAIL open=" + status);
             }
             @Override public void surfaceChanged(SurfaceHolder holder, int format, int w, int h) {
-                if (stopped) return;
+                if (stopped || (initial != 0 && !restored)) return;
                 long size = extent();
                 if (size <= 0) {
                     stopped = true;
@@ -47,6 +79,8 @@ public final class MainActivity extends Activity {
                     }
                     initial = size;
                     logSize("initial", size);
+                    restoreDeadline = SystemClock.uptimeMillis() + 12000;
+                    main.post(restoreCheck);
                 } else if (size != initial) {
                     stopped = true;
                     int status = present(true);

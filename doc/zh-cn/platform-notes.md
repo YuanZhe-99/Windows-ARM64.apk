@@ -275,6 +275,12 @@ System32 loader 未枚举 `VK_LAYER_KHRONOS_validation`，validation 为 `NOT_RU
 ApkJni 8、GraphicsHost 6、GraphicsJava 4、Surface 4、GraphicsGuest 4 均通过。
 日志为 `P6-clear-*.log`。
 
+后续 `VulkanWsi` 运行通过三项，APK SHA-256 为
+`b20a19e2e30df83a6163c2610ff5f07a085d2fd7b79fab15c2a5544b38798c23`。
+第二次呈现移至真实最小化及恢复之后，不增加启动或帧数。最小化 surface 报告零尺寸，
+acquire 拒绝旧交换链，夹具恢复原尺寸后重建并呈现，resize 后再次重建呈现。
+日志为 `T13-restore-directed.log`。
+
 ## P7 本地 CLI 包
 
 Release CLI 及四个 DLL 均为 ARM64，不导入 Debug CRT。`Package` 四项通过：产物和源码清单、

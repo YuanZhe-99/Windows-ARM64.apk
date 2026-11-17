@@ -149,6 +149,7 @@ Vulkan loader。桥筛选实例扩展，把 Android surface 创建翻译为 Win3
 交换链和图像句柄保持私有。本 profile 不实现 shader pipeline、通用缓冲区/图像、
 自定义分配器或调试回调。
 
-现有 `VulkanWsi` 套件在原正例进程中增加三次清屏呈现，不增加启动次数。resize 后旧交换链
-返回 `VK_ERROR_OUT_OF_DATE_KHR`，客体释放后自行重建。测试断言真实 present 返回值，
-没有进行交换链像素回读；无厂商 Vulkan 或 G4 验收结论。
+`VulkanWsi` 套件在同一个正例进程中验证三次清屏呈现：启动时、从最小化恢复后及 resize 后。
+最小化至零尺寸时 acquire 返回 `VK_ERROR_OUT_OF_DATE_KHR`，恢复到原尺寸后旧交换链仍过期。
+客体在恢复及 resize 后分别销毁并重建。测试断言真实 present 返回值，不进行交换链像素回读；
+不代表厂商 Vulkan 或 G4 验收。

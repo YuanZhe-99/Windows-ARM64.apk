@@ -218,7 +218,7 @@ static int show_frame(float red, float blue) {
     return 0;
 }
 
-/** Presents twice at the initial extent, or once after explicit swapchain recreation on resize. */
+/** Presents at launch, restore or resize, requiring the previous swapchain to be stale when rebuilding. */
 JNIEXPORT jint JNICALL Java_org_winapk_fixture_vulkanwsi_MainActivity_present(JNIEnv* env, jclass type, jboolean resized) {
     (void)env;
     (void)type;
@@ -233,14 +233,10 @@ JNIEXPORT jint JNICALL Java_org_winapk_fixture_vulkanwsi_MainActivity_present(JN
     }
     int status = start_swapchain();
     if (status) return status;
-    if (!resized) {
-        status = show_frame(0.75f, 0.125f);
-        if (status) return status;
-    }
     return resized ? show_frame(0.125f, 0.75f) : show_frame(0.75f, 0.125f);
 }
 
-/** Returns the real ICD extent and checks it against the retained Android token. */
+/** Validates the retained surface's extent and that minimize invalidates acquisition. */
 JNIEXPORT jlong JNICALL Java_org_winapk_fixture_vulkanwsi_MainActivity_extent(JNIEnv* env, jclass type) {
     (void)env;
     (void)type;
@@ -248,6 +244,11 @@ JNIEXPORT jlong JNICALL Java_org_winapk_fixture_vulkanwsi_MainActivity_extent(JN
     if (caps(physical, surface, &value)) return -2;
     if (value.currentExtent.width != (uint32_t)ANativeWindow_getWidth(native) ||
         value.currentExtent.height != (uint32_t)ANativeWindow_getHeight(native)) return -3;
+    if (!value.currentExtent.width && !value.currentExtent.height) {
+        uint32_t index;
+        if (!swapchain || vkAcquireNextImageKHR(device, swapchain, 0, VK_NULL_HANDLE, acquired, &index) !=
+                          VK_ERROR_OUT_OF_DATE_KHR) return -4;
+    }
     return ((jlong)value.currentExtent.width << 32) | value.currentExtent.height;
 }
 

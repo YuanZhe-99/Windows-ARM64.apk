@@ -293,6 +293,13 @@ Requirements and Build All passed. Host 27, Java 43, Native 58, Bionic 104, Jni 
 ApkJni 8, GraphicsHost 6, GraphicsJava 4, Surface 4 and GraphicsGuest 4 also passed.
 Logs: `P6-clear-*.log`.
 
+The follow-up `VulkanWsi` run passed three checks with APK SHA-256
+`b20a19e2e30df83a6163c2610ff5f07a085d2fd7b79fab15c2a5544b38798c23`.
+It moved the second present to after a real minimize/restore without adding a launch
+or frame. The minimized surface reports zero extent, acquire refuses the stale swapchain,
+and the fixture rebuilds and presents at the original extent and again after resize.
+Log: `T13-restore-directed.log`.
+
 ## P7 local CLI package
 
 The Release CLI and its four DLLs are ARM64, with no Debug CRT imports. `Package` passed
