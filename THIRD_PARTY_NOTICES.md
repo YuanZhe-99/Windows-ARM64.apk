@@ -31,7 +31,29 @@ Go, Java and native dependencies with their license texts.
 
 The Vulkan loader and GPU drivers are system components, never copied into the package.
 
-## ANGLE license
+## ANGLE and linked GN dependencies
+
+ANGLE (`801a1a5f6e00ed0028937067b7663fd7053bff31`, built with `scripts/windows/angle-args.gn`:
+`angle_enable_d3d11=true`, `angle_enable_vulkan=true`, `angle_enable_cl=false`,
+`angle_enable_swiftshader=false`, `angle_use_custom_libvulkan=false`, `is_component_build=false`)
+links only the permissive libraries below:
+
+| Linked target / directory | Revision | License |
+|---|---|---|
+| ANGLE (`src/libANGLE`, `src/libEGL`, `src/libGLESv2`, `src/common/base`) | `801a1a5f6e00ed0028937067b7663fd7053bff31` | BSD-3-Clause |
+| `src/common/third_party/xxhash` | bundled in ANGLE `801a1a5` | BSD-2-Clause (Yann Collet) |
+| `src/third_party/volk` & `src/third_party/ceval` | bundled in ANGLE `801a1a5` | MIT (Arseny Kapoulkine / ANGLE contributors) |
+| `third_party/abseil-cpp` (`angle_abseil`) | `ecb00cc74a6251b273c78789f947d3eb280dd093` | Apache-2.0 |
+| `third_party/vulkan_memory_allocator` (`angle_vk_mem_alloc_wrapper`) | `7e55b011e16182fc349149abbd3aaf3b1db46421` | MIT (Advanced Micro Devices, Inc.) |
+| `third_party/astc-encoder/src` (`angle_image_util`) | `2319d9c4d4af53a7fc7c52985e264ce6e8a02a9b` | Apache-2.0 (ARM Limited) |
+| `third_party/vulkan-headers/src`, `spirv-headers/src`, `EGL-Registry`, `OpenGL-Registry` | `b26454f3` / `5c6004e7` / `7dea2ed7` / `9cb90ca4` | Apache-2.0 / MIT (The Khronos Group Inc.) |
+| `third_party/zlib` (`angle_compression`) | `ec453dc9abac1ddf39ced752e72a7a80dcda1d91` | Zlib (Jean-loup Gailly and Mark Adler) + Chromium BSD-3-Clause |
+| `third_party/libc++/src` & `libc++abi/src` (statically linked C++ runtime) | `64f64c14` / `8e42446d` | Apache-2.0 WITH LLVM-exception |
+
+SwiftShader, the Khronos Vulkan Loader, Vulkan Validation Layers, Dawn, and `clspv` are disabled in
+`scripts/windows/angle-args.gn` and are never linked into `libEGL.dll` or `libGLESv2.dll`.
+
+### ANGLE BSD-3-Clause notice
 
 Copyright 2018 The ANGLE Project Authors.
 All rights reserved.
@@ -63,3 +85,33 @@ CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
 LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN
 ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 POSSIBILITY OF SUCH DAMAGE.
+
+### VulkanMemoryAllocator MIT notice
+
+Copyright (c) 2017-2026 Advanced Micro Devices, Inc. All rights reserved.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+
+### volk MIT notice
+
+Copyright (c) 2018-2024 Arseny Kapoulkine. Permission is hereby granted, free of charge,
+to any person obtaining a copy of this software and associated documentation files to deal
+in the Software without restriction, subject to inclusion of the copyright and permission notice.
+
+### xxHash BSD-2-Clause notice
+
+Copyright (c) 2012-2021 Yann Collet. All rights reserved. Redistribution and use in source and
+binary forms, with or without modification, are permitted provided that source and binary
+redistributions retain the above copyright notice, conditions and disclaimer.

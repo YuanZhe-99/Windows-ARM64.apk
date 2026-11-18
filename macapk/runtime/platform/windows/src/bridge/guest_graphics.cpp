@@ -370,6 +370,14 @@ EGLBoolean Swap(EGLDisplay d, EGLSurface surface) {
         if (!surface || surface != session.surfaceId || !session.native) return EGL_BAD_SURFACE;
         if (session.current != id) return EGL_BAD_CURRENT_SURFACE;
         if (auto error = EnsureSurface(id); error != EGL_SUCCESS) return error;
+        static bool injectedLoss = false;
+        if (!injectedLoss && GetEnvironmentVariableW(L"WINAPK_TEST_EGL_CONTEXT_LOST", nullptr, 0) > 0) {
+            injectedLoss = true;
+            session.lost = true;
+            Unbind();
+            LogLine("GRAPHICS_RENDER_FAILED: guest eglSwapBuffers error=12302 (injected context loss)");
+            return EGL_CONTEXT_LOST;
+        }
         if (IsEmbedded() && session.width > 0 && session.height > 0) {
             std::vector<uint8_t> pixels(static_cast<size_t>(session.width) * static_cast<size_t>(session.height) * 4);
             session.glReadPixels(0, 0, session.width, session.height, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
@@ -377,6 +385,7 @@ EGLBoolean Swap(EGLDisplay d, EGLSurface surface) {
         }
         if (!session.eglSwapBuffers(session.display, session.drawable)) {
             const auto error = DriverError();
+            if (error == EGL_CONTEXT_LOST) Unbind();
             LogLine("GRAPHICS_RENDER_FAILED: guest eglSwapBuffers error=" + std::to_string(error));
             return error;
         }

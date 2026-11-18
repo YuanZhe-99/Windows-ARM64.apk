@@ -112,7 +112,9 @@ void PrintJson(const Report& r) {
     o += "  \"runtime\": { \"guestNativeProfiles\": [";
     for (size_t i = 0; i < r.guestNativeProfiles.size(); ++i)
         o += (i ? ", " : "") + Json(r.guestNativeProfiles[i]);
-    o += "], \"guestVulkan\": false, \"frameworkCommit\": " + Json(r.frameworkCommit) + " },\n  \"limitations\": [";
+    const bool vkPoc = r.vulkan.loader == "available" && r.vulkan.win32SurfaceExtension && !r.vulkan.devices.empty();
+    o += "], \"guestVulkan\": false, \"guestVulkanProfile\": " + Json(vkPoc ? "T13-fixture-poc" : "") +
+         ", \"frameworkCommit\": " + Json(r.frameworkCommit) + " },\n  \"limitations\": [";
     for (size_t i = 0; i < r.limitations.size(); ++i) {
         o += std::string(i ? "," : "") + "\n    { \"id\": " + Json(r.limitations[i].first) + ", \"reason\": " + Json(r.limitations[i].second) + " }";
     }
@@ -161,6 +163,8 @@ int Usage() {
 }  // namespace winapk
 
 int wmain(int argc, wchar_t** argv) {
+    // Restrict DLL resolution to the executable directory, System32 and explicit AddDllDirectory entries (PLAN.md §12.1).
+    SetDefaultDllDirectories(LOAD_LIBRARY_SEARCH_APPLICATION_DIR | LOAD_LIBRARY_SEARCH_SYSTEM32 | LOAD_LIBRARY_SEARCH_USER_DIRS);
     using namespace winapk;
     if (argc < 2) return Usage();
     std::wstring cmd = argv[1];

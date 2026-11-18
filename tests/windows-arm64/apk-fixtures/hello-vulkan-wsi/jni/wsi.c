@@ -226,11 +226,19 @@ static int start_device(void) {
     if (vkEnumerateDeviceExtensionProperties(physical, NULL, &count, &properties) ||
         count != 1 || strcmp(properties.extensionName, VK_KHR_SWAPCHAIN_EXTENSION_NAME)) return 20;
     const float priority = 1.f;
+    const char* bad_exts[] = {VK_KHR_SWAPCHAIN_EXTENSION_NAME, "VK_ANDROID_external_memory_android_hardware_buffer"};
     const char* extensions[] = {VK_KHR_SWAPCHAIN_EXTENSION_NAME};
     const VkDeviceQueueCreateInfo queue_info = {
         .sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
         .queueFamilyIndex = family, .queueCount = 1, .pQueuePriorities = &priority
     };
+    VkDevice bad_device = VK_NULL_HANDLE;
+    const VkDeviceCreateInfo bad_device_info = {
+        .sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
+        .queueCreateInfoCount = 1, .pQueueCreateInfos = &queue_info,
+        .enabledExtensionCount = 2, .ppEnabledExtensionNames = bad_exts
+    };
+    if (vkCreateDevice(physical, &bad_device_info, NULL, &bad_device) != VK_ERROR_EXTENSION_NOT_PRESENT || bad_device) return 20;
     const VkDeviceCreateInfo device_info = {
         .sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
         .queueCreateInfoCount = 1, .pQueueCreateInfos = &queue_info,
@@ -298,6 +306,15 @@ static int start_readback(void) {
     if (type >= props.memoryTypeCount || type >= 32 || req.size < info.size) return 41;
     const VkMemoryAllocateInfo allocation = { .sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
         .allocationSize = req.size, .memoryTypeIndex = type };
+    const VkImportAndroidHardwareBufferInfoANDROID ahb_next = {
+        .sType = VK_STRUCTURE_TYPE_IMPORT_ANDROID_HARDWARE_BUFFER_INFO_ANDROID
+    };
+    const VkMemoryAllocateInfo bad_alloc = {
+        .sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO, .pNext = &ahb_next,
+        .allocationSize = req.size, .memoryTypeIndex = type
+    };
+    VkDeviceMemory bad_mem = VK_NULL_HANDLE;
+    if (vkAllocateMemory(device, &bad_alloc, NULL, &bad_mem) != VK_ERROR_EXTENSION_NOT_PRESENT || bad_mem) return 42;
     if (vkAllocateMemory(device, &allocation, NULL, &storage) || !storage) return 42;
     if (vkBindBufferMemory(device, readback, (VkDeviceMemory)(uintptr_t)UINTPTR_MAX, 0) != VK_ERROR_FEATURE_NOT_PRESENT ||
         vkBindBufferMemory(device, readback, storage, 0)) return 43;

@@ -662,8 +662,30 @@ solutions = [
     Write-Step 'ANGLE DLLs staged as ARM64; no rendering capability is claimed until the host probes run'
 }
 
+<# Ensures pinned ANGLE headers exist for Host/AngleProbe builds, falling back to GitHub google/angle when googlesource times out. #>
+function Ensure-AngleHeaders {
+    $lock = Get-Content (Join-Path $repo 'build-lock.json') -Raw | ConvertFrom-Json
+    $commit = $lock.host.angle.commit
+    $angleDir = Join-Path $out 'deps\angle'
+    $header = Join-Path $angleDir 'include\EGL\eglext_angle.h'
+    if (Test-Path $header) { return }
+    Write-Step "Fetching pinned ANGLE headers ($commit)"
+    New-Item -ItemType Directory -Force $angleDir | Out-Null
+    if (-not (Test-Path (Join-Path $angleDir '.git'))) {
+        Invoke-Checked 'git' @('-C', $angleDir, 'init', '-q')
+    }
+    & git -C $angleDir -c http.connectTimeout=8 fetch --depth 1 $lock.host.angle.source $commit 2>$null
+    if ($LASTEXITCODE -ne 0) {
+        Write-Step 'chromium.googlesource.com timed out; fetching pinned ANGLE commit via GitHub google/angle'
+        Invoke-Checked 'git' @('-C', $angleDir, 'fetch', '--depth', '1', 'https://github.com/google/angle', $commit)
+    }
+    Invoke-Checked 'git' @('-C', $angleDir, 'checkout', '-q', '--detach', 'FETCH_HEAD')
+    if (-not (Test-Path $header)) { throw "Pinned ANGLE checkout missing $header" }
+}
+
 <# Builds winapk.exe, native-probe.exe and the Java probe into $out\bin (all targets, or only $Target). #>
 function Build-Host([string]$Target = '') {
+    Ensure-AngleHeaders
     $vs = Find-VisualStudio
     $jdk = Find-Jdk
     $native = Join-Path $out "native\$Configuration"

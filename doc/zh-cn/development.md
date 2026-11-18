@@ -202,17 +202,26 @@ Jni 和 ApkJni 查询运行中进程的 CFG 策略；native 注册组还在 CFG 
 是应用看到的 Android 根目录（`data\data\<package>`、`sdcard`），`code\<package>\` 是转换后的代码及缓存戳，
 `logs\` 是 JVM 的崩溃日志。运行时日志写到标准错误。`winapk dex` 就是单独执行的 `run` 转换步骤：在自身进程的 JVM 中把 APK 的 DEX 转换为 jar。
 
-## 运行界面
+## 运行界面与本地打包
 
-```bash
+```powershell
 go run ./cmd/windows-arm64-apk
-WINAPK_FRESH=1 go run ./cmd/windows-arm64-apk
-SCREENSHOT_DIR=/path/to/dir go test ./internal/gui -run TestScreensRender
+$env:WINAPK_DEMO = '1'; go run ./cmd/windows-arm64-apk
+$env:SCREENSHOT_DIR = 'C:\path\to\dir'; go test ./internal/gui -run TestScreensRender
+go tool mygo build
+.\scripts\windows\build.ps1 -Configuration Release -Component Host
+$zip = .\scripts\windows\package.ps1
+.\scripts\windows\test.ps1 -Suite Package -PackageZip $zip
+.\scripts\windows\test.ps1 -Suite Stability
 ```
 
-第一条对接 `design/` 的示例应用运行；`WINAPK_FRESH=1` 以空的应用库、没有 Java 运行时启动，如同首次
-运行。测试把每个界面以两种语言和两种外观写成 PNG，用于与 `design/` 对比。字符串在 `locales/en.json`
-和 `locales/zh-Hans.json` 中；修改后运行 `go tool mygo generate`。
+`go run ./cmd/windows-arm64-apk` 默认连接真实 `winapk` 运行时（`WINAPK_DEMO=1` 使用示例数据；`WINAPK_FRESH=1`
+以空应用库、无 Java 运行时的首次启动状态打开）。`TestScreensRender` 把全部 17 张 `design/` 界面以两种语言和两种外观渲染为
+PNG。字符串在 `locales/en.json` 和 `locales/zh-Hans.json` 中；修改后运行 `go tool mygo generate`。
+`package.ps1` 默认暂存前后端一体化的原生 ARM64 实验包（含 `Windows-ARM64.apk.exe`、`bin/winapk.exe`、Framework
+JAR、第三方声明与源码快照；`-Target Cli` 仅打纯 CLI 包）。`test.ps1 -Suite Stability`（调用
+`scripts/windows/test-stability.ps1`）执行 T14 的 20 次冷/热启动、100 次 resize/最小化恢复循环与连续运行采样
+（传入 `-EnduranceSeconds 1800` 执行完整 30 分钟压测），并输出 `stability-baseline.json`。
 
 ## 更新 Mac.apk
 

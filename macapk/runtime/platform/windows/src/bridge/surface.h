@@ -19,6 +19,8 @@ bool ResolveSurface(void* token, HWND& window, int& width, int& height);
 bool RetainSurface(void* token);
 /// Releases the graphics surface's lease on a native window token.
 void ReleaseSurface(void* token);
+/// Reports whether a host window/Surface attachment is currently published for guest WSI.
+bool SurfaceBridgeReady();
 /// Lists the five fixed Android native window exports in the restricted logical library.
 guest::BuiltinLibrary NativeWindowLibrary();
 

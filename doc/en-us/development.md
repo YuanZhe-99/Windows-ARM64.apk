@@ -244,18 +244,28 @@ moves it): `android\` is the Android root the app sees (`data\data\<package>`, `
 runtime's log goes to standard error. `winapk dex` is `run`'s conversion step on its own: it
 converts an APK's DEX to a jar in a JVM of its own process.
 
-## Running the interface
+## Running the interface and packaging
 
-```bash
+```powershell
 go run ./cmd/windows-arm64-apk
-WINAPK_FRESH=1 go run ./cmd/windows-arm64-apk
-SCREENSHOT_DIR=/path/to/dir go test ./internal/gui -run TestScreensRender
+$env:WINAPK_DEMO = '1'; go run ./cmd/windows-arm64-apk
+$env:SCREENSHOT_DIR = 'C:\path\to\dir'; go test ./internal/gui -run TestScreensRender
+go tool mygo build
+.\scripts\windows\build.ps1 -Configuration Release -Component Host
+$zip = .\scripts\windows\package.ps1
+.\scripts\windows\test.ps1 -Suite Package -PackageZip $zip
+.\scripts\windows\test.ps1 -Suite Stability
 ```
 
-The first runs against the sample apps of `design/`; `WINAPK_FRESH=1` starts with an empty
-library and no Java runtime, as on a first run. The test writes every screen in both languages and
-appearances as PNG, to compare with `design/`. Strings live in `locales/en.json` and
-`locales/zh-Hans.json`; after changing them run `go tool mygo generate`.
+`go run ./cmd/windows-arm64-apk` connects to the real `winapk` runtime (`WINAPK_DEMO=1` uses sample
+data; `WINAPK_FRESH=1` starts with an empty library and no Java runtime). `TestScreensRender`
+renders all 17 `design/` screens in both languages and appearances as PNG. Strings live in
+`locales/en.json` and `locales/zh-Hans.json`; after changing them run `go tool mygo generate`.
+`package.ps1` stages the unified native ARM64 experimental bundle (`Windows-ARM64.apk.exe` plus
+`bin/winapk.exe`, Framework JARs, notices and source snapshot; `-Target Cli` omits the front end).
+`test.ps1 -Suite Stability` (backed by `scripts/windows/test-stability.ps1`) executes T14's 20
+cold/warm launches, 100 resize/minimize-restore cycles and endurance sampling (`-EnduranceSeconds
+1800` for the 30-minute run), writing `stability-baseline.json`.
 
 ## Updating Mac.apk
 

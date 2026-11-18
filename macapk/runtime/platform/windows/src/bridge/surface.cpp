@@ -23,6 +23,7 @@ struct Attachment {
 
 std::mutex surfaceMutex;
 Attachment attached;
+bool surfaceBridgeRegistered = false;
 std::map<uintptr_t, unsigned> references; // includes retired tokens until the last release
 uintptr_t nextToken = 1;
 constexpr size_t kMaxTokens = 1024;
@@ -79,6 +80,7 @@ template<bool Width> int32_t Dimension(void* window) {
 
 void PublishSurface(HWND window, jobject surface, jfieldID released, int width, int height) {
     std::lock_guard lock(surfaceMutex);
+    surfaceBridgeRegistered = true;
     if (attached.window != window || attached.surface != surface) attached.token = 0;
     attached = {window, surface, released, width, height, attached.token};
 }
@@ -118,7 +120,16 @@ void ReleaseSurface(void* token) {
     Release(token);
 }
 
+bool SurfaceBridgeReady() {
+    std::lock_guard lock(surfaceMutex);
+    return surfaceBridgeRegistered;
+}
+
 guest::BuiltinLibrary NativeWindowLibrary() {
+    {
+        std::lock_guard lock(surfaceMutex);
+        surfaceBridgeRegistered = true;
+    }
     return {"libandroid.so", {
         {"ANativeWindow_fromSurface", reinterpret_cast<void*>(&FromSurface)},
         {"ANativeWindow_acquire", reinterpret_cast<void*>(&Acquire)},

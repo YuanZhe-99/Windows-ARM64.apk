@@ -1,6 +1,7 @@
 // Restricted Android Vulkan instance/WSI provider. All native handles stay on the window thread.
 #include "guest_vulkan.h"
 #include "guest_graphics.h"
+#include "surface.h"
 #include "bridge.h"
 #include "embed.h"
 
@@ -93,6 +94,7 @@ struct Vulkan {
     void* debugUserData = nullptr;
     bool retired = false;
     bool presented = false;
+    bool deviceLost = false;
     struct Device { VkPhysicalDevice host, guest; };
     std::array<Device, 32> devices{};
     uint32_t deviceCount = 0;
@@ -187,7 +189,7 @@ void DropMemory() {
 /// Drains the one queue before destroying the backing swapchain and invalidating its tokens.
 void DropSwapchain() {
     if (!vk.swapchain) return;
-    DeviceDriver<PFN_vkQueueWaitIdle>("vkQueueWaitIdle")(vk.queue);
+    if (!vk.deviceLost) DeviceDriver<PFN_vkQueueWaitIdle>("vkQueueWaitIdle")(vk.queue);
     DeviceDriver<PFN_vkDestroySwapchainKHR>("vkDestroySwapchainKHR")(vk.device, vk.swapchain, nullptr);
     vk.swapchain = vk.guestSwapchain = VK_NULL_HANDLE;
     vk.imageCount = 0;
@@ -242,6 +244,7 @@ bool DropDevice() {
     DeviceDriver<PFN_vkDestroyDevice>("vkDestroyDevice")(vk.device, nullptr);
     vk.device = vk.guestDevice = VK_NULL_HANDLE;
     vk.deviceProc = nullptr;
+    vk.deviceLost = false;
     vk.queue = vk.guestQueue = VK_NULL_HANDLE;
     vk.pool = vk.guestPool = VK_NULL_HANDLE;
     vk.command = vk.guestCommand = VK_NULL_HANDLE;
@@ -298,19 +301,49 @@ VkResult VKAPI_CALL Layers(uint32_t* count, VkLayerProperties* out) {
     return Enumerate<VkLayerProperties>(0, nullptr, count, out);
 }
 
-/// Filters extensions instead of forwarding host Win32 or interop entries.
+/// Explicit extension tables separated by role (PLAN.md §13.4):
+/// 1) Translated guest→host WSI instance extensions, 2) Guest-implemented instance extensions,
+/// 3) Translated device extensions. Android external memory / AHardwareBuffer is never exposed.
+struct ExtensionTranslation { VkExtensionProperties guest; const char* host; };
+constexpr ExtensionTranslation kTranslatedInstanceExtensions[] = {
+    {{VK_KHR_SURFACE_EXTENSION_NAME, VK_KHR_SURFACE_SPEC_VERSION}, VK_KHR_SURFACE_EXTENSION_NAME},
+    {{VK_KHR_ANDROID_SURFACE_EXTENSION_NAME, VK_KHR_ANDROID_SURFACE_SPEC_VERSION}, VK_KHR_WIN32_SURFACE_EXTENSION_NAME},
+};
+constexpr VkExtensionProperties kGuestImplementedInstanceExtensions[] = {
+    {VK_EXT_DEBUG_REPORT_EXTENSION_NAME, VK_EXT_DEBUG_REPORT_SPEC_VERSION},
+};
+
+/// Walks a guest pNext chain and refuses any unhandled or Android-external structure instead of truncating it.
+VkResult RejectUnhandledPNext(const void* pNext) {
+    if (!pNext) return VK_SUCCESS;
+    const auto* node = static_cast<const VkBaseInStructure*>(pNext);
+    switch (node->sType) {
+        case VK_STRUCTURE_TYPE_IMPORT_ANDROID_HARDWARE_BUFFER_INFO_ANDROID:
+        case VK_STRUCTURE_TYPE_MEMORY_GET_ANDROID_HARDWARE_BUFFER_INFO_ANDROID:
+        case VK_STRUCTURE_TYPE_ANDROID_HARDWARE_BUFFER_USAGE_ANDROID:
+        case VK_STRUCTURE_TYPE_ANDROID_HARDWARE_BUFFER_PROPERTIES_ANDROID:
+        case VK_STRUCTURE_TYPE_ANDROID_HARDWARE_BUFFER_FORMAT_PROPERTIES_ANDROID:
+        case VK_STRUCTURE_TYPE_EXTERNAL_FORMAT_ANDROID:
+            return VK_ERROR_EXTENSION_NOT_PRESENT;
+        default:
+            return VK_ERROR_FEATURE_NOT_PRESENT;
+    }
+}
+
+/// Filters extensions instead of forwarding host Win32 or interop entries; Android Surface requires a ready Surface bridge.
 VkResult VKAPI_CALL Extensions(const char* layer, uint32_t* count, VkExtensionProperties* out) {
     if (layer) return VK_ERROR_LAYER_NOT_PRESENT;
     return Run([=] {
         if (!Loader()) return VK_ERROR_INITIALIZATION_FAILED;
+        const bool wsi = WsiAvailable() && SurfaceBridgeReady();
+        if (!WsiAvailable()) LogLine("GRAPHICS_CAPABILITY_MISSING: guest Vulkan system loader does not offer Win32 WSI");
+        if (!wsi) return Enumerate<VkExtensionProperties>(0, nullptr, count, out);
         const VkExtensionProperties supported[] = {
-            {VK_KHR_SURFACE_EXTENSION_NAME, VK_KHR_SURFACE_SPEC_VERSION},
-            {VK_KHR_ANDROID_SURFACE_EXTENSION_NAME, VK_KHR_ANDROID_SURFACE_SPEC_VERSION},
-            {VK_EXT_DEBUG_REPORT_EXTENSION_NAME, VK_EXT_DEBUG_REPORT_SPEC_VERSION},
+            kTranslatedInstanceExtensions[0].guest,
+            kTranslatedInstanceExtensions[1].guest,
+            kGuestImplementedInstanceExtensions[0],
         };
-        const bool available = WsiAvailable();
-        if (!available) LogLine("GRAPHICS_CAPABILITY_MISSING: guest Vulkan system loader does not offer Win32 WSI");
-        return Enumerate(available ? 3u : 0u, supported, count, out);
+        return Enumerate(3u, supported, count, out);
     });
 }
 
@@ -342,8 +375,9 @@ void Shutdown() {
 VkResult VKAPI_CALL CreateInstance(const VkInstanceCreateInfo* info, const VkAllocationCallbacks* allocator, VkInstance* out) {
     if (!out) return VK_ERROR_INITIALIZATION_FAILED;
     *out = VK_NULL_HANDLE;
-    if (!info || info->sType != VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO || info->pNext || allocator || info->flags)
+    if (!info || info->sType != VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO || allocator || info->flags)
         return VK_ERROR_FEATURE_NOT_PRESENT;
+    if (const auto rc = RejectUnhandledPNext(info->pNext); rc != VK_SUCCESS) return rc;
     if (info->enabledLayerCount) return VK_ERROR_LAYER_NOT_PRESENT;
     if (info->enabledExtensionCount > 3 || (info->enabledExtensionCount && !info->ppEnabledExtensionNames))
         return VK_ERROR_EXTENSION_NOT_PRESENT;
@@ -360,12 +394,14 @@ VkResult VKAPI_CALL CreateInstance(const VkInstanceCreateInfo* info, const VkAll
     if (android && !surface) return VK_ERROR_EXTENSION_NOT_PRESENT;
     if (info->pApplicationInfo) {
         const auto& app = *info->pApplicationInfo;
-        if (app.sType != VK_STRUCTURE_TYPE_APPLICATION_INFO || app.pNext) return VK_ERROR_FEATURE_NOT_PRESENT;
+        if (app.sType != VK_STRUCTURE_TYPE_APPLICATION_INFO) return VK_ERROR_FEATURE_NOT_PRESENT;
+        if (const auto rc = RejectUnhandledPNext(app.pNext); rc != VK_SUCCESS) return rc;
         if (app.apiVersion > VK_API_VERSION_1_0) return VK_ERROR_INCOMPATIBLE_DRIVER;
     }
     return Run([&] {
         if (vk.instance || !Loader()) return VK_ERROR_INITIALIZATION_FAILED;
         if (surface && !WsiAvailable()) return VK_ERROR_EXTENSION_NOT_PRESENT;
+        if (android && !SurfaceBridgeReady()) return VK_ERROR_EXTENSION_NOT_PRESENT;
         const char* names[] = {VK_KHR_SURFACE_EXTENSION_NAME, VK_KHR_WIN32_SURFACE_EXTENSION_NAME};
         VkInstanceCreateInfo host = *info;
         host.enabledExtensionCount = android ? 2 : surface ? 1 : 0;
@@ -717,8 +753,9 @@ void VKAPI_CALL BufferRequirements(VkDevice d, VkBuffer buffer, VkMemoryRequirem
 VkResult VKAPI_CALL AllocateMemory(VkDevice d, const VkMemoryAllocateInfo* info, const VkAllocationCallbacks* allocator, VkDeviceMemory* out) {
     if (!out) return VK_ERROR_INITIALIZATION_FAILED;
     *out = VK_NULL_HANDLE;
-    if (!info || info->sType != VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO || info->pNext || allocator)
+    if (!info || info->sType != VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO || allocator)
         return VK_ERROR_FEATURE_NOT_PRESENT;
+    if (const auto rc = RejectUnhandledPNext(info->pNext); rc != VK_SUCCESS) return rc;
     return Run([=] {
         if (!d || d != vk.guestDevice || vk.frame != Frame::Idle)
             return VK_ERROR_INITIALIZATION_FAILED;
@@ -1267,11 +1304,13 @@ VkResult VKAPI_CALL AcquireImage(VkDevice d, VkSwapchainKHR s, uint64_t timeout,
     return Run([=] {
         if (!d || d != vk.guestDevice || !s || s != vk.guestSwapchain || !fence || fence != vk.guestFence ||
             !index || semaphore || vk.frame != Frame::Idle) return VK_ERROR_INITIALIZATION_FAILED;
+        if (vk.deviceLost) return VK_ERROR_DEVICE_LOST;
         if (auto result = CheckSwapchain(); result != VK_SUCCESS) return result;
         if (DeviceDriver<PFN_vkGetFenceStatus>("vkGetFenceStatus")(vk.device, vk.fence) != VK_NOT_READY)
             return VK_ERROR_INITIALIZATION_FAILED;
         const auto result = DeviceDriver<PFN_vkAcquireNextImageKHR>("vkAcquireNextImageKHR")
             (vk.device, vk.swapchain, std::min(timeout, kWaitNs), VK_NULL_HANDLE, vk.fence, index);
+        if (result == VK_ERROR_DEVICE_LOST) vk.deviceLost = true;
         if (result == VK_SUCCESS || result == VK_SUBOPTIMAL_KHR) {
             vk.imageIndex = *index;
             vk.frame = Frame::Acquired;
@@ -1549,11 +1588,21 @@ VkResult VKAPI_CALL Submit(VkQueue q, uint32_t n, const VkSubmitInfo* info, VkFe
             info->pNext || info->waitSemaphoreCount || info->signalSemaphoreCount || fence ||
             info->commandBufferCount != 1 || !info->pCommandBuffers || *info->pCommandBuffers != vk.guestCommand ||
             (vk.frame != Frame::Executable && vk.frame != Frame::OffscreenExecutable)) return VK_ERROR_INITIALIZATION_FAILED;
+        if (vk.deviceLost) return VK_ERROR_DEVICE_LOST;
+        static bool injectedDeviceLoss = false;
+        if (!injectedDeviceLoss && GetEnvironmentVariableW(L"WINAPK_TEST_VK_DEVICE_LOST", nullptr, 0) > 0) {
+            injectedDeviceLoss = true;
+            vk.deviceLost = true;
+            vk.frame = Frame::Idle;
+            LogLine("GRAPHICS_RENDER_FAILED: guest Vulkan vkQueueSubmit error=-4 (injected device loss)");
+            return VK_ERROR_DEVICE_LOST;
+        }
         const bool offscreen = vk.frame == Frame::OffscreenExecutable;
         auto host = *info;
         host.pCommandBuffers = &vk.command;
         if (offscreen || vk.commands == 5) vk.bufferReadable = false;
         const auto result = DeviceDriver<PFN_vkQueueSubmit>("vkQueueSubmit")(vk.queue, 1, &host, VK_NULL_HANDLE);
+        if (result == VK_ERROR_DEVICE_LOST) vk.deviceLost = true;
         if (offscreen) vk.frame = result == VK_SUCCESS ? Frame::OffscreenSubmitted : Frame::Idle;
         else vk.frame = result == VK_SUCCESS ? Frame::Submitted : Frame::Ready;
         return result;
@@ -1564,7 +1613,9 @@ VkResult VKAPI_CALL Submit(VkQueue q, uint32_t n, const VkSubmitInfo* info, VkFe
 VkResult VKAPI_CALL QueueIdle(VkQueue q) {
     return Run([=] {
         if (!q || q != vk.guestQueue) return VK_ERROR_INITIALIZATION_FAILED;
+        if (vk.deviceLost) return VK_ERROR_DEVICE_LOST;
         const auto result = DeviceDriver<PFN_vkQueueWaitIdle>("vkQueueWaitIdle")(vk.queue);
+        if (result == VK_ERROR_DEVICE_LOST) vk.deviceLost = true;
         if (vk.frame == Frame::Submitted) {
             vk.frame = result == VK_SUCCESS ? Frame::Complete : Frame::Ready;
             if (result == VK_SUCCESS && vk.commands == 5) vk.bufferReadable = true;

@@ -473,8 +473,8 @@ int Run(const RunArgs& a) {
     }
     if (int rc = StageCode(a, jvm, id, appDir, hasCode)) return rc;
 
-    // The bridge sets the app's size before Java asks for it.
-    HMODULE bridge = LoadLibraryExW((bin + L"\\winapk-bridge.dll").c_str(), nullptr, LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_DEFAULT_DIRS);
+    // The bridge sets the app's size before Java asks for it; load only from bin + System32, never PATH or CWD.
+    HMODULE bridge = LoadLibraryExW((bin + L"\\winapk-bridge.dll").c_str(), nullptr, LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_SYSTEM32);
     auto reg = bridge ? reinterpret_cast<jboolean (*)(JNIEnv*)>(GetProcAddress(bridge, "winapk_bridge_register")) : nullptr;
     auto setSize = bridge ? reinterpret_cast<void (*)(int, int)>(GetProcAddress(bridge, "winapk_bridge_set_phone_size")) : nullptr;
     if (!reg || !setSize) { Log("DEPENDENCY_MISSING: winapk-bridge.dll is missing its entry points"); return 69; }

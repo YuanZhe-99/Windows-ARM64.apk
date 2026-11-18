@@ -45,7 +45,7 @@ Local runtime ZIP from package.ps1, required for Package.
 #>
 [CmdletBinding()]
 param(
-    [ValidateSet('Host', 'Java', 'Native', 'Bionic', 'Modules', 'Memory', 'Io', 'Faults', 'Format', 'Libraries', 'Jni', 'ApkJni', 'GraphicsHost', 'GraphicsJava', 'Surface', 'GraphicsGuest', 'VulkanWsi', 'DexJob', 'Package')]
+    [ValidateSet('Host', 'Java', 'Native', 'Bionic', 'Modules', 'Memory', 'Io', 'Faults', 'Format', 'Libraries', 'Jni', 'ApkJni', 'GraphicsHost', 'GraphicsJava', 'Surface', 'GraphicsGuest', 'VulkanWsi', 'DexJob', 'Package', 'Stability')]
     [string]$Suite = 'Host',
     [string]$PackageZip
 )
@@ -1199,6 +1199,22 @@ function Test-VulkanWsi {
             $p.Dispose()
         }
     }
+    $lossLog = Join-Path $logs 'T13-wsi-device-loss.log'
+    $savedLoss = @{ WINAPK_TEST_VK_DEVICE_LOST = [Environment]::GetEnvironmentVariable('WINAPK_TEST_VK_DEVICE_LOST') }
+    Set-TestEnv @{ WINAPK_TEST_VK_DEVICE_LOST = '1' }
+    $lp = Start-App $apk $data $lossLog 'restricted' 'vulkan'
+    try {
+        $lh = Find-AppWindow $lp.Id 'Guest Vulkan WSI' 15 $lp
+        $lossHit = Wait-Log $lossLog 'T13\.wsi: FAIL initial-present=' 15 $lp
+        $lcode = if ($lh) { Close-App $lh $lp }
+        $ltext = Read-Log $lossLog
+        Check 'T13.wsi.deviceLoss' ([bool]$lossHit -and $lcode -eq 0 -and
+            $ltext -match 'injected device loss' -and $ltext -match 'guest Vulkan instance teardown complete') 'VK_ERROR_DEVICE_LOST surfaces to guest and tears down without hanging'
+    } finally {
+        Set-TestEnv $savedLoss
+        if (!$lp.HasExited) { $lp.Kill(); $lp.WaitForExit() }
+        $lp.Dispose()
+    }
 }
 
 <# Verifies that terminating the launcher reaps an active DEX converter. #>
@@ -1258,8 +1274,11 @@ function Test-Package {
     $bad = @($listed.Keys | Where-Object { !$hashes.ContainsKey($_) -or $listed[$_] -ne $hashes[$_] })
     $pe = @($files | Where-Object Extension -in '.dll','.exe')
     $badPe = @($pe | Where-Object { (Get-PeMachine $_.FullName) -ne 'ARM64' })
-    $archived = $manifest.arch -eq 'arm64' -and $manifest.configuration -eq 'Release' -and
-        $hashes.Count -eq $listed.Count -and $bad.Count -eq 0 -and $badPe.Count -eq 0 -and $pe.Count -eq 5 -and
+    $isBundle = $manifest.PSObject.Properties['target'] -and $manifest.target -eq 'bundle'
+    $frontendOk = if ($isBundle) { Test-Path -LiteralPath (Join-Path $install 'Windows-ARM64.apk.exe') } else { $true }
+    $minPe = if ($isBundle) { 6 } else { 5 }
+    $archived = $manifest.arch -eq 'arm64' -and $manifest.configuration -eq 'Release' -and $frontendOk -and
+        $hashes.Count -eq $listed.Count -and $bad.Count -eq 0 -and $badPe.Count -eq 0 -and $pe.Count -ge $minPe -and
         (Get-FileHash -LiteralPath $source).Hash.ToLowerInvariant() -eq $manifest.source.sha256
     if ($archived) {
         $snapshot = [IO.Compression.ZipFile]::OpenRead($source)
@@ -1269,7 +1288,7 @@ function Test-Package {
                 [bool]($entries -match '/macapk/runtime/platform/windows/src/run\.cpp$')
         } finally { $snapshot.Dispose() }
     }
-    Check 'T14.package.inventory' $archived "$($hashes.Count) payload files, five ARM64 PEs, source ZIP hash"
+    Check 'T14.package.inventory' $archived "$($hashes.Count) payload files, $($pe.Count) ARM64 PEs$(if ($isBundle) { ' (front end + runtime)' }), source ZIP hash"
     if (!$archived) { return }
 
     $winapk = Join-Path $install 'bin\winapk.exe'
@@ -1310,7 +1329,7 @@ function Test-Package {
     } finally { Set-TestEnv $saved }
 }
 
-switch ($Suite) { 'Host' { Test-Host } 'Java' { Test-Java } 'Native' { Test-Native } 'Bionic' { Test-Bionic } 'Modules' { Test-Modules } 'Memory' { Test-Bionic -Command memory } 'Io' { Test-Bionic -Command io } 'Faults' { Test-Bionic -Command faults } 'Format' { Test-Bionic -Command format } 'Libraries' { Test-Libraries } 'Jni' { Test-Jni } 'ApkJni' { Test-ApkJni } 'GraphicsHost' { Test-GraphicsHost } 'GraphicsJava' { Test-GraphicsJava } 'Surface' { Test-Surface } 'GraphicsGuest' { Test-GraphicsGuest } 'VulkanWsi' { Test-VulkanWsi } 'DexJob' { Test-DexJob } 'Package' { Test-Package } }
+switch ($Suite) { 'Host' { Test-Host } 'Java' { Test-Java } 'Native' { Test-Native } 'Bionic' { Test-Bionic } 'Modules' { Test-Modules } 'Memory' { Test-Bionic -Command memory } 'Io' { Test-Bionic -Command io } 'Faults' { Test-Bionic -Command faults } 'Format' { Test-Bionic -Command format } 'Libraries' { Test-Libraries } 'Jni' { Test-Jni } 'ApkJni' { Test-ApkJni } 'GraphicsHost' { Test-GraphicsHost } 'GraphicsJava' { Test-GraphicsJava } 'Surface' { Test-Surface } 'GraphicsGuest' { Test-GraphicsGuest } 'VulkanWsi' { Test-VulkanWsi } 'DexJob' { Test-DexJob } 'Package' { Test-Package } 'Stability' { & "$PSScriptRoot\test-stability.ps1"; if ($LASTEXITCODE) { $script:failed++ } } }
 if ($script:failed -gt 0) { Write-Host "$script:failed check(s) failed"; exit 1 }
 Write-Host 'all checks passed'
 exit 0

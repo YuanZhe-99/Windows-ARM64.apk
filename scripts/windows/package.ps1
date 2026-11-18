@@ -1,18 +1,23 @@
 <#
 .SYNOPSIS
-Stages a local Windows ARM64 backend CLI package from existing Release artifacts.
+Stages a local Windows ARM64 experimental bundle (front end + Release runtime) or CLI-only ZIP from existing Release artifacts.
 .DESCRIPTION
 No downloads, installs, signing or publishing. The source ZIP omits upstream macOS prebuilt libraries.
 Stage all intended source changes, or run from a clean checkout. Generated files remain ignored.
 #>
 [CmdletBinding()]
-param([ValidateSet('Release')][string]$Configuration = 'Release')
+param(
+    [ValidateSet('Release')][string]$Configuration = 'Release',
+    [ValidateSet('Bundle', 'Cli')][string]$Target = 'Bundle',
+    [switch]$IncludeAngle
+)
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 . "$PSScriptRoot\common.ps1"
 
 $repo = Get-RepoRoot
 $build = Join-Path $repo 'build\windows-arm64'
+$appOut = Join-Path $repo 'build\app\windows-arm64'
 $native = Join-Path $build "native\$Configuration\bin"
 $lock = Get-Content (Join-Path $repo 'build-lock.json') -Raw | ConvertFrom-Json
 $rest = @(git -C $repo diff --name-only)
@@ -26,7 +31,7 @@ if ($LASTEXITCODE) { throw 'Could not record the Git revision' }
 $version = (& (Join-Path $native 'winapk.exe') --version) -replace '^winapk ', ''
 if ($LASTEXITCODE -or $version -notmatch '^\d+\.\d+\.\d+$') { throw 'Missing or invalid Release winapk.exe; build Release Host first' }
 
-$name = "Windows-ARM64.apk-$version-cli-arm64"
+$name = if ($Target -eq 'Bundle') { "Windows-ARM64.apk-$version-arm64" } else { "Windows-ARM64.apk-$version-cli-arm64" }
 $output = Join-Path $build ('package\' + (Get-Date -Format 'yyyyMMdd-HHmmss-fff') + '-' + $tree.Substring(0,8))
 $stage = Join-Path $output $name
 New-Item -ItemType Directory $output | Out-Null
@@ -44,12 +49,24 @@ function Copy-Payload([string]$Base, [string]$Source, [string]$Relative) {
     Copy-Item -LiteralPath $inputFile -Destination $dest
 }
 
-foreach ($file in 'winapk.exe','winapk-bridge.dll','winapk-probe.jar','z.dll','sqlite3.dll','capstone.dll') {
-    Copy-Payload $native $file "bin\$file"
+if ($Target -eq 'Bundle') {
+    Copy-Payload $appOut 'Windows-ARM64.apk.exe' 'Windows-ARM64.apk.exe'
+}
+foreach ($file in Get-ChildItem $native -File | Where-Object { $_.Name -in @('winapk.exe','winapk-bridge.dll','winapk-probe.jar','z.dll','sqlite3.dll','capstone.dll','lzma.dll') }) {
+    Copy-Payload $native $file.Name "bin\$($file.Name)"
+}
+foreach ($req in 'winapk.exe','winapk-bridge.dll','winapk-probe.jar','z.dll','sqlite3.dll','capstone.dll') {
+    if (!(Test-Path -LiteralPath (Join-Path $stage "bin\$req"))) { throw "Missing required runtime file: $req" }
+}
+if ($IncludeAngle) {
+    $angleBin = Join-Path $build 'bin\angle'
+    foreach ($dll in 'libEGL.dll','libGLESv2.dll') {
+        Copy-Payload $angleBin $dll "bin\angle\$dll"
+    }
 }
 # Reject a mixed Debug/Release build tree, including Debug CRT imports in dependency DLLs.
 $readobj = Join-Path (Split-Path (Find-AndroidNdk)) 'llvm-readobj.exe'
-foreach ($file in Get-ChildItem (Join-Path $stage 'bin') -File | Where-Object Extension -in '.dll','.exe') {
+foreach ($file in Get-ChildItem $stage -File -Recurse | Where-Object Extension -in '.dll','.exe') {
     $imports = & $readobj --coff-imports $file.FullName
     if ($LASTEXITCODE -or $imports -match '(?i)Name: (?:ucrtbased|(?:msvcp|vcruntime)\d+(?:_\d+)?d)\.dll') {
         throw "Package PE import audit failed: $($file.Name)"
@@ -58,6 +75,13 @@ foreach ($file in Get-ChildItem (Join-Path $stage 'bin') -File | Where-Object Ex
 
 foreach ($file in 'android-framework.jar','macapk-loader.jar','bcprov-jdk18on-1.79.jar') {
     Copy-Payload $build "lib\$file" "lib\$file"
+}
+$skikoDir = Join-Path $build 'bin\skia'
+if (Test-Path -LiteralPath (Join-Path $skikoDir 'skiko-windows-arm64.dll')) {
+    Copy-Payload $skikoDir 'skiko-windows-arm64.dll' 'bin\skiko-windows-arm64.dll'
+    if (Test-Path -LiteralPath (Join-Path $skikoDir 'icudtl.dat')) {
+        Copy-Payload $skikoDir 'icudtl.dat' 'bin\icudtl.dat'
+    }
 }
 foreach ($module in 'java_base_patch','jdk_unsupported_patch') {
     $root = Join-Path $build "lib\$module"
@@ -87,17 +111,24 @@ foreach ($helper in 'bionic','jni') {
     Copy-Payload $build $file $file
 }
 
-foreach ($file in 'LICENSE','THIRD_PARTY_NOTICES.md','build-lock.json') { Copy-Payload $repo $file $file }
+foreach ($file in 'README.md','LICENSE','THIRD_PARTY_NOTICES.md','build-lock.json') { Copy-Payload $repo $file $file }
 Copy-Payload $repo 'macapk\LICENSE' 'licenses\Mac.apk-LICENSE'
 Copy-Payload $repo 'macapk\THIRD_PARTY_NOTICES.txt' 'licenses\Mac.apk-NOTICES.txt'
-foreach ($dep in 'zlib','sqlite3','capstone','vulkan-headers') {
-    Copy-Payload $build "vcpkg_installed\arm64-windows\share\$dep\copyright" "licenses\$dep.txt"
+foreach ($dep in @('zlib','sqlite3','capstone','vulkan-headers','liblzma')) {
+    $cp = Join-Path $build "vcpkg_installed\arm64-windows\share\$dep\copyright"
+    if (Test-Path -LiteralPath $cp) {
+        Copy-Payload $build "vcpkg_installed\arm64-windows\share\$dep\copyright" "licenses\$dep.txt"
+    }
+}
+if (Test-Path -LiteralPath (Join-Path $build 'deps\angle\LICENSE')) {
+    Copy-Payload $build 'deps\angle\LICENSE' 'licenses\ANGLE-LICENSE'
 }
 if ($lock.guest.frameworkRes.source -notmatch 'tag (\S+),') { throw 'Missing framework resource source tag' }
 Copy-Payload $build "framework-res\work-$($Matches[1])\src\NOTICE" 'licenses\AOSP-framework-res-NOTICE'
 foreach ($lang in 'en-us','zh-cn') {
-    Copy-Payload $repo "doc\$lang\development.md" "doc\$lang\development.md"
-    Copy-Payload $repo "doc\$lang\graphics-capabilities.md" "doc\$lang\graphics-capabilities.md"
+    foreach ($doc in 'README.md','development.md','graphics-capabilities.md','platform-notes.md','gui.md') {
+        Copy-Payload $repo "doc\$lang\$doc" "doc\$lang\$doc"
+    }
 }
 
 $sourceName = "$name-source.zip"
@@ -110,19 +141,24 @@ $contents = @(Get-ChildItem -LiteralPath $stage -File -Recurse | Sort-Object Ful
         sha256 = (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
     }
 })
+$omitted = [System.Collections.Generic.List[string]]::new()
+if (-not $IncludeAngle) { $omitted.Add('ANGLE') }
+$omitted.AddRange([string[]]@('JVM (auto-installed privately by front end or supplied externally)', 'Vulkan loader and GPU drivers', 'fixture APKs'))
+if ($Target -eq 'Cli') { $omitted.Add('frontend') }
+
 [ordered]@{
-    schemaVersion = 1; version = $version; configuration = $Configuration; arch = 'arm64'
-    profile = 'local CLI experiment; not a release'
+    schemaVersion = 1; version = $version; configuration = $Configuration; arch = 'arm64'; target = $Target.ToLowerInvariant()
+    profile = if ($Target -eq 'Bundle') { 'local Windows ARM64 experimental bundle (front end + runtime); not a public release' } else { 'local CLI experiment; not a release' }
     source = [ordered]@{ baseCommit = $head; tree = $tree; archive = $sourceName
         excludes = @('macapk/**/*.dylib')
         sha256 = (Get-FileHash $sourceArchive -Algorithm SHA256).Hash.ToLowerInvariant() }
-    prerequisites = @('Windows 11 ARM64', 'ARM64 OpenJDK 21 with java.desktop (external)',
+    prerequisites = @('Windows 11 ARM64', 'ARM64 OpenJDK 21 with java.desktop (installed privately by front end or external)',
         'ARM64 Microsoft Visual C++ v14 Redistributable (external)')
-    omitted = @('ANGLE', 'JVM', 'Vulkan loader and GPU drivers', 'fixture APKs', 'frontend')
+    omitted = @($omitted)
     files = $contents
 } | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $stage 'package.json') -Encoding utf8NoBOM
 
 $archive = Join-Path $output "$name.zip"
 [IO.Compression.ZipFile]::CreateFromDirectory($stage, $archive, [IO.Compression.CompressionLevel]::Fastest, $false)
-Write-Step "Staged local CLI package: $archive"
+Write-Step "Staged local $Target package: $archive"
 Write-Output $archive
