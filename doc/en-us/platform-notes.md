@@ -2,7 +2,7 @@
 
 | Platform | Status |
 |---|---|
-| Windows 11 ARM64 | G0–G3 pass on this PC for the declared Java/N0/C/JNI profiles, including the real hello-jni Activity matrix and a separate CFG-enabled regression. Native remains off by default; arbitrary NDK binaries and graphics are not admitted. The interface still uses sample data (`winapk.Mock`). |
+| Windows 11 ARM64 | G0–G3 pass here for the declared Java/N0/C/JNI profiles, including the real hello-jni Activity matrix and a separate CFG-enabled regression. Native stays off by default. The T11 GLES and T13 Vulkan transfer fixtures pass within their documented limits; arbitrary NDK binaries and graphics remain unsupported. The interface still uses `winapk.Mock`. |
 | Windows 11 x64 | Not a target; may host build tools and parsing tests only. |
 | macOS (Apple Silicon) | Upstream Mac.apk's platform; imported as `macapk/`, now at `3f35611`; no macOS build or smoke run here yet (`NOT_RUN`). |
 

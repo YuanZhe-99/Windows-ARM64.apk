@@ -2,7 +2,7 @@
 
 | 平台 | 状态 |
 |---|---|
-| Windows 11 ARM64 | G0–G3 在本机为已声明的 Java/N0/C/JNI profile 通过，包含真实 hello-jni Activity 矩阵及独立启用 CFG 的回归。原生默认仍关闭；不准入任意 NDK 二进制或图形。界面仍使用示例数据（`winapk.Mock`）。 |
+| Windows 11 ARM64 | G0–G3 在本机为已声明的 Java/N0/C/JNI profile 通过，包含真实 hello-jni Activity 矩阵及独立启用 CFG 的回归。原生默认关闭。T11 GLES 与 T13 Vulkan 传输夹具在声明范围内通过；不支持任意 NDK 二进制或图形。界面仍使用 `winapk.Mock`。 |
 | Windows 11 x64 | 不是目标平台；只可承载构建工具和解析测试。 |
 | macOS（Apple Silicon） | 上游 Mac.apk 的平台；已引入为 `macapk/`，当前在 `3f35611`；尚未在此运行 macOS 构建或 smoke（`NOT_RUN`）。 |
 
