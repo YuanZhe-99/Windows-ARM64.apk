@@ -33,3 +33,4 @@
 | `scripts/windows/package.ps1` | 从已有 ARM64 Release 产物离线打包，生成运行时与源码 ZIP 及本地依赖清单 | `Copy-Payload`、`Test-Package` |
 | `macapk/runtime/platform/windows/src/run.cpp` | APK 启动、按内容寻址的 DEX 缓存及用于回收转换器的 Job Object | `Spawn`、`StageCode`、`ConvertDex`、`Test-DexJob` |
 | `macapk/runtime/platform/windows/src/bridge/host_services.cpp` | Windows ARM64 `NativeOs`（fd/memfd/flock/sysconf/statvfs/环境变量/liblzma `.xz`）、Win32/测试隔离剪贴板 `MacApkHostPasteboard`、DirectWrite 中日韩字体解析、`/proc` 合成及受控 URL 打开 | `RegisterHostServices`、`HostFontFile`、`RemapProcPath`、`OpenHostUrl`、`GuestEnvGet`、`Test-HostServices` |
+| `macapk/runtime/platform/windows/src/bridge/audio.cpp` | Windows ARM64 原生 WASAPI 共享模式混音器、默认设备切换重绑、Media Foundation / WAV / Ogg Vorbis 片段解码与 43 个 `NativeAudio` JNI 方法桥 | `RegisterAudio`、`WasapiRenderLoop`、`MixOutput`、`DecodeClip`、`Test-Audio` |

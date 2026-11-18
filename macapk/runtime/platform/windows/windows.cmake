@@ -58,6 +58,7 @@ add_library(winapk-bridge SHARED
   ${_win}/src/bridge/log.cpp
   ${_win}/src/bridge/window.cpp
   ${_win}/src/bridge/host_services.cpp
+  ${_win}/src/bridge/audio.cpp
   ${_win}/src/bridge/graphics.cpp
   ${_win}/src/bridge/guest_graphics.cpp
   ${_win}/src/bridge/guest_vulkan.cpp
@@ -69,13 +70,16 @@ add_library(winapk-bridge SHARED
   ${CMAKE_CURRENT_LIST_DIR}/../../guest/bionic/threads.cpp
   ${CMAKE_CURRENT_LIST_DIR}/../../guest/loader/faults.cpp
   ${CMAKE_CURRENT_LIST_DIR}/../../guest/loader/elf_loader.cpp
+  # upstream's public-domain Ogg Vorbis decoder for SoundPool/MediaPlayer
+  ${CMAKE_CURRENT_LIST_DIR}/../../thirdparty/stb_vorbis.c
   # upstream's NativeSqlite, unchanged but for its Windows Unicode helpers (ADR-0002)
   ${CMAKE_CURRENT_LIST_DIR}/../../src/native_sqlite.cpp)
+set_source_files_properties(${CMAKE_CURRENT_LIST_DIR}/../../thirdparty/stb_vorbis.c PROPERTIES COMPILE_OPTIONS "-w")
 target_include_directories(winapk-bridge PRIVATE "${JAVA_HOME}/include" "${JAVA_HOME}/include/win32")
 target_include_directories(winapk-bridge PRIVATE "${CMAKE_CURRENT_LIST_DIR}/../../translator/include")
 target_compile_definitions(winapk-bridge PRIVATE UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX _CRT_SECURE_NO_WARNINGS)
 target_compile_options(winapk-bridge PRIVATE /W4 /EHsc -Wno-missing-field-initializers)
-target_link_libraries(winapk-bridge PRIVATE Vulkan::Headers unofficial::sqlite3::sqlite3 LibLZMA::LibLZMA user32 gdi32 shcore dwrite ole32 shell32 psapi capstone::capstone mincore)
+target_link_libraries(winapk-bridge PRIVATE Vulkan::Headers unofficial::sqlite3::sqlite3 LibLZMA::LibLZMA user32 gdi32 shcore dwrite ole32 shell32 psapi mmdevapi mfplat mfreadwrite mfuuid shlwapi capstone::capstone mincore)
 set(_angle_headers "${CMAKE_CURRENT_LIST_DIR}/../../../../build/windows-arm64/deps/angle/include")
 if(EXISTS "${_angle_headers}/EGL/eglext_angle.h")
   target_include_directories(winapk-bridge PRIVATE "${_angle_headers}")

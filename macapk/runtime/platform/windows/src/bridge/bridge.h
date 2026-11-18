@@ -37,6 +37,9 @@ bool RegisterGuest(JNIEnv* env);
 /// Registers NativeOs and host clipboard services (host_services.cpp).
 bool RegisterHostServices(JNIEnv* env);
 
+/// Registers the WASAPI NativeAudio backend (audio.cpp).
+bool RegisterAudio(JNIEnv* env);
+
 }  // namespace winapk::bridge
 
 /// Registers every Windows host native on the JVM `env` belongs to: NativeLog, NativeCocoa

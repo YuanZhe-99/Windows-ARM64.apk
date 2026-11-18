@@ -45,7 +45,7 @@ Local runtime ZIP from package.ps1, required for Package.
 #>
 [CmdletBinding()]
 param(
-    [ValidateSet('Host', 'HostServices', 'Java', 'Native', 'Bionic', 'Modules', 'Memory', 'Io', 'Faults', 'Format', 'Libraries', 'Jni', 'ApkJni', 'GraphicsHost', 'GraphicsJava', 'Surface', 'GraphicsGuest', 'VulkanWsi', 'DexJob', 'Package', 'Stability')]
+    [ValidateSet('Host', 'HostServices', 'Audio', 'Java', 'Native', 'Bionic', 'Modules', 'Memory', 'Io', 'Faults', 'Format', 'Libraries', 'Jni', 'ApkJni', 'GraphicsHost', 'GraphicsJava', 'Surface', 'GraphicsGuest', 'VulkanWsi', 'DexJob', 'Package', 'Stability')]
     [string]$Suite = 'Host',
     [string]$PackageZip
 )
@@ -1414,7 +1414,59 @@ function Test-HostServices {
     }
 }
 
-switch ($Suite) { 'Host' { Test-Host } 'HostServices' { Test-HostServices } 'Java' { Test-Java } 'Native' { Test-Native } 'Bionic' { Test-Bionic } 'Modules' { Test-Modules } 'Memory' { Test-Bionic -Command memory } 'Io' { Test-Bionic -Command io } 'Faults' { Test-Bionic -Command faults } 'Format' { Test-Bionic -Command format } 'Libraries' { Test-Libraries } 'Jni' { Test-Jni } 'ApkJni' { Test-ApkJni } 'GraphicsHost' { Test-GraphicsHost } 'GraphicsJava' { Test-GraphicsJava } 'Surface' { Test-Surface } 'GraphicsGuest' { Test-GraphicsGuest } 'VulkanWsi' { Test-VulkanWsi } 'DexJob' { Test-DexJob } 'Package' { Test-Package } 'Stability' { & "$PSScriptRoot\test-stability.ps1"; if ($LASTEXITCODE) { $script:failed++ } } }
+<# Verifies WASAPI hardware output + endpoint rebind, formats/latency/resampling, SoundPool/MediaPlayer and deviceless fallback. #>
+function Test-Audio {
+    $jdk = Find-Jdk
+    $lib = Join-Path $out 'lib'
+    $bridge = Join-Path $out 'bin\winapk-bridge.dll'
+    if (-not (Test-Path $bridge)) { throw "Missing $bridge; run build.ps1 -Component Host" }
+    $root = Join-Path $out ('test-data\audio-' + [guid]::NewGuid().ToString('N'))
+    $classes = Join-Path $root 'classes'
+    New-Item -ItemType Directory -Force $classes | Out-Null
+
+    $cp = "$lib\android-framework.jar;$lib\macapk-loader.jar;$lib\bcprov-jdk18on-1.79.jar"
+    Invoke-Checked (Join-Path $jdk 'bin\javac.exe') @(
+        '--release', '21', '-encoding', 'UTF-8', '-cp', $cp, '-d', $classes,
+        (Join-Path $repo 'tests\windows-arm64\host-probes\AudioProbe.java')
+    )
+    $javaExe = Join-Path $jdk 'bin\java.exe'
+    $commonArgs = @(
+        '-Xcheck:jni',
+        "--patch-module=java.base=$lib\java_base_patch",
+        "--patch-module=jdk.unsupported=$lib\jdk_unsupported_patch",
+        '--enable-native-access=ALL-UNNAMED',
+        '-cp', "$classes;$cp", 'AudioProbe', $bridge
+    )
+    $saved = @{
+        WINAPK_AUDIO_BACKEND = [Environment]::GetEnvironmentVariable('WINAPK_AUDIO_BACKEND')
+        WINAPK_TEST_AUDIO_REBIND_ONCE = [Environment]::GetEnvironmentVariable('WINAPK_TEST_AUDIO_REBIND_ONCE')
+        PATH = [Environment]::GetEnvironmentVariable('PATH')
+    }
+    try {
+        # 1. Deterministic virtual mixer: formats, latency clamp, non-blocking/blocking, resampling, underrun, SoundPool, MediaPlayer
+        Set-TestEnv @{ WINAPK_AUDIO_BACKEND = 'virtual'; WINAPK_TEST_AUDIO_REBIND_ONCE = $null; PATH = "$(Split-Path $bridge);$($saved.PATH)" }
+        $vOut = (& $javaExe @commonArgs 'virtual' 2>&1) -join "`n"
+        Check 'Audio.virtualFormatsAndClips' ($LASTEXITCODE -eq 0 -and $vOut -match 'PASS AudioProbe mode=virtual' -and
+            $vOut -notmatch 'WARNING in native method|FATAL ERROR in native method') 'PCM_8/16/FLOAT, buffer clamp, 96kHz resample, underruns, SoundPool and MediaPlayer'
+
+        # 2. Real hardware WASAPI (silent 0.0f samples) + live endpoint-change rebind
+        Set-TestEnv @{ WINAPK_AUDIO_BACKEND = 'wasapi'; WINAPK_TEST_AUDIO_REBIND_ONCE = '1'; PATH = "$(Split-Path $bridge);$($saved.PATH)" }
+        $hwOut = (& $javaExe @commonArgs 'hardware' 2>&1) -join "`n"
+        $hwStarted = $hwOut -match '\[winapk\] audio: WASAPI shared output started'
+        $hwRebound = $hwOut -match '\[winapk\] audio: default WASAPI endpoint changed; rebinding'
+        Check 'Audio.wasapiHardwareAndRebind' ($LASTEXITCODE -eq 0 -and $hwOut -match 'PASS AudioProbe mode=hardware' -and
+            ($hwStarted -and $hwRebound) -and $hwOut -notmatch 'WARNING in native method|FATAL ERROR in native method') 'shared-mode WASAPI streaming, QPC timestamps and live default-endpoint rebind'
+
+        # 3. Deviceless / no-endpoint fallback
+        Set-TestEnv @{ WINAPK_AUDIO_BACKEND = 'none'; WINAPK_TEST_AUDIO_REBIND_ONCE = $null; PATH = "$(Split-Path $bridge);$($saved.PATH)" }
+        $noneOut = (& $javaExe @commonArgs 'deviceless' 2>&1) -join "`n"
+        Check 'Audio.devicelessFallback' ($LASTEXITCODE -eq 0 -and $noneOut -match 'PASS AudioProbe mode=deviceless') 'no-endpoint host degrades without blocking'
+    } finally {
+        Set-TestEnv $saved
+    }
+}
+
+switch ($Suite) { 'Host' { Test-Host } 'HostServices' { Test-HostServices } 'Audio' { Test-Audio } 'Java' { Test-Java } 'Native' { Test-Native } 'Bionic' { Test-Bionic } 'Modules' { Test-Modules } 'Memory' { Test-Bionic -Command memory } 'Io' { Test-Bionic -Command io } 'Faults' { Test-Bionic -Command faults } 'Format' { Test-Bionic -Command format } 'Libraries' { Test-Libraries } 'Jni' { Test-Jni } 'ApkJni' { Test-ApkJni } 'GraphicsHost' { Test-GraphicsHost } 'GraphicsJava' { Test-GraphicsJava } 'Surface' { Test-Surface } 'GraphicsGuest' { Test-GraphicsGuest } 'VulkanWsi' { Test-VulkanWsi } 'DexJob' { Test-DexJob } 'Package' { Test-Package } 'Stability' { & "$PSScriptRoot\test-stability.ps1"; if ($LASTEXITCODE) { $script:failed++ } } }
 if ($script:failed -gt 0) { Write-Host "$script:failed check(s) failed"; exit 1 }
 Write-Host 'all checks passed'
 exit 0

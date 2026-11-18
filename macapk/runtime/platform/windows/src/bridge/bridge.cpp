@@ -75,6 +75,12 @@ extern "C" __declspec(dllexport) jboolean winapk_bridge_register(JNIEnv* env) {
     } else {
         env->ExceptionClear();
     }
+    if (jclass audioCls = env->FindClass("com/macapk/loader/NativeAudio")) {
+        env->DeleteLocalRef(audioCls);
+        ok = RegisterAudio(env) && ok;
+    } else {
+        env->ExceptionClear();
+    }
     macapk::sqlite::RegisterNativeSqliteMethods(env);  // logs its own result, as upstream
     return ok ? JNI_TRUE : JNI_FALSE;
 }
