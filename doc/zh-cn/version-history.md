@@ -2,6 +2,7 @@
 
 ## 0.1.0（进行中）
 
+- 2026-11-18：按 `design/` 全部 17 张设计稿完成 MyGo 前端（中英双语、亮暗外观、Mica 材质）并将 `cmd/windows-arm64-apk` 接入真实 `winapk.Runtime`（`--embed` 共享内存 RGBA8 帧与重叠双工管道 IPC、零重启 `Reattach`、静态 ARSC/ELF `inspect` 与 `--profile=N0|N1|N2` 准入、经校验的私有 ARM64 OpenJDK 21 安装器与存储管理）；查明 Adreno 8cx Gen 3 SM 6.2 在 Dozen 下的计算管线限制，并在 Dozen 上验证客体 Vulkan SPIR-V 图形管线、离屏 `VkImage` 回读（`0xFFCC8822`）、`VkAllocationCallbacks` 与 `VK_EXT_debug_report` 回调。Go 1.27.4、MyGo v0.10.0 和已合并的 Mac.apk `3f35611` 经检查未变；版本 0.1.0 仍未发布。
 - 2026-11-17：为已开放的 Vulkan 桥表增加编译期签名检查，保留已验证的传输 profile。Dozen 上计算实验和原生对照均在 pipeline 创建阶段失败，不交付计算入口。Go 1.27.4、MyGo v0.10.0 和已合并的 Mac.apk `3f35611` 经检查未变。
 - 2026-11-17：在现有 T13 启动中验证 Vulkan GPU 传输填充和一致内存精确回读，以及归属和同步拒绝。Go 1.27.4、MyGo v0.10.0 和已合并的 Mac.apk `3f35611` 经检查未变。
 - 2026-11-17：在 Dozen 上验证 T13 零尺寸交换链失效及恢复后重建呈现，未增加夹具启动次数。Go 1.27.4、MyGo v0.10.0 和已合并的 Mac.apk `3f35611` 经检查未变。

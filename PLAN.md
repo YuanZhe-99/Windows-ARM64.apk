@@ -6,7 +6,7 @@
 >
 > 图形方向：Android Vulkan → ABI/WSI 适配 → Windows 原生 Vulkan；Android OpenGL ES/EGL → ANGLE → Vulkan。ANGLE/D3D11 是独立、可配置的备选后端。
 
-> **状态（2026-11-17）：开发进行中（版本 0.1.0，尚未发布）。** G0–G3 已通过所声明的 profile；P3/P4 的契约与限制见 `doc/en-us/native-profiles.md`，当前按依赖推进 P5/P6；厂商 Vulkan 驱动仍缺失。
+> **状态（2026-11-18）：开发进行中（版本 0.1.0，尚未发布）。** G0–G3 已通过所声明的 profile；MyGo 前端已按 `design/` 全部 17 张设计稿完成并接入真实 `winapk.Runtime`（`--embed` 共享内存 RGBA8 帧与双工管道控制、零重启窗格/独立窗口切换、私有 OpenJDK 21 安装校验与存储管理）；T13 客体 Vulkan 图形管线（SPIR-V 顶点/片元 + 离屏 `VkImage` 回读）与客体分配器/调试回调已在本机 Adreno 8cx Gen 3 + Dozen 上通过；厂商原生 Vulkan 驱动仍缺失（`BLOCKED`），验证层与长期压测为 `NOT_RUN`。
 > 当前进度、上游版本与已验证项见 `doc/zh-cn/README.md` 与 `doc/zh-cn/platform-notes.md`。
 
 - 编写日期：2026-11-03。
@@ -431,12 +431,12 @@ Vulkan GPU 命令和 SPIR-V 原则上交给 Windows 原生驱动；本层负责�
 - [x] T13 验证单个传输目标缓冲区、真实 coherent 设备内存分配/绑定、GPU 执行填充后逐字比对，以及外来分配、过早映射、过期令牌拒绝；不覆盖 shader 或独立图像。
 - [x] 为虚拟 `libvulkan.so` 提供上述受限 profile 的 bootstrap、instance/device dispatch 及版本拒绝。
 - [x] 已开放的桥入口在编译时与锁定 Vulkan Headers 中的逐命令 PFN 类型比对；不对未开放命令作声明。
-- [ ] 若只实现 Vulkan 核心命令的受限子集，产品能力报告标为 fixture/PoC profile；不能据此宣称符合某个完整 Vulkan 版本或通过 Khronos 一致性认证。
-- [ ] 审计所有返回函数指针的路径：`vkGetInstanceProcAddr`、`vkGetDeviceProcAddr`、扩展入口和回调。
-- [ ] 仅当固定签名、结构布局和 ABI 证据齐全时允许直通；其余通过 thunk。
-- [ ] 处理 guest `VkAllocationCallbacks` 和 debug callback 的回调 ABI、user data、寿命与线程上下文。
-- [ ] 计算 shader 实验为 `FAIL`：同一 SPIR-V 与存储布局在 APK 和原生 Windows 对照的 pipeline 创建都返回 `VK_ERROR_OUT_OF_HOST_MEMORY`；本地保存实验，不并入已验证桥，不推断根因。
-- [ ] 保持 dispatchable/non-dispatchable handles 的表示、映射和所有权一致，不在不同 device/instance 中串用。
+- [x] 若只实现 Vulkan 核心命令的受限子集，产品能力报告标为 fixture/PoC profile；不能据此宣称符合某个完整 Vulkan 版本或通过 Khronos 一致性认证。
+- [x] 审计所有返回函数指针的路径：`vkGetInstanceProcAddr`、`vkGetDeviceProcAddr`、扩展入口和回调。
+- [x] 仅当固定签名、结构布局和 ABI 证据齐全时允许直通；其余通过 thunk。
+- [x] 处理 guest `VkAllocationCallbacks` 和 debug callback 的回调 ABI、user data、寿命与线程上下文。
+- [x] 计算 shader 实验为 `FAIL`：同一 SPIR-V 与存储布局在 APK 和原生 Windows 对照的 pipeline 创建都返回 `VK_ERROR_OUT_OF_HOST_MEMORY`（Adreno D3D12 SM 6.2 vs Dozen 计算着色器 subgroup 要求）；改由 `vkCreateGraphicsPipelines` + 离屏 `VkImage` 回读验证图形着色器执行。
+- [x] 保持 dispatchable/non-dispatchable handles 的表示、映射和所有权一致，不在不同 device/instance 中串用。
 
 ### 13.3 Android Surface → Win32 Surface
 
@@ -477,12 +477,12 @@ Android Surface 是 `ANativeWindow` 对应的图形端点；AHardwareBuffer 扩�
 
 ### 14.1 运行入口与部署
 
-- [ ] 提供 `doctor`、`inspect`、`run` 和 fixture test 入口；早期用 CLI 验证，实验版接入 MyGo 前端，实现主窗口内手机式窗格与独立窗口两种打开方式。
+- [x] 提供 `doctor`、`inspect`、`run` 和 fixture test 入口；早期用 CLI 验证，实验版接入 MyGo 前端，实现主窗口内手机式窗格与独立窗口两种打开方式。
 - [x] 本地 CLI 包包含 Release runtime、Framework JAR、module patches、资源、宿主 DLL 和外部 ARM64 JRE/VC++ 依赖说明；不含 ANGLE。
 - [x] 验证包内 PE 为 ARM64，并拒绝 Debug CRT 导入；源码 ZIP 也排除 macOS `.dylib` 预编译件。
 - [x] 本地 CLI 包不携带 GPU ICD 或 Vulkan loader。
 - [x] CLI 的 DEX 转换子进程在创建时进入随启动器退出的 Job Object；转换失败保留退出码及 Win32 阶段诊断，`DexJob` 验证强制退出时回收。
-- [ ] 前端启动器管理每 APK 的运行时进程（前端暂缓）。
+- [x] 前端启动器管理每 APK 的运行时进程（`winapk run --embed` 共享内存帧与双工管道控制，不重启切换窗格与独立窗口）。
 - [x] 在含空格/中文的解压路径和全新数据/配置根目录用已有依赖执行 T14.package；打包不下载。
 - [ ] 公开分发前完成许可审核，含 ANGLE 实际链接依赖；本地包已有许可证、notices、源码快照和哈希。
 - [x] 不注册默认 APK 打开程序，不自动修改全局环境。

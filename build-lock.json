@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "checked": "2026-11-17",
+  "checked": "2026-11-18",
   "notes": "PLAN.md §7: every dependency except Mac.apk, Go and MyGo is locked here. Those three follow their latest versions; their entries record what the last build used. 'status' is locked (in use and verified on the build machine), chosen (decided, not installed yet) or deferred (chosen in a later phase). doc/en-us/development.md explains how each is installed.",
   "followed": {
     "macapk": { "commit": "3f3561131af0f8d2db26fb181c32d76b830386dc", "source": "https://github.com/kksimp/Mac.apk main", "license": "AGPL-3.0-or-later (dual-licensed upstream)" },

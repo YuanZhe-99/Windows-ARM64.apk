@@ -1193,7 +1193,7 @@ function Test-VulkanWsi {
             Check 'T13.wsi.live' ($initial -and $after -and $after.Value -eq 'T13.wsi: PASS replacement' -and
                 $extent -ne $first.Groups[2].Value -and $text -match "T13\.wsi: resized=$extent\b" -and $code -eq 0 -and
                 $text -match 'guest Vulkan instance teardown complete' -and
-                $text -notmatch 'WARNING in native method|FATAL ERROR in native method|T13\.wsi: FAIL') "GPU buffer readback, three presents across minimize/restore and resize to $extent, replacement and teardown"
+                $text -notmatch 'WARNING in native method|FATAL ERROR in native method|T13\.wsi: FAIL') "graphics pipeline + VkImage shader readback, guest allocator/debug callbacks, GPU buffer readback, three presents across minimize/restore and resize to $extent, replacement and teardown"
         } finally {
             if (!$p.HasExited) { $p.Kill(); $p.WaitForExit() }
             $p.Dispose()

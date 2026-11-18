@@ -2,13 +2,13 @@
 
 | 平台 | 状态 |
 |---|---|
-| Windows 11 ARM64 | G0–G3 在本机为已声明的 Java/N0/C/JNI profile 通过，包含真实 hello-jni Activity 矩阵及独立启用 CFG 的回归。原生默认关闭。T11 GLES 与 T13 Vulkan 传输夹具在声明范围内通过；不支持任意 NDK 二进制或图形。界面仍使用 `winapk.Mock`。 |
+| Windows 11 ARM64 | G0–G3 在本机为已声明的 Java/N0/C/JNI profile 通过，包含真实 hello-jni Activity 矩阵及独立启用 CFG 的回归。原生默认关闭（强制执行 `--profile=N0|N1|N2`）。T11 GLES 与 T13 Vulkan 图形管线/图像/回调/WSI 夹具在本机 Adreno 8cx Gen 3 + Dozen 的声明范围内通过；厂商原生 Vulkan ICD 为 `BLOCKED`，验证层与长期 T14 压测仍为 `NOT_RUN`。MyGo 前端已按 `design/` 完成并接入 `winapk.Runtime`（`--embed` 共享内存帧与双工 IPC）。 |
 | Windows 11 x64 | 不是目标平台；只可承载构建工具和解析测试。 |
 | macOS（Apple Silicon） | 上游 Mac.apk 的平台；已引入为 `macapk/`，当前在 `3f35611`；尚未在此运行 macOS 构建或 smoke（`NOT_RUN`）。 |
 
 ## Windows
 
-在 Windows 11 ARM64 上验证（2026-11-16）：build 26300.9974，Snapdragon Compute Platform（8cx Gen 3），32 GB，Qualcomm Adreno 8cx Gen 3（驱动 30.0.4122.4000），Vulkan loader 1.3.301，只有 Mesa Dozen 设备；Go 1.27.4、MyGo v0.9.2、Microsoft OpenJDK 21.0.13 ARM64、clang-cl 22.1.3。
+在 Windows 11 ARM64 上验证（2026-11-18）：build 26300.9974，Snapdragon Compute Platform（8cx Gen 3），32 GB，Qualcomm Adreno 8cx Gen 3（驱动 30.0.4122.4000，D3D12 SM 6.2），Vulkan loader 1.3.301，只有 Mesa Dozen 设备；Go 1.27.4、MyGo v0.10.0、Microsoft OpenJDK 21.0.13 ARM64、clang-cl 22.1.3。
 
 | 检查 | 结果 |
 |---|---|
@@ -23,7 +23,7 @@
 | G2 原生路径 | `test.ps1 -Suite Native`：58 项检查 PASS（见下）；`native-probe.exe` 和 `capstone.dll` 为 ARM64 |
 | T01 宿主和 JVM | `test.ps1 -Suite Host`：23 项检查 PASS（2026-11-17）——`winapk.exe`、`winapk-bridge.dll`、`native-probe.exe`、`jni-probe.exe`、zlib、SQLite 和 Capstone 为 ARM64；`jvm.dll` 为 ARM64，在进程内以上游的模块选项创建 JVM；JNI 宿主 → Java → 宿主；Java2D；259 个字体族；补丁模块；以及负例（找不到 JVM、无效的 `--java-home`） |
 | Vulkan | ARM64 loader 可用；两个 Mesa Dozen 设备（基于 Direct3D 12 的 Vulkan 1.2）；`doctor --present`：Win32 surface 测试通过。没有厂商 Vulkan 驱动 |
-| 界面 | `go tool mygo vet .` 与 `go tool mygo i18n check` 通过；`design/` 的每个界面在 `ui.Tester` 中以两种语言和两种外观渲染；在 `ui.Tester` 中用指针拖动的窗格会拆分目标窗格（已适配 MyGo v0.9.2）；原生窗口能打开并保持运行（smoke 运行，示例数据） |
+| 界面 | `go tool mygo vet .`、`go tool mygo i18n check`（395 条消息）与 `go tool mygo build`（`Windows-ARM64.apk.exe` ARM64 PE）通过；`design/` 的全部 17 张界面在 `ui.Tester` 中以两种语言和两种外观渲染；`TestRealRuntimeEmbed` 对真实 APK 验证 `--embed` 实时 RGBA8 帧传输、指针/resize/Back/Stop IPC 与零重启 `Reattach` |
 
 ## 关卡
 
@@ -287,20 +287,20 @@ APK SHA-256 为 `9fbcdea8730a473a050c7e9b5dcbacad704ddaac1c5587e61d400a330bdb3a3
 另验证外来分配、同步之前映射和已销毁缓冲区令牌的拒绝。没有新增帧或启动；
 shader、通用图像和分配/调试回调仍为 `NOT_RUN`。
 
-### 计算 pipeline 实验（未纳入交付）
+### 计算 pipeline 实验（未纳入交付）与图形管线验证
 
 ARM64 T13 APK 原型和原生 Windows 对照在同一 Adreno 8cx Gen 3／Dozen 上调用
-`vkCreateComputePipelines` 均返回 `VK_ERROR_OUT_OF_HOST_MEMORY`（`-1`）。
-对照使用 System32 Vulkan loader、同一个 SPIR-V 1.0 模块和单个存储缓冲区描述符，
-不加载客体桥或窗口桥。模块通过 NDK `spirv-val --target-env vulkan1.0`。
-pipeline 创建为 `FAIL`；shader dispatch 和回读为 `NOT_RUN`。
-单凭返回码不能断定宿主内存耗尽或驱动根因。
+`vkCreateComputePipelines` 均返回 `VK_ERROR_OUT_OF_HOST_MEMORY`（`-1`）。对本机 Adreno 8cx Gen 3
+（`30.0.4122.4000`）直接查询 D3D12 能力确认其 `HighestShaderModel=0x62` 且 `WaveLaneMin=64, WaveLaneMax=128`，
+导致 Dozen 计算着色器生成的 subgroup 要求在 `ID3D12Device4::CreatePipelineState` 失败（而支持 SM 6.6+ 的微软 WARP 返回 `VK_SUCCESS`）。不交付计算入口。
 
-本地复现证据：`build/windows-arm64/test-data/vulkan-compute-isolation.cpp`、
-同目录下的 `readback.comp` 与 `readback.comp.inc`，以及
-`logs/T13-compute-isolation.log` 和 `logs/T13-compute-failed-apk.log`。
-原型仅在本地保存，不开放未验证的命令。未安装、复制或捆绑驱动或 SDK DLL。
-下一步需要独立的原生 ARM64 ICD 做对照。
+相对地，`vkCreateGraphicsPipelines` 在同一块 Adreno 8cx Gen 3 + Dozen 上返回 `0`（成功）。
+更新后的单次启动 `VulkanWsi` 夹具（`hello-vulkan-wsi.apk` SHA-256
+`34563c4f14606a641a29c05d9921ed73792f9a55d6a2b9365d44c768e2ad107b`）用 NDK `glslc` 编译 SPIR-V 1.0
+顶点与片元着色器，经 `VkRenderPass`/`VkFramebuffer` 渲染到独立的 `4x4` `VK_FORMAT_R8G8B8A8_UNORM`
+`VkImage`，再拷贝到一致回读缓冲区并验证全部 16 个像素等于 `0xFFCC8822`；同时验证客体 `VkAllocationCallbacks`
+（返回 `NULL` 拒绝与平衡释放）及 `VK_EXT_debug_report` 调试回调。`VK_LAYER_KHRONOS_validation` 仍为
+`NOT_RUN`（本机未安装），厂商 ARM64 原生 Vulkan ICD 仍为 `BLOCKED`。
 
 ## P7 本地 CLI 包
 
@@ -319,11 +319,9 @@ DEX 转换器在创建进程时原子加入随启动器退出的 Job Object。`D
 - 共享 Windows hook 包括平台条件化的 CMake/SQLite 改动及 Windows 客体 DEX、Boot、AppClassLoader
   路由；其他宿主/客体实现位于 `runtime/platform/windows` 和 `runtime/guest`，
   Java 中另有宿主定义的 GuestNativeLoader。已实现及未绑定的宿主 native 见 [port-audit.md](port-audit.md)。
-- 界面还没有启动 `winapk run`；它仍使用 `winapk.Mock`。
 - 客体原生：G3 仅覆盖已声明 C/Bionic/JNI profile 及普通 API-30 夹具配方。C++ 展开、ELF TLS、动态卸载、应用生成库、额外 ClassLoader 及紧凑 API-24 RX 元数据仍不支持。客体 PC 边界仅覆盖识别出的客体故障，不覆盖宿主/JVM 故障或任意分支目标。普通 CFG 关闭；独立启用 CFG 的回归通过（[abi-compatibility.md](abi-compatibility.md)）。
 - 这台电脑没有厂商 Vulkan 驱动：Vulkan 是基于 Direct3D 12 的 Mesa Dozen（[decisions.md](decisions.md)）。
 - `CMakeLists.txt`、`AppClassLoader` 与 `native_sqlite.cpp` 改动后的 macOS 构建和 smoke：NOT_RUN（这里没有 Mac）；该分支只在 `WIN32` 下返回，Java 检查在未设置 `winapk.guestNative` 时不起作用，`_WIN32` 之外的 CoreFoundation 辅助函数没有改变。
 - DPI：应用的 density 在启动时固定。把窗口移到另一缩放的显示器，或在运行中改变缩放，窗口会调整尺寸以保持其点数（`WM_DPICHANGED`），但应用保持最初的 density：NOT_RUN，也尚未作为 Android 的配置变更处理。
-- 输入范围（`PLAN.md` §8.4）：一个指针（鼠标；没有多点触控或捏合），映射的按键，以及经 WM_CHAR 到达的任何字符。输入法的组字在输入过程中不显示在输入框里，只在提交时落入，与 macOS 相同；候选窗口在 Windows 默认的位置。未运行真实的输入法会话（测试以输入法提交时的方式发送 WM_CHAR）。
-- 界面只显示示例数据。在运行时契约提供之前尚未完成：窗格或窗口中的应用画面、移动应用数据文件夹的内容、数据和转换后代码的大小，以及更新私有 Java 运行时（[gui.md](gui.md)）。
-- 在运行时于 ARM64 真机上运行之前，不能声明原生 ARM64 支持。
+- 输入范围（`PLAN.md` §8.4）：一个指针（鼠标；没有多点触控或捏合），映射的按键，以及经 WM_CHAR / `--embed` 文本提交到达的任何字符。输入法的组字在输入过程中不显示在输入框里，只在提交时落入，与 macOS 相同；候选窗口在 Windows 默认的位置。未运行真实的输入法会话。
+- 验证覆盖范围：单台 Windows 11 ARM64 机器；30 分钟 T14 长期压测、`VK_LAYER_KHRONOS_validation`、厂商 ARM64 原生 Vulkan ICD 及公开分发前的 ANGLE 链接许可审核仍待完成。

@@ -2,6 +2,7 @@
 
 ## 0.1.0 (in progress)
 
+- 2026-11-18: completed the MyGo front end per all 17 `design/` screens (`en`/`zh-Hans`, light/dark, Mica vibrancy) and wired `cmd/windows-arm64-apk` to the real `winapk.Runtime` (`--embed` shared-memory RGBA8 frames + overlapped duplex pipe IPC, zero-restart `Reattach`, static ARSC/ELF `inspect` and `--profile=N0|N1|N2` admission, verified private ARM64 OpenJDK 21 installer and storage management); diagnosed the Adreno 8cx Gen 3 SM 6.2 Dozen compute limit and verified guest Vulkan SPIR-V graphics pipelines, offscreen `VkImage` readback (`0xFFCC8822`), `VkAllocationCallbacks` and `VK_EXT_debug_report` callbacks on Dozen. Go 1.27.4, MyGo v0.10.0 and merged Mac.apk `3f35611` checked, unchanged; version 0.1.0 remains unreleased.
 - 2026-11-17: added compile-time signature checks to the admitted Vulkan bridge table and retained the validated transfer profile. The compute experiment failed at pipeline creation on Dozen, including the native control; no compute entry ships. Go 1.27.4, MyGo v0.10.0 and merged Mac.apk `3f35611` checked, unchanged.
 - 2026-11-17: verified a Vulkan GPU transfer fill and exact coherent-memory readback in the existing T13 launch, with ownership and synchronization refusals. Go 1.27.4, MyGo v0.10.0 and merged Mac.apk `3f35611` checked, unchanged.
 - 2026-11-17: verified T13 swapchain invalidation at zero extent and fresh presentation after restore on Dozen, without extra fixture launches. Go 1.27.4, MyGo v0.10.0 and merged Mac.apk `3f35611` checked, unchanged.

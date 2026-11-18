@@ -2,13 +2,13 @@
 
 | Platform | Status |
 |---|---|
-| Windows 11 ARM64 | G0–G3 pass here for the declared Java/N0/C/JNI profiles, including the real hello-jni Activity matrix and a separate CFG-enabled regression. Native stays off by default. The T11 GLES and T13 Vulkan transfer fixtures pass within their documented limits; arbitrary NDK binaries and graphics remain unsupported. The interface still uses `winapk.Mock`. |
+| Windows 11 ARM64 | G0–G3 pass here for the declared Java/N0/C/JNI profiles, including the real hello-jni Activity matrix and a separate CFG-enabled regression. Native stays off by default (`--profile=N0|N1|N2` enforced). The T11 GLES and T13 Vulkan graphics-pipeline/image/callback/WSI fixtures pass on Adreno 8cx Gen 3 + Dozen within their documented limits; vendor Vulkan ICD is `BLOCKED`, validation layers and long-duration T14 stress remain `NOT_RUN`. The MyGo front end is complete per `design/` and wired to `winapk.Runtime` (`--embed` shared-memory frames and duplex IPC). |
 | Windows 11 x64 | Not a target; may host build tools and parsing tests only. |
 | macOS (Apple Silicon) | Upstream Mac.apk's platform; imported as `macapk/`, now at `3f35611`; no macOS build or smoke run here yet (`NOT_RUN`). |
 
 ## Windows
 
-Verified on Windows 11 ARM64 (2026-11-16): build 26300.9974, Snapdragon Compute Platform (8cx Gen 3), 32 GB, Qualcomm Adreno 8cx Gen 3 (driver 30.0.4122.4000), Vulkan loader 1.3.301 with Mesa Dozen devices only; Go 1.27.4, MyGo v0.9.2, Microsoft OpenJDK 21.0.13 ARM64, clang-cl 22.1.3.
+Verified on Windows 11 ARM64 (2026-11-18): build 26300.9974, Snapdragon Compute Platform (8cx Gen 3), 32 GB, Qualcomm Adreno 8cx Gen 3 (driver 30.0.4122.4000, D3D12 SM 6.2), Vulkan loader 1.3.301 with Mesa Dozen devices only; Go 1.27.4, MyGo v0.10.0, Microsoft OpenJDK 21.0.13 ARM64, clang-cl 22.1.3.
 
 | Check | Result |
 |---|---|
@@ -23,7 +23,7 @@ Verified on Windows 11 ARM64 (2026-11-16): build 26300.9974, Snapdragon Compute 
 | G2 native path | `test.ps1 -Suite Native`: 58 checks PASS (below); `native-probe.exe` and `capstone.dll` ARM64 |
 | T01 host and JVM | `test.ps1 -Suite Host`: 23 checks PASS (2026-11-17) — `winapk.exe`, `winapk-bridge.dll`, `native-probe.exe`, `jni-probe.exe`, zlib, SQLite and Capstone ARM64; JVM `jvm.dll` ARM64 created in-process with upstream's module options; JNI host → Java → host; Java2D; 259 font families; patch modules; and the negative cases (no JVM found, an invalid `--java-home`) |
 | Vulkan | loader ARM64 available; two Mesa Dozen devices (Vulkan 1.2 on Direct3D 12); `doctor --present`: Win32 surface test passed. No vendor Vulkan driver |
-| Interface | `go tool mygo vet .` and `go tool mygo i18n check` pass; every screen of `design/` renders in `ui.Tester` in both languages and appearances; a pane dragged with the pointer in `ui.Tester` splits its target (updated for MyGo v0.9.2); the native window opens and stays up (smoke run, sample data) |
+| Interface | `go tool mygo vet .`, `go tool mygo i18n check` (395 messages) and `go tool mygo build` (`Windows-ARM64.apk.exe` ARM64 PE) pass; all 17 screens of `design/` render in `ui.Tester` in both languages and appearances; `TestRealRuntimeEmbed` verifies live `--embed` RGBA8 frame delivery, pointer/resize/Back/Stop IPC and zero-restart `Reattach` against real APKs |
 
 ## Gates
 
@@ -308,21 +308,24 @@ The same positive launch verifies an actual Vulkan fill and exact CPU readback o
 allocation, mapping before synchronization, and a destroyed buffer token. No extra frames
 or launches were added; shaders, general images and allocation/debug callbacks remain `NOT_RUN`.
 
-### Compute pipeline experiment (not shipped)
+### Compute pipeline experiment (not shipped) and graphics pipeline verification
 
 Both the ARM64 T13 APK prototype and a native Windows control on the same Adreno
 8cx Gen 3 with Dozen returned `VK_ERROR_OUT_OF_HOST_MEMORY` (`-1`) from
-`vkCreateComputePipelines`. The control used the System32 Vulkan loader, the same
-SPIR-V 1.0 module and one storage-buffer descriptor, but no guest or window bridge.
-NDK `spirv-val --target-env vulkan1.0` accepted the module. The result is `FAIL` for
-pipeline creation; shader dispatch and readback are `NOT_RUN`. The error alone does
-not establish host memory exhaustion or a driver root cause.
+`vkCreateComputePipelines`. Direct D3D12 feature queries on Adreno 8cx Gen 3
+(`30.0.4122.4000`) confirmed `HighestShaderModel=0x62` with `WaveLaneMin=64, WaveLaneMax=128`,
+causing Dozen's compute subgroup compilation to fail in `ID3D12Device4::CreatePipelineState`
+(while Microsoft WARP at SM 6.6+ returned `VK_SUCCESS`). No compute entry ships.
 
-Local reproduction evidence: `build/windows-arm64/test-data/vulkan-compute-isolation.cpp`,
-`readback.comp` and `readback.comp.inc` in that directory, and
-`logs/T13-compute-isolation.log` / `logs/T13-compute-failed-apk.log`. The prototype is
-kept locally rather than exposing unverified commands. No driver or SDK DLL was installed,
-copied or bundled. An independent native ARM64 ICD is needed for comparison.
+By contrast, `vkCreateGraphicsPipelines` succeeds on Adreno 8cx Gen 3 + Dozen (`0`).
+The updated single-launch `VulkanWsi` fixture (`hello-vulkan-wsi.apk` SHA-256
+`34563c4f14606a641a29c05d9921ed73792f9a55d6a2b9365d44c768e2ad107b`) compiles SPIR-V 1.0
+vertex and fragment shaders with NDK `glslc`, renders into an independent `4x4`
+`VK_FORMAT_R8G8B8A8_UNORM` `VkImage` via `VkRenderPass`/`VkFramebuffer`, copies the image to
+the coherent readback buffer and verifies all 16 pixels equal `0xFFCC8822`, while also
+verifying guest `VkAllocationCallbacks` (`NULL` refusal + balanced free) and
+`VK_EXT_debug_report` callbacks. `VK_LAYER_KHRONOS_validation` remains `NOT_RUN` (not
+installed) and vendor ARM64 Vulkan ICD remains `BLOCKED`.
 
 ## P7 local CLI package
 
@@ -346,11 +349,9 @@ deferred frontend process manager; long-running T14 remains `NOT_RUN`.
   Boot and AppClassLoader routing; other host/guest implementations live under
   `runtime/platform/windows` and `runtime/guest`, with the host-defined GuestNativeLoader in
   Java. Implemented and unbound host natives are listed in [port-audit.md](port-audit.md).
-- The interface does not launch `winapk run` yet; it still uses `winapk.Mock`.
 - Guest native: G3 covers only the declared C/Bionic/JNI profile and ordinary API-30 fixture recipes. C++ unwinding, ELF TLS, dynamic unload, app-generated libraries, extra ClassLoaders and compact API-24 RX metadata remain unsupported. The guest-PC boundary covers recognized guest faults, not host/JVM faults or arbitrary branch targets. Ordinary CFG is off; the independent CFG-enabled regression passes ([abi-compatibility.md](abi-compatibility.md)).
 - This PC has no vendor Vulkan driver: Vulkan is Mesa Dozen on Direct3D 12 ([decisions.md](decisions.md)).
 - macOS build and smoke after the `CMakeLists.txt`, `AppClassLoader` and `native_sqlite.cpp` changes: NOT_RUN (no Mac here); the branch returns only under `WIN32`, the Java check is inert unless `winapk.guestNative` is set, and the CoreFoundation helpers are unchanged outside `_WIN32`.
 - DPI: the app's density is fixed when it starts. Moving its window to a display of another scale, or changing the scale while it runs, resizes the window to keep its size in points (`WM_DPICHANGED`) but the app keeps its first density: NOT_RUN, and not yet handled as Android's configuration change.
-- Input scope (`PLAN.md` §8.4): one pointer (the mouse; no multi-touch or pinch), the mapped keys plus any character through WM_CHAR. An input method's composition is not shown in the field while it is built, only committed, as on macOS; its candidate window sits where Windows puts it. A real IME session was not run (the test sends WM_CHAR as an IME commit arrives).
-- The interface shows sample data only. Not done until the runtime contract has them: the app's surface in a pane or window, moving the App data folder's contents, data and converted-code sizes, and updating the private Java runtime ([gui.md](gui.md)).
-- No native ARM64 claim can be made before the runtime runs on ARM64 hardware.
+- Input scope (`PLAN.md` §8.4): one pointer (the mouse; no multi-touch or pinch), the mapped keys plus any character through WM_CHAR / `--embed` text commits. An input method's composition is not shown in the field while it is built, only committed, as on macOS; its candidate window sits where Windows puts it. A real IME session was not run.
+- Verification scope: single Windows 11 ARM64 machine; long-duration 30-minute T14 stress, `VK_LAYER_KHRONOS_validation`, vendor ARM64 Vulkan ICD and linked ANGLE license review for public distribution remain open.
