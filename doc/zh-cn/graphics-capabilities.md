@@ -15,8 +15,9 @@ G3 之后 P5/P6 进行中，尚无图形关卡通过。Java 位图路径保持�
 | 客体 Vulkan 实例/WSI | T13.wsi 在 Dozen 上 PASS | 真实 APK、Android→Win32 surface、实际支持与 capabilities、resize、换挂载及拒绝；不绘制 |
 | 客体 Vulkan 交换链清屏 | Dozen 上受限 T13 profile PASS | 真实客体设备/队列、命令缓冲区及交换链，resize 前后共三次呈现 |
 | 客体 Vulkan 传输缓冲区 | Dozen 上受限 T13 profile PASS | 一致内存分配及 GPU 填充，16 个字精确回读及生命周期拒绝 |
-| 客体 Vulkan 计算实验 | 本机 Dozen 上 FAIL，未纳入交付 | APK 与原生 Windows 对照的 `vkCreateComputePipelines` 均返回 `VK_ERROR_OUT_OF_HOST_MEMORY` |
-| 客体 Vulkan 通用资源与 G4 | NOT_RUN | 图形 pipeline、通用缓冲区/图像、回调及 validation layers |
+| 客体 Vulkan 图形管线、图像与回调 | Dozen 上受限 T13 profile PASS | SPIR-V 顶点/片元 `VkGraphicsPipelineCreateInfo`、`4x4` `VkImage` 渲染通道绘制与图像到缓冲区回读（`0xFFCC8822`），以及客体 `VkAllocationCallbacks` 与 `VK_EXT_debug_report` 回调桥 |
+| 客体 Vulkan 计算实验 | 本机 Dozen 上 FAIL，未纳入交付 | Adreno SM 6.2（`WaveLaneMin=64, Max=128`）上 `vkCreateComputePipelines` 返回 `VK_ERROR_OUT_OF_HOST_MEMORY`，而 WARP SM 6.6+ 成功 |
+| 客体 Vulkan 验证层与 G4 | NOT_RUN / BLOCKED | 未安装 `VK_LAYER_KHRONOS_validation`（`NOT_RUN`）；缺少厂商原生 ICD（`BLOCKED`） |
 | 厂商 ARM64 Vulkan ICD | BLOCKED | 具有该驱动的机器；Dozen 结果不能填入此行 |
 
 ## ANGLE 源码构建
@@ -162,6 +163,19 @@ Vulkan loader。桥筛选实例扩展，把 Android surface 创建翻译为 Win3
 桥翻译两个令牌，记录真实填充与 transfer→host barrier，仅在队列完成后允许映射。
 APK 逐字核对已知值。这是传输测试，不是 shader 执行、通用资源支持或交换链像素回读。
 
-计算实验未通过 pipeline 创建阶段。原生 Windows 对照使用同一个已校验的 SPIR-V 模块与
-存储缓冲区布局，但未加载 APK 桥。失败及本地复现证据见 [平台说明](platform-notes.md)。
-已验证的桥不导出计算命令。
+计算实验未通过 pipeline 创建阶段：本机 Adreno 8cx Gen 3 的 D3D12 驱动仅报告
+`HighestShaderModel=0x62` 且 `WaveLaneMin=64, WaveLaneMax=128`，而 Mesa Dozen 编译计算着色器时生成针对
+Shader Model 6.6+ 的 subgroup 要求。已验证的桥不导出计算命令。
+
+### 图形管线、离屏图像与客体回调
+
+在同一单次启动的 `hello-vulkan-wsi.apk` 夹具（Adreno 8cx Gen 3 + Dozen）中，受限 `libvulkan.so`
+提供方还验证了：
+
+- **离屏 `VkImage` 与渲染通道：** 一个 `4x4` `VK_FORMAT_R8G8B8A8_UNORM` 最优平铺图像
+  （`COLOR_ATTACHMENT_BIT | TRANSFER_SRC_BIT`）、独立 `VkDeviceMemory` 绑定、`VkImageView`、
+  单子通道 `VkRenderPass`（`CLEAR` 到 `STORE`，`UNDEFINED` 到 `TRANSFER_SRC_OPTIMAL`）及 `VkFramebuffer`。
+- **SPIR-V 图形管线：** 由 NDK `glslc` 编译的顶点与片元 `VkShaderModule`、空 `VkPipelineLayout`、
+  `vkCreateGraphicsPipelines`、`vkCmdBeginRenderPass`、`vkCmdBindPipeline`、`vkCmdDraw`、
+  `vkCmdEndRenderPass` 及 `vkCmdCopyImageToBuffer` 拷入一致回读缓冲区，逐字断言全部 16 个像素等于片元着色器输出 `0xFFCC8822`。
+- **客体回调：** 着色器模块创建/销毁上的筛查后 `VkAllocationCallbacks`（在调用方客体线程执行并与宿主 ICD 堆隔离，验证返回 `NULL` 时转为 `VK_ERROR_OUT_OF_HOST_MEMORY` 且分配与释放次数平衡），以及 `VK_EXT_debug_report`（`vkCreateDebugReportCallbackEXT`、非可执行回调地址拒绝、`vkDebugReportMessageEXT` 与 `vkDestroyDebugReportCallbackEXT`）。

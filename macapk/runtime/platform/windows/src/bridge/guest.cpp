@@ -80,6 +80,7 @@ void Open(JNIEnv* env, jclass, jobject loader, jstring name) {
                     }
                 }
                 value->modules = std::make_unique<guest::ModuleSet>(config.libraries, imports, libraries);
+                if (n2) SetGuestVulkanModules(value->modules.get());
                 value->threads = std::make_unique<guest::ThreadRuntime>(value->modules.get(), config.android);
                 value->jni = guest::JniBridge::Load(env, loader, *value->threads, *value->modules,
                     config.helpers + L"\\libwinapk-jni.so", &error, !n0);

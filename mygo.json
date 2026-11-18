@@ -4,7 +4,7 @@
   "version": "0.1.0",
   "copyright": "Copyright (C) 2026 YuanZhe",
   "main": "./cmd/windows-arm64-apk",
-  "out": "build",
+  "out": "build/app",
   "i18n": {
     "dir": "locales",
     "source": "en"

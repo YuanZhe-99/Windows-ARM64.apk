@@ -15,8 +15,9 @@ independent; enabling guest native does not enable GLES or guest Vulkan.
 | Guest Vulkan instance/WSI | PASS for T13.wsi on Dozen | real APK, Android→Win32 surface, actual support/capabilities, resize, replacement and refusal; no drawing |
 | Guest Vulkan transfer-clear | PASS for the bounded T13 profile on Dozen | real guest device/queue, command buffer and swapchain; three presents across resize |
 | Guest Vulkan transfer buffer | PASS for the bounded T13 profile on Dozen | coherent allocation and GPU fill, exact 16-word readback and lifecycle refusals |
-| Guest Vulkan compute experiment | FAIL on this Dozen stack; not shipped | `vkCreateComputePipelines` returned `VK_ERROR_OUT_OF_HOST_MEMORY` in both APK and native Windows control |
-| Guest Vulkan general resources and G4 | NOT_RUN | graphics pipelines, general buffers/images, callbacks and validation-layer run |
+| Guest Vulkan graphics pipeline, image and callbacks | PASS for the bounded T13 profile on Dozen | SPIR-V vertex/fragment `VkGraphicsPipelineCreateInfo`, `4x4` `VkImage` render-pass draw and image-to-buffer readback (`0xFFCC8822`), plus guest `VkAllocationCallbacks` and `VK_EXT_debug_report` thunks |
+| Guest Vulkan compute experiment | FAIL on this Dozen stack; not shipped | `vkCreateComputePipelines` returned `VK_ERROR_OUT_OF_HOST_MEMORY` on Adreno SM 6.2 (`WaveLaneMin=64, Max=128`) while WARP SM 6.6+ succeeded |
+| Guest Vulkan validation layer and G4 | NOT_RUN / BLOCKED | `VK_LAYER_KHRONOS_validation` not installed (`NOT_RUN`); vendor ICD absent (`BLOCKED`) |
 | Vendor ARM64 Vulkan ICD | BLOCKED | a machine with that driver; Dozen results cannot fill this row |
 
 ## ANGLE source build
@@ -191,7 +192,26 @@ an actual fill and transfer-to-host barrier, and admits mapping only after the q
 completes. The APK checks every word against a known pattern. This is a transfer test,
 not shader execution, general resource support or swapchain pixel readback.
 
-The compute experiment did not advance past pipeline creation. The native Windows control
-used the same validated SPIR-V module and storage-buffer layout but did not load the APK
-bridge. See [platform-notes.md](platform-notes.md) for the failure and local reproduction
-evidence. The tested bridge does not export compute commands.
+The compute experiment did not advance past pipeline creation because Qualcomm's D3D12 driver on
+Adreno 8cx Gen 3 reports `HighestShaderModel=0x62` with `WaveLaneMin=64, WaveLaneMax=128`, whereas
+Mesa Dozen's compute compilation emits subgroup requirements targeting Shader Model 6.6+. The
+tested bridge does not export compute commands.
+
+### Graphics pipeline, offscreen image and guest callbacks
+
+Within the same single-launch `hello-vulkan-wsi.apk` fixture on Adreno 8cx Gen 3 + Dozen, the
+restricted `libvulkan.so` provider also verifies:
+
+- **Offscreen `VkImage` and render pass:** one `4x4` `VK_FORMAT_R8G8B8A8_UNORM` optimal image
+  (`COLOR_ATTACHMENT_BIT | TRANSFER_SRC_BIT`), dedicated `VkDeviceMemory` binding, `VkImageView`,
+  single-subpass `VkRenderPass` (`CLEAR` to `STORE`, `UNDEFINED` to `TRANSFER_SRC_OPTIMAL`), and
+  `VkFramebuffer`.
+- **SPIR-V graphics pipeline:** NDK `glslc`-compiled vertex and fragment `VkShaderModule`s, empty
+  `VkPipelineLayout`, `vkCreateGraphicsPipelines`, `vkCmdBeginRenderPass`, `vkCmdBindPipeline`,
+  `vkCmdDraw`, `vkCmdEndRenderPass` and `vkCmdCopyImageToBuffer` into the coherent readback buffer,
+  asserting all 16 words equal the fragment shader's `0xFFCC8822` output.
+- **Guest callbacks:** screened `VkAllocationCallbacks` on shader module creation/destruction
+  (invoked on the calling guest thread with host ICD heap isolation, verifying `NULL` refusal as
+  `VK_ERROR_OUT_OF_HOST_MEMORY` and balanced `allocs == frees`), plus `VK_EXT_debug_report`
+  (`vkCreateDebugReportCallbackEXT`, non-executable callback refusal, `vkDebugReportMessageEXT`
+  and `vkDestroyDebugReportCallbackEXT`).

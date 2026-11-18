@@ -177,9 +177,25 @@ function Build-FrameworkRes {
     if (-not (Test-Path (Join-Path $src 'AndroidManifest.xml'))) {
         Write-Step "Fetching frameworks/base/core/res at $tag"
         $tarball = Join-Path $work 'core-res.tar.gz'
-        Invoke-Checked 'curl.exe' @('-sSfL', '-o', $tarball, "https://android.googlesource.com/platform/frameworks/base/+archive/refs/tags/$tag/core/res.tar.gz")
-        Reset-Dir $src
-        Invoke-Checked "$env:SystemRoot\System32\tar.exe" @('-xzf', $tarball, '-C', $src)
+        & curl.exe -sSfL --connect-timeout 15 --max-time 180 -o $tarball "https://android.googlesource.com/platform/frameworks/base/+archive/refs/tags/$tag/core/res.tar.gz"
+        if ($LASTEXITCODE -eq 0) {
+            Reset-Dir $src
+            Invoke-Checked "$env:SystemRoot\System32\tar.exe" @('-xzf', $tarball, '-C', $src)
+        } else {
+            Write-Step "android.googlesource.com timed out; fetching tag $tag via GitHub aosp-mirror"
+            $tmpGit = Join-Path $work 'git-sparse'
+            Reset-Dir $tmpGit
+            Reset-Dir $src
+            Remove-Item -LiteralPath $src -Recurse -Force -ErrorAction SilentlyContinue
+            Invoke-Checked 'git' @('-C', $tmpGit, 'init', '-q')
+            Invoke-Checked 'git' @('-C', $tmpGit, 'config', 'core.autocrlf', 'false')
+            Invoke-Checked 'git' @('-C', $tmpGit, 'sparse-checkout', 'init', '--cone')
+            Invoke-Checked 'git' @('-C', $tmpGit, 'sparse-checkout', 'set', 'core/res')
+            Invoke-Checked 'git' @('-C', $tmpGit, 'fetch', '--depth', '1', '--filter=tree:0', 'https://github.com/aosp-mirror/platform_frameworks_base', "refs/tags/$tag")
+            Invoke-Checked 'git' @('-C', $tmpGit, 'checkout', '-q', 'FETCH_HEAD')
+            Move-Item -LiteralPath (Join-Path $tmpGit 'core\res') -Destination $src
+            Remove-Item -LiteralPath $tmpGit -Recurse -Force
+        }
         if (-not (Test-Path (Join-Path $src 'MODULE_LICENSE_APACHE2'))) { throw 'the archive did not unpack to a core/res tree (no MODULE_LICENSE_APACHE2)' }
     }
 
@@ -276,6 +292,12 @@ function Build-Fixtures {
         $libs = @()
         if (Test-Path $jni) {
             $clang = Find-AndroidNdk
+            $ndkRoot = Split-Path (Split-Path (Split-Path (Split-Path (Split-Path (Split-Path $clang)))))
+            $glslc = Join-Path $ndkRoot 'shader-tools\windows-x86_64\glslc.exe'
+            $shaders = @(Get-ChildItem -Path "$jni\*" -Include *.vert, *.frag -File)
+            foreach ($sh in $shaders) {
+                Invoke-Checked $glslc @('--target-env=vulkan1.0', '-mfmt=c', '-o', (Join-Path $work "$($sh.Name).inc"), $sh.FullName)
+            }
             [xml]$manifest = Get-Content (Join-Path $dir.FullName 'AndroidManifest.xml') -Raw
             $api = $manifest.manifest.'uses-sdk'.GetAttribute('minSdkVersion', 'http://schemas.android.com/apk/res/android')
             $recipes = if (Test-Path (Join-Path $jni 'fixtures.psd1')) {
@@ -291,7 +313,7 @@ function Build-Fixtures {
                 $system = @(if ($recipe.ContainsKey('AndroidLibraries')) {
                     $recipe.AndroidLibraries | ForEach-Object { "-l$_" }
                 })
-                Invoke-Checked $clang (@("--target=aarch64-linux-android$api", '-shared', '-fPIC', '-O2',
+                Invoke-Checked $clang (@("--target=aarch64-linux-android$api", '-shared', '-fPIC', '-O2', "-I$work",
                     '-Wl,-z,max-page-size=16384', "-Wl,-soname,$($recipe.Name)", '-o', $so,
                     (Join-Path $jni $recipe.Source)) + $links + $system)
                 # PLAN.md §7: every built ELF is checked to be ELF64 for AArch64 (e_machine 183).
@@ -342,7 +364,7 @@ function Build-Fixtures {
             $info.expected = 'T11: texture/FBO and blended shader readback, minimize refusal/restore, resize and drawable replacement, EGL proc/token refusals and normal teardown'
         }
         if ($name -eq 'hello-vulkan-wsi') {
-            $info.expected = 'T13.wsi: real WSI, coherent GPU transfer-buffer readback, three swapchain presents through minimize/restore and resize, stale surface refusal and teardown'
+            $info.expected = 'T13.wsi: real WSI, graphics pipeline + offscreen VkImage shader readback, guest VkAllocationCallbacks thunk, coherent GPU transfer-buffer readback, three swapchain presents through minimize/restore and resize, stale surface refusal and teardown'
         }
         $info | ConvertTo-Json -Depth 6 | Set-Content (Join-Path $fixtures "$name.json") -Encoding utf8NoBOM
         Write-Step "$name.apk: dex sha256 $($info.dexSha256)"

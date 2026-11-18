@@ -48,6 +48,7 @@ Native`）；下文的用例名即其本身的名称。2026-11-04 在 [platform-
 | 客体 Vulkan 实例/WSI | 固定 ARM64 函数；两端构建检查实例与 WSI 结构体尺寸，显式转换 Android→Win32 surface | 实例、物理设备和 surface 使用令牌；不返回驱动句柄或驱动 proc 地址 | T13.wsi：proc 作用域、实际 WSI 查询、resize、已脱离和过期 surface 拒绝 |
 | 客体 Vulkan 交换链清屏 | 固定设备/队列命令、结构体尺寸匹配，只允许固定的图像转换/清屏序列 | 在 HWND 线程翻译客体令牌和数组；`vkGetDeviceProcAddr` 只返回固定桥入口 | T13：获取 fence、命令缓冲区、三次实际呈现、过期交换链及旧设备 proc 拒绝 |
 | 客体 Vulkan 传输缓冲区 | Vulkan 内存与缓冲区结构体固定，两端构建校验尺寸 | 缓冲区和分配使用不同令牌；仅对已同步的一致内存区间返回映射指针，不返回驱动对象 | T13：GPU 填充并逐字回读，拒绝外来分配、过早映射与旧缓冲区查询 |
+| 客体 Vulkan 图形管线、图像与回调 | 固定 64 位 Vulkan 句柄/结构体；`VkAllocationCallbacks` 与 `PFN_vkDebugReportCallbackEXT` 经 `ModuleSet::Executable` 校验后在调用方客体线程由 `nocf` 宿主 PE 包装器调用 | 翻译着色器、图像、视图、渲染通道、帧缓冲及管线令牌；宿主 ICD 堆与客体分配器隔离 | T13：SPIR-V 顶点/片元绘制与 `vkCmdCopyImageToBuffer` `0xFFCC8822` 回读、分配器 `NULL` 拒绝与平衡释放、调试回调往返与非法地址拒绝 |
 | 客体 CRT 退出/atfork 注册 | 固定回调/参数/DSO 指针、32 位状态；不使用宿主 CRT 注册表 | 运行时所有的记录；退出回调在受管理上下文中执行客体代码；fork 不可用 | T07 N1：逆序、DSO 选择、重入/仅一次、注册上限及关闭后的运行时清理 |
 | 内存、字节与字符串 | 显式 64 位客体大小/长度，固定指针/int | 运行时所有的堆及归属检查；仅字节包装，不共享分配器/CRT 对象 | T08 `memory`：零值/溢出/失败、重叠/无符号字节、UTF-8、跨线程归属及无效释放 |
 | `open`/`open64` 可选 mode | — | 专用固定 `(pointer, int32, uint32)` 入口仅在创建时读取 x2；不使用宿主变参或共享 va_list | T08 `io`：双参数 open、三参数 create、fortified `__open_2` 及不支持的标志/模式 |

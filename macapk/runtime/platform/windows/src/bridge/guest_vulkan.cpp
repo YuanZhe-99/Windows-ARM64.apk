@@ -31,6 +31,49 @@ static_assert(sizeof(VkDeviceQueueCreateInfo) == 40 && sizeof(VkDeviceCreateInfo
 static_assert(sizeof(VkBufferCreateInfo) == 56 && sizeof(VkMemoryAllocateInfo) == 32 &&
               sizeof(VkMemoryRequirements) == 24 && sizeof(VkPhysicalDeviceMemoryProperties) == 520 &&
               sizeof(VkBufferMemoryBarrier) == 56);
+static_assert(sizeof(VkAllocationCallbacks) == 48 && sizeof(VkShaderModuleCreateInfo) == 40 &&
+              sizeof(VkImageCreateInfo) == 88 && sizeof(VkImageViewCreateInfo) == 80 &&
+              sizeof(VkRenderPassCreateInfo) == 64 && sizeof(VkFramebufferCreateInfo) == 64 &&
+              sizeof(VkPipelineLayoutCreateInfo) == 48 && sizeof(VkGraphicsPipelineCreateInfo) == 144 &&
+              sizeof(VkRenderPassBeginInfo) == 64 && sizeof(VkBufferImageCopy) == 56);
+
+guest::ModuleSet* g_guestModules = nullptr;
+
+/// Calls a screened guest allocation callback without CFG rejecting the guest ELF address.
+__declspec(guard(nocf)) void* InvokeGuestAlloc(PFN_vkAllocationFunction fn, void* ud, size_t sz,
+                                               size_t align, VkSystemAllocationScope scope) {
+    return fn(ud, sz, align, scope);
+}
+
+/// Calls a screened guest free callback without CFG rejecting the guest ELF address.
+__declspec(guard(nocf)) void InvokeGuestFree(PFN_vkFreeFunction fn, void* ud, void* mem) {
+    fn(ud, mem);
+}
+
+/// Calls a screened guest VK_EXT_debug_report callback on the calling guest thread.
+__declspec(guard(nocf)) VkBool32 InvokeGuestDebugReport(
+    PFN_vkDebugReportCallbackEXT fn, VkDebugReportFlagsEXT flags, VkDebugReportObjectTypeEXT objType,
+    uint64_t obj, size_t loc, int32_t code, const char* prefix, const char* msg, void* ud) {
+    return fn(flags, objType, obj, loc, code, prefix, msg, ud);
+}
+
+bool ValidGuestCode(const void* fn) {
+    return fn && g_guestModules && g_guestModules->Executable(reinterpret_cast<uintptr_t>(fn));
+}
+
+bool ValidAllocator(const VkAllocationCallbacks* a) {
+    if (!a || !ValidGuestCode(reinterpret_cast<const void*>(a->pfnAllocation)) ||
+        !ValidGuestCode(reinterpret_cast<const void*>(a->pfnReallocation)) ||
+        !ValidGuestCode(reinterpret_cast<const void*>(a->pfnFree)))
+        return false;
+    if (static_cast<bool>(a->pfnInternalAllocation) != static_cast<bool>(a->pfnInternalFree))
+        return false;
+    if (a->pfnInternalAllocation &&
+        (!ValidGuestCode(reinterpret_cast<const void*>(a->pfnInternalAllocation)) ||
+         !ValidGuestCode(reinterpret_cast<const void*>(a->pfnInternalFree))))
+        return false;
+    return true;
+}
 
 /// Owns the bridge's single instance and window surface; unrelated to ANGLE, even under Dozen.
 struct Vulkan {
@@ -43,6 +86,11 @@ struct Vulkan {
     ANativeWindow* native = nullptr;
     bool surfaceExtension = false;
     bool androidSurfaceExtension = false;
+    bool debugReportExtension = false;
+    VkDebugReportCallbackEXT guestDebugCallback = VK_NULL_HANDLE;
+    VkDebugReportFlagsEXT debugFlags = 0;
+    PFN_vkDebugReportCallbackEXT debugCallback = nullptr;
+    void* debugUserData = nullptr;
     bool retired = false;
     bool presented = false;
     struct Device { VkPhysicalDevice host, guest; };
@@ -67,9 +115,29 @@ struct Vulkan {
     VkDeviceSize bufferSize = 0;
     VkMemoryRequirements memoryRequirements{};
     bool bound = false, mapped = false, bufferReadable = false;
-    enum class Frame { Idle, Acquired, Ready, Recording, Executable, Submitted, Complete, Invalid };
+    VkImage offscreenImage = VK_NULL_HANDLE, guestOffscreenImage = VK_NULL_HANDLE;
+    VkDeviceMemory imageMemory = VK_NULL_HANDLE, guestImageMemory = VK_NULL_HANDLE;
+    VkMemoryRequirements imageRequirements{};
+    VkExtent2D offscreenExtent{};
+    bool imageBound = false;
+    VkImageView imageView = VK_NULL_HANDLE, guestImageView = VK_NULL_HANDLE;
+    struct ShaderSlot {
+        VkShaderModule host = VK_NULL_HANDLE, guest = VK_NULL_HANDLE;
+        void* guestAlloc = nullptr;
+        bool usedAllocator = false;
+    };
+    std::array<ShaderSlot, 2> shaders{};
+    VkRenderPass renderPass = VK_NULL_HANDLE, guestRenderPass = VK_NULL_HANDLE;
+    VkFramebuffer framebuffer = VK_NULL_HANDLE, guestFramebuffer = VK_NULL_HANDLE;
+    VkPipelineLayout pipelineLayout = VK_NULL_HANDLE, guestPipelineLayout = VK_NULL_HANDLE;
+    VkPipeline graphicsPipeline = VK_NULL_HANDLE, guestGraphicsPipeline = VK_NULL_HANDLE;
+    enum class Frame {
+        Idle, Acquired, Ready, Recording, Executable, Submitted, Complete, Invalid,
+        OffscreenRecording, OffscreenExecutable, OffscreenSubmitted
+    };
     Frame frame = Frame::Idle;
     unsigned commands = 0;
+    unsigned offscreenStep = 0;
 } vk;
 uintptr_t nextHandle = 1;
 using Frame = Vulkan::Frame;
@@ -129,6 +197,31 @@ void DropSwapchain() {
     vk.swapchainError = VK_SUCCESS;
 }
 
+/// Destroys any remaining offscreen graphics/image resources on device teardown.
+void DropGraphics() {
+    if (vk.graphicsPipeline) DeviceDriver<PFN_vkDestroyPipeline>("vkDestroyPipeline")(vk.device, vk.graphicsPipeline, nullptr);
+    if (vk.pipelineLayout) DeviceDriver<PFN_vkDestroyPipelineLayout>("vkDestroyPipelineLayout")(vk.device, vk.pipelineLayout, nullptr);
+    if (vk.framebuffer) DeviceDriver<PFN_vkDestroyFramebuffer>("vkDestroyFramebuffer")(vk.device, vk.framebuffer, nullptr);
+    if (vk.renderPass) DeviceDriver<PFN_vkDestroyRenderPass>("vkDestroyRenderPass")(vk.device, vk.renderPass, nullptr);
+    if (vk.imageView) DeviceDriver<PFN_vkDestroyImageView>("vkDestroyImageView")(vk.device, vk.imageView, nullptr);
+    for (auto& s : vk.shaders) {
+        if (s.host) DeviceDriver<PFN_vkDestroyShaderModule>("vkDestroyShaderModule")(vk.device, s.host, nullptr);
+        s = {};
+    }
+    if (vk.offscreenImage) DeviceDriver<PFN_vkDestroyImage>("vkDestroyImage")(vk.device, vk.offscreenImage, nullptr);
+    if (vk.imageMemory) DeviceDriver<PFN_vkFreeMemory>("vkFreeMemory")(vk.device, vk.imageMemory, nullptr);
+    vk.graphicsPipeline = vk.guestGraphicsPipeline = VK_NULL_HANDLE;
+    vk.pipelineLayout = vk.guestPipelineLayout = VK_NULL_HANDLE;
+    vk.framebuffer = vk.guestFramebuffer = VK_NULL_HANDLE;
+    vk.renderPass = vk.guestRenderPass = VK_NULL_HANDLE;
+    vk.imageView = vk.guestImageView = VK_NULL_HANDLE;
+    vk.offscreenImage = vk.guestOffscreenImage = VK_NULL_HANDLE;
+    vk.imageMemory = vk.guestImageMemory = VK_NULL_HANDLE;
+    vk.imageRequirements = {};
+    vk.offscreenExtent = {};
+    vk.imageBound = false;
+}
+
 /// Destroys device children in dependency order, including on unexpected window close.
 bool DropDevice() {
     if (!vk.device) return true;
@@ -141,6 +234,7 @@ bool DropDevice() {
         }
     }
     DropSwapchain();
+    DropGraphics();
     if (vk.pool) DeviceDriver<PFN_vkDestroyCommandPool>("vkDestroyCommandPool")(vk.device, vk.pool, nullptr);
     if (vk.fence) DeviceDriver<PFN_vkDestroyFence>("vkDestroyFence")(vk.device, vk.fence, nullptr);
     DropBuffer();
@@ -204,7 +298,7 @@ VkResult VKAPI_CALL Layers(uint32_t* count, VkLayerProperties* out) {
     return Enumerate<VkLayerProperties>(0, nullptr, count, out);
 }
 
-/// Filters extensions instead of forwarding host Win32, interop or debug entries.
+/// Filters extensions instead of forwarding host Win32 or interop entries.
 VkResult VKAPI_CALL Extensions(const char* layer, uint32_t* count, VkExtensionProperties* out) {
     if (layer) return VK_ERROR_LAYER_NOT_PRESENT;
     return Run([=] {
@@ -212,10 +306,11 @@ VkResult VKAPI_CALL Extensions(const char* layer, uint32_t* count, VkExtensionPr
         const VkExtensionProperties supported[] = {
             {VK_KHR_SURFACE_EXTENSION_NAME, VK_KHR_SURFACE_SPEC_VERSION},
             {VK_KHR_ANDROID_SURFACE_EXTENSION_NAME, VK_KHR_ANDROID_SURFACE_SPEC_VERSION},
+            {VK_EXT_DEBUG_REPORT_EXTENSION_NAME, VK_EXT_DEBUG_REPORT_SPEC_VERSION},
         };
         const bool available = WsiAvailable();
         if (!available) LogLine("GRAPHICS_CAPABILITY_MISSING: guest Vulkan system loader does not offer Win32 WSI");
-        return Enumerate(available ? 2u : 0u, supported, count, out);
+        return Enumerate(available ? 3u : 0u, supported, count, out);
     });
 }
 
@@ -250,15 +345,16 @@ VkResult VKAPI_CALL CreateInstance(const VkInstanceCreateInfo* info, const VkAll
     if (!info || info->sType != VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO || info->pNext || allocator || info->flags)
         return VK_ERROR_FEATURE_NOT_PRESENT;
     if (info->enabledLayerCount) return VK_ERROR_LAYER_NOT_PRESENT;
-    if (info->enabledExtensionCount > 2 || (info->enabledExtensionCount && !info->ppEnabledExtensionNames))
+    if (info->enabledExtensionCount > 3 || (info->enabledExtensionCount && !info->ppEnabledExtensionNames))
         return VK_ERROR_EXTENSION_NOT_PRESENT;
-    bool surface = false, android = false;
+    bool surface = false, android = false, debugReport = false;
     for (uint32_t i = 0; i < info->enabledExtensionCount; ++i) {
         const char* name = info->ppEnabledExtensionNames[i];
         if (!name || strnlen(name, VK_MAX_EXTENSION_NAME_SIZE) == VK_MAX_EXTENSION_NAME_SIZE)
             return VK_ERROR_EXTENSION_NOT_PRESENT;
         if (!surface && std::strcmp(name, VK_KHR_SURFACE_EXTENSION_NAME) == 0) surface = true;
         else if (!android && std::strcmp(name, VK_KHR_ANDROID_SURFACE_EXTENSION_NAME) == 0) android = true;
+        else if (!debugReport && std::strcmp(name, VK_EXT_DEBUG_REPORT_EXTENSION_NAME) == 0) debugReport = true;
         else return VK_ERROR_EXTENSION_NOT_PRESENT;
     }
     if (android && !surface) return VK_ERROR_EXTENSION_NOT_PRESENT;
@@ -284,6 +380,7 @@ VkResult VKAPI_CALL CreateInstance(const VkInstanceCreateInfo* info, const VkAll
         }
         vk.surfaceExtension = surface;
         vk.androidSurfaceExtension = android;
+        vk.debugReportExtension = debugReport;
         *out = vk.guestInstance = reinterpret_cast<VkInstance>(nextHandle++);
         return VK_SUCCESS;
     });
@@ -423,11 +520,65 @@ void VKAPI_CALL DestroySurface(VkInstance i, VkSurfaceKHR s, const VkAllocationC
     });
 }
 
+/// Registers one screened guest VK_EXT_debug_report callback on the active instance.
+VkResult VKAPI_CALL CreateDebugReportCallback(VkInstance i, const VkDebugReportCallbackCreateInfoEXT* info,
+                                              const VkAllocationCallbacks* allocator, VkDebugReportCallbackEXT* out) {
+    if (!out) return VK_ERROR_INITIALIZATION_FAILED;
+    *out = VK_NULL_HANDLE;
+    if (!info || info->sType != VK_STRUCTURE_TYPE_DEBUG_REPORT_CALLBACK_CREATE_INFO_EXT ||
+        info->pNext || allocator || !ValidGuestCode(reinterpret_cast<const void*>(info->pfnCallback)))
+        return VK_ERROR_FEATURE_NOT_PRESENT;
+    return Run([=] {
+        if (!i || i != vk.guestInstance || !vk.debugReportExtension || vk.guestDebugCallback)
+            return VK_ERROR_INITIALIZATION_FAILED;
+        vk.debugFlags = info->flags;
+        vk.debugCallback = info->pfnCallback;
+        vk.debugUserData = info->pUserData;
+        *out = vk.guestDebugCallback = reinterpret_cast<VkDebugReportCallbackEXT>(nextHandle++);
+        return VK_SUCCESS;
+    });
+}
+
+/// Retires the active VK_EXT_debug_report callback before instance teardown.
+void VKAPI_CALL DestroyDebugReportCallback(VkInstance i, VkDebugReportCallbackEXT cb, const VkAllocationCallbacks* allocator) {
+    if (!cb) return;
+    Run([=] {
+        if (!allocator && i == vk.guestInstance && cb == vk.guestDebugCallback) {
+            vk.guestDebugCallback = VK_NULL_HANDLE;
+            vk.debugFlags = 0;
+            vk.debugCallback = nullptr;
+            vk.debugUserData = nullptr;
+            return VK_SUCCESS;
+        }
+        LogLine("GRAPHICS_CAPABILITY_MISSING: guest Vulkan invalid debug callback destruction");
+        return VK_ERROR_INITIALIZATION_FAILED;
+    });
+}
+
+/// Dispatches an application debug report to the registered guest callback on the calling guest thread.
+void VKAPI_CALL DebugReportMessage(VkInstance i, VkDebugReportFlagsEXT flags, VkDebugReportObjectTypeEXT objType,
+                                   uint64_t obj, size_t loc, int32_t code, const char* prefix, const char* msg) {
+    if (!prefix || !msg || strnlen(prefix, 256) == 256 || strnlen(msg, 4096) == 4096) return;
+    PFN_vkDebugReportCallbackEXT cb = nullptr;
+    void* ud = nullptr;
+    if (Run([&] {
+            if (!i || i != vk.guestInstance || !vk.debugReportExtension || !vk.guestDebugCallback)
+                return VK_ERROR_INITIALIZATION_FAILED;
+            if (vk.debugFlags & flags) {
+                cb = vk.debugCallback;
+                ud = vk.debugUserData;
+            }
+            return VK_SUCCESS;
+        }) == VK_SUCCESS && cb) {
+        InvokeGuestDebugReport(cb, flags, objType, obj, loc, code, prefix, msg, ud);
+    }
+}
+
 /// Destroys the named instance after all children have been released.
 void VKAPI_CALL DestroyInstance(VkInstance i, const VkAllocationCallbacks* allocator) {
     if (!i) return;
     Run([=] {
-        if (!allocator && i == vk.guestInstance && !vk.surface && !vk.device) { Shutdown(); return VK_SUCCESS; }
+        if (!allocator && i == vk.guestInstance && !vk.surface && !vk.device && !vk.guestDebugCallback) { Shutdown(); return VK_SUCCESS; }
         LogLine("GRAPHICS_CAPABILITY_MISSING: guest Vulkan invalid instance destruction (live surface or foreign handle)");
         return VK_ERROR_INITIALIZATION_FAILED;
     });
@@ -512,7 +663,9 @@ void VKAPI_CALL GetQueue(VkDevice d, uint32_t family, uint32_t index, VkQueue* o
 /// Destroys the device after its guest-visible children have been retired.
 void VKAPI_CALL DestroyDevice(VkDevice d, const VkAllocationCallbacks* allocator) {
     Run([=] {
-        if (!allocator && d && d == vk.guestDevice && !vk.swapchain && !vk.pool && !vk.fence && !vk.buffer && !vk.memory)
+        if (!allocator && d && d == vk.guestDevice && !vk.swapchain && !vk.pool && !vk.fence && !vk.buffer && !vk.memory &&
+            !vk.graphicsPipeline && !vk.pipelineLayout && !vk.framebuffer && !vk.renderPass && !vk.imageView &&
+            !vk.shaders[0].host && !vk.shaders[1].host && !vk.offscreenImage && !vk.imageMemory)
             DropDevice();
         else LogLine("GRAPHICS_CAPABILITY_MISSING: guest Vulkan invalid device destruction");
         return VK_SUCCESS;
@@ -560,26 +713,35 @@ void VKAPI_CALL BufferRequirements(VkDevice d, VkBuffer buffer, VkMemoryRequirem
     });
 }
 
-/// Allocates only the buffer's required size from a compatible host-visible coherent memory type.
+/// Allocates memory for either the coherent transfer buffer or the offscreen 2D color image.
 VkResult VKAPI_CALL AllocateMemory(VkDevice d, const VkMemoryAllocateInfo* info, const VkAllocationCallbacks* allocator, VkDeviceMemory* out) {
     if (!out) return VK_ERROR_INITIALIZATION_FAILED;
     *out = VK_NULL_HANDLE;
     if (!info || info->sType != VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO || info->pNext || allocator)
         return VK_ERROR_FEATURE_NOT_PRESENT;
     return Run([=] {
-        if (!d || d != vk.guestDevice || !vk.buffer || vk.memory || vk.frame != Frame::Idle)
+        if (!d || d != vk.guestDevice || vk.frame != Frame::Idle)
             return VK_ERROR_INITIALIZATION_FAILED;
         VkPhysicalDeviceMemoryProperties props{};
         Driver<PFN_vkGetPhysicalDeviceMemoryProperties>("vkGetPhysicalDeviceMemoryProperties", vk.instance)
             (vk.devicePhysical, &props);
         const auto i = info->memoryTypeIndex;
-        constexpr auto required = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
-        if (info->allocationSize != vk.memoryRequirements.size || i >= props.memoryTypeCount || i >= 32 ||
-            !(vk.memoryRequirements.memoryTypeBits & (uint32_t{1} << i)) ||
-            (props.memoryTypes[i].propertyFlags & required) != required) return VK_ERROR_FEATURE_NOT_PRESENT;
-        const auto result = DeviceDriver<PFN_vkAllocateMemory>("vkAllocateMemory")(vk.device, info, nullptr, &vk.memory);
-        if (result == VK_SUCCESS) *out = vk.guestMemory = reinterpret_cast<VkDeviceMemory>(nextHandle++);
-        return result;
+        if (i >= props.memoryTypeCount || i >= 32) return VK_ERROR_FEATURE_NOT_PRESENT;
+        constexpr auto coherent = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
+        if (vk.buffer && !vk.memory && info->allocationSize == vk.memoryRequirements.size &&
+            (vk.memoryRequirements.memoryTypeBits & (uint32_t{1} << i)) &&
+            (props.memoryTypes[i].propertyFlags & coherent) == coherent) {
+            const auto result = DeviceDriver<PFN_vkAllocateMemory>("vkAllocateMemory")(vk.device, info, nullptr, &vk.memory);
+            if (result == VK_SUCCESS) *out = vk.guestMemory = reinterpret_cast<VkDeviceMemory>(nextHandle++);
+            return result;
+        }
+        if (vk.offscreenImage && !vk.imageMemory && info->allocationSize == vk.imageRequirements.size &&
+            (vk.imageRequirements.memoryTypeBits & (uint32_t{1} << i))) {
+            const auto result = DeviceDriver<PFN_vkAllocateMemory>("vkAllocateMemory")(vk.device, info, nullptr, &vk.imageMemory);
+            if (result == VK_SUCCESS) *out = vk.guestImageMemory = reinterpret_cast<VkDeviceMemory>(nextHandle++);
+            return result;
+        }
+        return VK_ERROR_FEATURE_NOT_PRESENT;
     });
 }
 
@@ -628,11 +790,333 @@ void VKAPI_CALL DestroyBuffer(VkDevice d, VkBuffer buffer, const VkAllocationCal
     });
 }
 
-/// Frees the allocation only after the linked buffer has been destroyed.
+/// Frees a device allocation only after its bound buffer or image has been destroyed.
 void VKAPI_CALL FreeMemory(VkDevice d, VkDeviceMemory memory, const VkAllocationCallbacks* allocator) {
     Run([=] {
-        if (d && d == vk.guestDevice && memory && memory == vk.guestMemory && !allocator && !vk.bound && !vk.mapped &&
-            vk.frame == Frame::Idle) DropMemory();
+        if (!d || d != vk.guestDevice || allocator || vk.frame != Frame::Idle) return VK_SUCCESS;
+        if (memory && memory == vk.guestMemory && !vk.bound && !vk.mapped) DropMemory();
+        else if (memory && memory == vk.guestImageMemory && !vk.imageBound) {
+            DeviceDriver<PFN_vkFreeMemory>("vkFreeMemory")(vk.device, vk.imageMemory, nullptr);
+            vk.imageMemory = vk.guestImageMemory = VK_NULL_HANDLE;
+        }
+        return VK_SUCCESS;
+    });
+}
+
+/// Creates one bounded 2D RGBA8 color-attachment/transfer-source image.
+VkResult VKAPI_CALL CreateImage(VkDevice d, const VkImageCreateInfo* info, const VkAllocationCallbacks* allocator, VkImage* out) {
+    if (!out) return VK_ERROR_INITIALIZATION_FAILED;
+    *out = VK_NULL_HANDLE;
+    constexpr auto wantUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+    if (!info || info->sType != VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO || info->pNext || info->flags || allocator ||
+        info->imageType != VK_IMAGE_TYPE_2D || info->format != VK_FORMAT_R8G8B8A8_UNORM ||
+        !info->extent.width || info->extent.width > 256 || !info->extent.height || info->extent.height > 256 ||
+        info->extent.depth != 1 || info->mipLevels != 1 || info->arrayLayers != 1 ||
+        info->samples != VK_SAMPLE_COUNT_1_BIT || info->tiling != VK_IMAGE_TILING_OPTIMAL ||
+        info->usage != wantUsage || info->sharingMode != VK_SHARING_MODE_EXCLUSIVE ||
+        info->queueFamilyIndexCount || info->initialLayout != VK_IMAGE_LAYOUT_UNDEFINED)
+        return VK_ERROR_FEATURE_NOT_PRESENT;
+    return Run([=] {
+        if (!d || d != vk.guestDevice || vk.offscreenImage || vk.imageMemory || vk.frame != Frame::Idle)
+            return VK_ERROR_INITIALIZATION_FAILED;
+        const auto result = DeviceDriver<PFN_vkCreateImage>("vkCreateImage")(vk.device, info, nullptr, &vk.offscreenImage);
+        if (result != VK_SUCCESS) return result;
+        DeviceDriver<PFN_vkGetImageMemoryRequirements>("vkGetImageMemoryRequirements")(vk.device, vk.offscreenImage, &vk.imageRequirements);
+        vk.offscreenExtent = {info->extent.width, info->extent.height};
+        *out = vk.guestOffscreenImage = reinterpret_cast<VkImage>(nextHandle++);
+        return VK_SUCCESS;
+    });
+}
+
+/// Queries memory requirements of the offscreen 2D image; returns zero for stale tokens.
+void VKAPI_CALL ImageRequirements(VkDevice d, VkImage image, VkMemoryRequirements* out) {
+    if (!out) return;
+    *out = {};
+    Run([=] {
+        if (d && d == vk.guestDevice && image && image == vk.guestOffscreenImage) *out = vk.imageRequirements;
+        return VK_SUCCESS;
+    });
+}
+
+/// Binds the offscreen 2D image to its dedicated allocation at offset zero.
+VkResult VKAPI_CALL BindImage(VkDevice d, VkImage image, VkDeviceMemory memory, VkDeviceSize offset) {
+    return Run([=] {
+        if (!d || d != vk.guestDevice || !image || image != vk.guestOffscreenImage ||
+            !memory || memory != vk.guestImageMemory || vk.imageBound || offset || vk.frame != Frame::Idle)
+            return VK_ERROR_FEATURE_NOT_PRESENT;
+        const auto result = DeviceDriver<PFN_vkBindImageMemory>("vkBindImageMemory")(vk.device, vk.offscreenImage, vk.imageMemory, 0);
+        vk.imageBound = result == VK_SUCCESS;
+        return result;
+    });
+}
+
+/// Destroys the offscreen 2D image once its view is gone and the queue is idle.
+void VKAPI_CALL DestroyImage(VkDevice d, VkImage image, const VkAllocationCallbacks* allocator) {
+    Run([=] {
+        if (d && d == vk.guestDevice && image && image == vk.guestOffscreenImage && !allocator &&
+            !vk.imageView && vk.frame == Frame::Idle) {
+            DeviceDriver<PFN_vkDestroyImage>("vkDestroyImage")(vk.device, vk.offscreenImage, nullptr);
+            vk.offscreenImage = vk.guestOffscreenImage = VK_NULL_HANDLE;
+            vk.imageRequirements = {};
+            vk.offscreenExtent = {};
+            vk.imageBound = false;
+        }
+        return VK_SUCCESS;
+    });
+}
+
+/// Creates a 2D RGBA8 color view over the bound offscreen image.
+VkResult VKAPI_CALL CreateImageView(VkDevice d, const VkImageViewCreateInfo* info, const VkAllocationCallbacks* allocator, VkImageView* out) {
+    if (!out) return VK_ERROR_INITIALIZATION_FAILED;
+    *out = VK_NULL_HANDLE;
+    if (!info || info->sType != VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO || info->pNext || info->flags || allocator ||
+        info->viewType != VK_IMAGE_VIEW_TYPE_2D || info->format != VK_FORMAT_R8G8B8A8_UNORM ||
+        info->subresourceRange.aspectMask != VK_IMAGE_ASPECT_COLOR_BIT || info->subresourceRange.baseMipLevel ||
+        info->subresourceRange.levelCount != 1 || info->subresourceRange.baseArrayLayer || info->subresourceRange.layerCount != 1)
+        return VK_ERROR_FEATURE_NOT_PRESENT;
+    return Run([=] {
+        if (!d || d != vk.guestDevice || !vk.imageBound || info->image != vk.guestOffscreenImage || vk.imageView || vk.frame != Frame::Idle)
+            return VK_ERROR_INITIALIZATION_FAILED;
+        auto host = *info;
+        host.image = vk.offscreenImage;
+        const auto result = DeviceDriver<PFN_vkCreateImageView>("vkCreateImageView")(vk.device, &host, nullptr, &vk.imageView);
+        if (result == VK_SUCCESS) *out = vk.guestImageView = reinterpret_cast<VkImageView>(nextHandle++);
+        return result;
+    });
+}
+
+/// Destroys the offscreen image view once no framebuffer references it.
+void VKAPI_CALL DestroyImageView(VkDevice d, VkImageView view, const VkAllocationCallbacks* allocator) {
+    Run([=] {
+        if (d && d == vk.guestDevice && view && view == vk.guestImageView && !allocator && !vk.framebuffer && vk.frame == Frame::Idle) {
+            DeviceDriver<PFN_vkDestroyImageView>("vkDestroyImageView")(vk.device, vk.imageView, nullptr);
+            vk.imageView = vk.guestImageView = VK_NULL_HANDLE;
+        }
+        return VK_SUCCESS;
+    });
+}
+
+/// Creates a SPIR-V shader module, bridging optional guest VkAllocationCallbacks on the calling guest thread.
+VkResult VKAPI_CALL CreateShaderModule(VkDevice d, const VkShaderModuleCreateInfo* info,
+                                       const VkAllocationCallbacks* allocator, VkShaderModule* out) {
+    if (!out) return VK_ERROR_INITIALIZATION_FAILED;
+    *out = VK_NULL_HANDLE;
+    if (!info || info->sType != VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO || info->pNext || info->flags ||
+        !info->pCode || info->codeSize < 20 || info->codeSize > 65536 || (info->codeSize % 4) != 0 ||
+        info->pCode[0] != 0x07230203u) return VK_ERROR_FEATURE_NOT_PRESENT;
+    if (allocator && !ValidAllocator(allocator)) return VK_ERROR_FEATURE_NOT_PRESENT;
+    void* guestMem = nullptr;
+    if (allocator) {
+        guestMem = InvokeGuestAlloc(allocator->pfnAllocation, allocator->pUserData,
+                                    info->codeSize, alignof(uint64_t), VK_SYSTEM_ALLOCATION_SCOPE_OBJECT);
+        if (!guestMem) return VK_ERROR_OUT_OF_HOST_MEMORY;
+    }
+    const auto result = Run([&] {
+        if (!d || d != vk.guestDevice || vk.frame != Frame::Idle) return VK_ERROR_INITIALIZATION_FAILED;
+        size_t slot = vk.shaders.size();
+        for (size_t i = 0; i < vk.shaders.size(); ++i) if (!vk.shaders[i].host) { slot = i; break; }
+        if (slot == vk.shaders.size()) return VK_ERROR_TOO_MANY_OBJECTS;
+        VkShaderModule mod = VK_NULL_HANDLE;
+        const auto rc = DeviceDriver<PFN_vkCreateShaderModule>("vkCreateShaderModule")(vk.device, info, nullptr, &mod);
+        if (rc != VK_SUCCESS) return rc;
+        vk.shaders[slot] = {mod, reinterpret_cast<VkShaderModule>(nextHandle++), guestMem, allocator != nullptr};
+        *out = vk.shaders[slot].guest;
+        return VK_SUCCESS;
+    });
+    if (result != VK_SUCCESS && allocator && guestMem)
+        InvokeGuestFree(allocator->pfnFree, allocator->pUserData, guestMem);
+    return result;
+}
+
+/// Destroys a shader module and invokes the matching guest free callback when created with one.
+void VKAPI_CALL DestroyShaderModule(VkDevice d, VkShaderModule module, const VkAllocationCallbacks* allocator) {
+    if (!module) return;
+    if (allocator && !ValidAllocator(allocator)) {
+        LogLine("GRAPHICS_CAPABILITY_MISSING: guest Vulkan invalid shader allocator on destroy");
+        return;
+    }
+    void* guestMem = nullptr;
+    bool freeGuest = false;
+    Run([&] {
+        if (!d || d != vk.guestDevice || vk.frame != Frame::Idle) return VK_ERROR_INITIALIZATION_FAILED;
+        for (auto& s : vk.shaders) {
+            if (s.guest == module) {
+                if (s.usedAllocator != (allocator != nullptr)) {
+                    LogLine("GRAPHICS_CAPABILITY_MISSING: guest Vulkan mismatched shader allocator");
+                    return VK_ERROR_INITIALIZATION_FAILED;
+                }
+                DeviceDriver<PFN_vkDestroyShaderModule>("vkDestroyShaderModule")(vk.device, s.host, nullptr);
+                guestMem = s.guestAlloc;
+                freeGuest = s.usedAllocator;
+                s = {};
+                return VK_SUCCESS;
+            }
+        }
+        return VK_ERROR_INITIALIZATION_FAILED;
+    });
+    if (freeGuest && allocator) InvokeGuestFree(allocator->pfnFree, allocator->pUserData, guestMem);
+}
+
+/// Creates a single-subpass RGBA8 color render pass transitioning to transfer-source optimal.
+VkResult VKAPI_CALL CreateRenderPass(VkDevice d, const VkRenderPassCreateInfo* info,
+                                     const VkAllocationCallbacks* allocator, VkRenderPass* out) {
+    if (!out) return VK_ERROR_INITIALIZATION_FAILED;
+    *out = VK_NULL_HANDLE;
+    if (!info || info->sType != VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO || info->pNext || info->flags || allocator ||
+        info->attachmentCount != 1 || !info->pAttachments || info->subpassCount != 1 || !info->pSubpasses || info->dependencyCount)
+        return VK_ERROR_FEATURE_NOT_PRESENT;
+    const auto& att = info->pAttachments[0];
+    const auto& sub = info->pSubpasses[0];
+    if (att.flags || att.format != VK_FORMAT_R8G8B8A8_UNORM || att.samples != VK_SAMPLE_COUNT_1_BIT ||
+        att.loadOp != VK_ATTACHMENT_LOAD_OP_CLEAR || att.storeOp != VK_ATTACHMENT_STORE_OP_STORE ||
+        att.initialLayout != VK_IMAGE_LAYOUT_UNDEFINED || att.finalLayout != VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL ||
+        sub.flags || sub.pipelineBindPoint != VK_PIPELINE_BIND_POINT_GRAPHICS || sub.inputAttachmentCount ||
+        sub.colorAttachmentCount != 1 || !sub.pColorAttachments || sub.pResolveAttachments || sub.pDepthStencilAttachment ||
+        sub.preserveAttachmentCount || sub.pColorAttachments[0].attachment != 0 ||
+        sub.pColorAttachments[0].layout != VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL)
+        return VK_ERROR_FEATURE_NOT_PRESENT;
+    return Run([=] {
+        if (!d || d != vk.guestDevice || vk.renderPass || vk.frame != Frame::Idle) return VK_ERROR_INITIALIZATION_FAILED;
+        const auto result = DeviceDriver<PFN_vkCreateRenderPass>("vkCreateRenderPass")(vk.device, info, nullptr, &vk.renderPass);
+        if (result == VK_SUCCESS) *out = vk.guestRenderPass = reinterpret_cast<VkRenderPass>(nextHandle++);
+        return result;
+    });
+}
+
+/// Destroys the render pass once framebuffers and pipelines using it are gone.
+void VKAPI_CALL DestroyRenderPass(VkDevice d, VkRenderPass rp, const VkAllocationCallbacks* allocator) {
+    Run([=] {
+        if (d && d == vk.guestDevice && rp && rp == vk.guestRenderPass && !allocator &&
+            !vk.framebuffer && !vk.graphicsPipeline && vk.frame == Frame::Idle) {
+            DeviceDriver<PFN_vkDestroyRenderPass>("vkDestroyRenderPass")(vk.device, vk.renderPass, nullptr);
+            vk.renderPass = vk.guestRenderPass = VK_NULL_HANDLE;
+        }
+        return VK_SUCCESS;
+    });
+}
+
+/// Creates a framebuffer binding the offscreen RGBA8 image view to the render pass.
+VkResult VKAPI_CALL CreateFramebuffer(VkDevice d, const VkFramebufferCreateInfo* info,
+                                      const VkAllocationCallbacks* allocator, VkFramebuffer* out) {
+    if (!out) return VK_ERROR_INITIALIZATION_FAILED;
+    *out = VK_NULL_HANDLE;
+    if (!info || info->sType != VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO || info->pNext || info->flags || allocator ||
+        info->attachmentCount != 1 || !info->pAttachments || info->layers != 1)
+        return VK_ERROR_FEATURE_NOT_PRESENT;
+    return Run([=] {
+        if (!d || d != vk.guestDevice || vk.framebuffer || vk.frame != Frame::Idle ||
+            info->renderPass != vk.guestRenderPass || info->pAttachments[0] != vk.guestImageView ||
+            info->width != vk.offscreenExtent.width || info->height != vk.offscreenExtent.height)
+            return VK_ERROR_INITIALIZATION_FAILED;
+        auto host = *info;
+        host.renderPass = vk.renderPass;
+        host.pAttachments = &vk.imageView;
+        const auto result = DeviceDriver<PFN_vkCreateFramebuffer>("vkCreateFramebuffer")(vk.device, &host, nullptr, &vk.framebuffer);
+        if (result == VK_SUCCESS) *out = vk.guestFramebuffer = reinterpret_cast<VkFramebuffer>(nextHandle++);
+        return result;
+    });
+}
+
+/// Destroys the offscreen framebuffer when idle.
+void VKAPI_CALL DestroyFramebuffer(VkDevice d, VkFramebuffer fb, const VkAllocationCallbacks* allocator) {
+    Run([=] {
+        if (d && d == vk.guestDevice && fb && fb == vk.guestFramebuffer && !allocator && vk.frame == Frame::Idle) {
+            DeviceDriver<PFN_vkDestroyFramebuffer>("vkDestroyFramebuffer")(vk.device, vk.framebuffer, nullptr);
+            vk.framebuffer = vk.guestFramebuffer = VK_NULL_HANDLE;
+        }
+        return VK_SUCCESS;
+    });
+}
+
+/// Creates an empty pipeline layout for the bounded graphics shader profile.
+VkResult VKAPI_CALL CreatePipelineLayout(VkDevice d, const VkPipelineLayoutCreateInfo* info,
+                                         const VkAllocationCallbacks* allocator, VkPipelineLayout* out) {
+    if (!out) return VK_ERROR_INITIALIZATION_FAILED;
+    *out = VK_NULL_HANDLE;
+    if (!info || info->sType != VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO || info->pNext || info->flags || allocator ||
+        info->setLayoutCount || info->pushConstantRangeCount) return VK_ERROR_FEATURE_NOT_PRESENT;
+    return Run([=] {
+        if (!d || d != vk.guestDevice || vk.pipelineLayout || vk.frame != Frame::Idle) return VK_ERROR_INITIALIZATION_FAILED;
+        const auto result = DeviceDriver<PFN_vkCreatePipelineLayout>("vkCreatePipelineLayout")(vk.device, info, nullptr, &vk.pipelineLayout);
+        if (result == VK_SUCCESS) *out = vk.guestPipelineLayout = reinterpret_cast<VkPipelineLayout>(nextHandle++);
+        return result;
+    });
+}
+
+/// Destroys the pipeline layout once the graphics pipeline is gone.
+void VKAPI_CALL DestroyPipelineLayout(VkDevice d, VkPipelineLayout layout, const VkAllocationCallbacks* allocator) {
+    Run([=] {
+        if (d && d == vk.guestDevice && layout && layout == vk.guestPipelineLayout && !allocator &&
+            !vk.graphicsPipeline && vk.frame == Frame::Idle) {
+            DeviceDriver<PFN_vkDestroyPipelineLayout>("vkDestroyPipelineLayout")(vk.device, vk.pipelineLayout, nullptr);
+            vk.pipelineLayout = vk.guestPipelineLayout = VK_NULL_HANDLE;
+        }
+        return VK_SUCCESS;
+    });
+}
+
+/// Compiles one vertex+fragment graphics pipeline against the owned render pass and layout.
+VkResult VKAPI_CALL CreateGraphicsPipelines(VkDevice d, VkPipelineCache cache, uint32_t count,
+                                            const VkGraphicsPipelineCreateInfo* infos,
+                                            const VkAllocationCallbacks* allocator, VkPipeline* out) {
+    if (!out) return VK_ERROR_INITIALIZATION_FAILED;
+    if (count) *out = VK_NULL_HANDLE;
+    if (cache || count != 1 || !infos || allocator) return VK_ERROR_FEATURE_NOT_PRESENT;
+    const auto& ci = infos[0];
+    if (ci.sType != VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO || ci.pNext || ci.flags ||
+        ci.stageCount != 2 || !ci.pStages || !ci.pVertexInputState || !ci.pInputAssemblyState ||
+        ci.pTessellationState || !ci.pViewportState || !ci.pRasterizationState || !ci.pMultisampleState ||
+        ci.pDepthStencilState || !ci.pColorBlendState || ci.pDynamicState || ci.subpass != 0 || ci.basePipelineHandle)
+        return VK_ERROR_FEATURE_NOT_PRESENT;
+    if (ci.pVertexInputState->sType != VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO || ci.pVertexInputState->pNext ||
+        ci.pVertexInputState->vertexBindingDescriptionCount || ci.pVertexInputState->vertexAttributeDescriptionCount ||
+        ci.pInputAssemblyState->sType != VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO || ci.pInputAssemblyState->pNext ||
+        ci.pInputAssemblyState->topology != VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST || ci.pInputAssemblyState->primitiveRestartEnable ||
+        ci.pViewportState->sType != VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO || ci.pViewportState->pNext ||
+        ci.pViewportState->viewportCount != 1 || !ci.pViewportState->pViewports ||
+        ci.pViewportState->scissorCount != 1 || !ci.pViewportState->pScissors ||
+        ci.pRasterizationState->sType != VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO || ci.pRasterizationState->pNext ||
+        ci.pMultisampleState->sType != VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO || ci.pMultisampleState->pNext ||
+        ci.pMultisampleState->rasterizationSamples != VK_SAMPLE_COUNT_1_BIT ||
+        ci.pColorBlendState->sType != VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO || ci.pColorBlendState->pNext ||
+        ci.pColorBlendState->attachmentCount != 1 || !ci.pColorBlendState->pAttachments)
+        return VK_ERROR_FEATURE_NOT_PRESENT;
+    return Run([=] {
+        if (!d || d != vk.guestDevice || vk.graphicsPipeline || vk.frame != Frame::Idle ||
+            ci.layout != vk.guestPipelineLayout || ci.renderPass != vk.guestRenderPass)
+            return VK_ERROR_INITIALIZATION_FAILED;
+        VkPipelineShaderStageCreateInfo stages[2]{ci.pStages[0], ci.pStages[1]};
+        bool sawVert = false, sawFrag = false;
+        for (int i = 0; i < 2; ++i) {
+            if (stages[i].sType != VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO || stages[i].pNext || stages[i].flags ||
+                stages[i].pSpecializationInfo || !stages[i].pName || std::strcmp(stages[i].pName, "main") != 0)
+                return VK_ERROR_FEATURE_NOT_PRESENT;
+            VkShaderModule hostMod = VK_NULL_HANDLE;
+            for (const auto& s : vk.shaders) if (s.guest && s.guest == stages[i].module) hostMod = s.host;
+            if (!hostMod) return VK_ERROR_INITIALIZATION_FAILED;
+            stages[i].module = hostMod;
+            if (stages[i].stage == VK_SHADER_STAGE_VERTEX_BIT) sawVert = true;
+            else if (stages[i].stage == VK_SHADER_STAGE_FRAGMENT_BIT) sawFrag = true;
+        }
+        if (!sawVert || !sawFrag) return VK_ERROR_FEATURE_NOT_PRESENT;
+        auto host = ci;
+        host.pStages = stages;
+        host.layout = vk.pipelineLayout;
+        host.renderPass = vk.renderPass;
+        const auto result = DeviceDriver<PFN_vkCreateGraphicsPipelines>("vkCreateGraphicsPipelines")
+            (vk.device, VK_NULL_HANDLE, 1, &host, nullptr, &vk.graphicsPipeline);
+        if (result == VK_SUCCESS) *out = vk.guestGraphicsPipeline = reinterpret_cast<VkPipeline>(nextHandle++);
+        return result;
+    });
+}
+
+/// Destroys the graphics pipeline when idle.
+void VKAPI_CALL DestroyPipeline(VkDevice d, VkPipeline pipeline, const VkAllocationCallbacks* allocator) {
+    Run([=] {
+        if (d && d == vk.guestDevice && pipeline && pipeline == vk.guestGraphicsPipeline && !allocator && vk.frame == Frame::Idle) {
+            DeviceDriver<PFN_vkDestroyPipeline>("vkDestroyPipeline")(vk.device, vk.graphicsPipeline, nullptr);
+            vk.graphicsPipeline = vk.guestGraphicsPipeline = VK_NULL_HANDLE;
+        }
         return VK_SUCCESS;
     });
 }
@@ -839,15 +1323,116 @@ VkResult VKAPI_CALL AllocateCommand(VkDevice d, const VkCommandBufferAllocateInf
     });
 }
 
-/// Begins recording after the image's acquire fence has signaled.
+/// Begins recording either a swapchain frame (after acquire fence) or an offscreen graphics pass (when Idle).
 VkResult VKAPI_CALL BeginCommand(VkCommandBuffer cmd, const VkCommandBufferBeginInfo* info) {
     if (!info || info->sType != VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO || info->pNext || info->pInheritanceInfo ||
         info->flags != VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT) return VK_ERROR_FEATURE_NOT_PRESENT;
     return Run([=] {
-        if (!cmd || cmd != vk.guestCommand || vk.frame != Frame::Ready) return VK_ERROR_INITIALIZATION_FAILED;
+        if (!cmd || cmd != vk.guestCommand || (vk.frame != Frame::Ready && vk.frame != Frame::Idle))
+            return VK_ERROR_INITIALIZATION_FAILED;
         const auto result = DeviceDriver<PFN_vkBeginCommandBuffer>("vkBeginCommandBuffer")(vk.command, info);
-        if (result == VK_SUCCESS) { vk.frame = Frame::Recording; vk.commands = 0; }
+        if (result == VK_SUCCESS) {
+            if (vk.frame == Frame::Ready) {
+                vk.frame = Frame::Recording;
+                vk.commands = 0;
+            } else {
+                vk.frame = Frame::OffscreenRecording;
+                vk.offscreenStep = 0;
+            }
+        }
         return result;
+    });
+}
+
+/// Begins the single offscreen render pass.
+void VKAPI_CALL BeginRenderPass(VkCommandBuffer cmd, const VkRenderPassBeginInfo* info, VkSubpassContents contents) {
+    Run([=] {
+        if (!cmd || cmd != vk.guestCommand || vk.frame != Frame::OffscreenRecording) return VK_ERROR_INITIALIZATION_FAILED;
+        if (vk.offscreenStep != 0 || contents != VK_SUBPASS_CONTENTS_INLINE || !info ||
+            info->sType != VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO || info->pNext ||
+            info->renderPass != vk.guestRenderPass || info->framebuffer != vk.guestFramebuffer ||
+            info->renderArea.offset.x || info->renderArea.offset.y ||
+            info->renderArea.extent.width != vk.offscreenExtent.width ||
+            info->renderArea.extent.height != vk.offscreenExtent.height ||
+            info->clearValueCount != 1 || !info->pClearValues) {
+            vk.frame = Frame::Invalid;
+            return VK_ERROR_FEATURE_NOT_PRESENT;
+        }
+        auto host = *info;
+        host.renderPass = vk.renderPass;
+        host.framebuffer = vk.framebuffer;
+        DeviceDriver<PFN_vkCmdBeginRenderPass>("vkCmdBeginRenderPass")(vk.command, &host, contents);
+        vk.offscreenStep = 1;
+        return VK_SUCCESS;
+    });
+}
+
+/// Binds the graphics pipeline inside the offscreen render pass.
+void VKAPI_CALL BindPipeline(VkCommandBuffer cmd, VkPipelineBindPoint point, VkPipeline pipeline) {
+    Run([=] {
+        if (!cmd || cmd != vk.guestCommand || vk.frame != Frame::OffscreenRecording) return VK_ERROR_INITIALIZATION_FAILED;
+        if (vk.offscreenStep != 1 || point != VK_PIPELINE_BIND_POINT_GRAPHICS || pipeline != vk.guestGraphicsPipeline) {
+            vk.frame = Frame::Invalid;
+            return VK_ERROR_FEATURE_NOT_PRESENT;
+        }
+        DeviceDriver<PFN_vkCmdBindPipeline>("vkCmdBindPipeline")(vk.command, point, vk.graphicsPipeline);
+        vk.offscreenStep = 2;
+        return VK_SUCCESS;
+    });
+}
+
+/// Draws a non-indexed triangle list inside the bound offscreen graphics pass.
+void VKAPI_CALL CmdDraw(VkCommandBuffer cmd, uint32_t vertexCount, uint32_t instanceCount, uint32_t firstVertex, uint32_t firstInstance) {
+    Run([=] {
+        if (!cmd || cmd != vk.guestCommand || vk.frame != Frame::OffscreenRecording) return VK_ERROR_INITIALIZATION_FAILED;
+        if (vk.offscreenStep != 2 || vertexCount == 0 || vertexCount > 64 || instanceCount != 1 || firstVertex || firstInstance) {
+            vk.frame = Frame::Invalid;
+            return VK_ERROR_FEATURE_NOT_PRESENT;
+        }
+        DeviceDriver<PFN_vkCmdDraw>("vkCmdDraw")(vk.command, vertexCount, instanceCount, firstVertex, firstInstance);
+        vk.offscreenStep = 3;
+        return VK_SUCCESS;
+    });
+}
+
+/// Ends the offscreen render pass, transitioning the attachment to VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL.
+void VKAPI_CALL EndRenderPass(VkCommandBuffer cmd) {
+    Run([=] {
+        if (!cmd || cmd != vk.guestCommand || vk.frame != Frame::OffscreenRecording) return VK_ERROR_INITIALIZATION_FAILED;
+        if (vk.offscreenStep != 3) {
+            vk.frame = Frame::Invalid;
+            return VK_ERROR_FEATURE_NOT_PRESENT;
+        }
+        DeviceDriver<PFN_vkCmdEndRenderPass>("vkCmdEndRenderPass")(vk.command);
+        vk.offscreenStep = 4;
+        return VK_SUCCESS;
+    });
+}
+
+/// Copies the rendered offscreen 2D image into the bound coherent readback buffer.
+void VKAPI_CALL CopyImageToBuffer(VkCommandBuffer cmd, VkImage srcImage, VkImageLayout srcLayout,
+                                  VkBuffer dstBuffer, uint32_t regionCount, const VkBufferImageCopy* regions) {
+    Run([=] {
+        if (!cmd || cmd != vk.guestCommand || vk.frame != Frame::OffscreenRecording) return VK_ERROR_INITIALIZATION_FAILED;
+        const VkDeviceSize needed = VkDeviceSize{vk.offscreenExtent.width} * vk.offscreenExtent.height * 4u;
+        if (vk.offscreenStep != 4 || srcImage != vk.guestOffscreenImage || srcLayout != VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL ||
+            dstBuffer != vk.guestBuffer || !vk.bound || vk.mapped || regionCount != 1 || !regions || needed != vk.bufferSize) {
+            vk.frame = Frame::Invalid;
+            return VK_ERROR_FEATURE_NOT_PRESENT;
+        }
+        const auto& r = regions[0];
+        if (r.bufferOffset || r.bufferRowLength || r.bufferImageHeight ||
+            r.imageSubresource.aspectMask != VK_IMAGE_ASPECT_COLOR_BIT || r.imageSubresource.mipLevel ||
+            r.imageSubresource.baseArrayLayer || r.imageSubresource.layerCount != 1 ||
+            r.imageOffset.x || r.imageOffset.y || r.imageOffset.z ||
+            r.imageExtent.width != vk.offscreenExtent.width || r.imageExtent.height != vk.offscreenExtent.height || r.imageExtent.depth != 1) {
+            vk.frame = Frame::Invalid;
+            return VK_ERROR_FEATURE_NOT_PRESENT;
+        }
+        DeviceDriver<PFN_vkCmdCopyImageToBuffer>("vkCmdCopyImageToBuffer")
+            (vk.command, vk.offscreenImage, srcLayout, vk.buffer, 1, regions);
+        vk.offscreenStep = 5;
+        return VK_SUCCESS;
     });
 }
 
@@ -862,8 +1447,11 @@ void VKAPI_CALL Barrier(VkCommandBuffer cmd, VkPipelineStageFlags src, VkPipelin
     uint32_t memoryCount, const VkMemoryBarrier*, uint32_t bufferCount, const VkBufferMemoryBarrier* buffers,
     uint32_t count, const VkImageMemoryBarrier* barriers) {
     Run([=] {
-        if (!cmd || cmd != vk.guestCommand || vk.frame != Frame::Recording) return VK_ERROR_INITIALIZATION_FAILED;
-        if (vk.commands == 4 && !flags && !memoryCount && !count && bufferCount == 1 && buffers &&
+        if (!cmd || cmd != vk.guestCommand || (vk.frame != Frame::Recording && vk.frame != Frame::OffscreenRecording))
+            return VK_ERROR_INITIALIZATION_FAILED;
+        if (((vk.frame == Frame::Recording && vk.commands == 4) ||
+             (vk.frame == Frame::OffscreenRecording && vk.offscreenStep == 5)) &&
+            !flags && !memoryCount && !count && bufferCount == 1 && buffers &&
             src == VK_PIPELINE_STAGE_TRANSFER_BIT && dst == VK_PIPELINE_STAGE_HOST_BIT) {
             auto host = buffers[0];
             if (host.sType == VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER && !host.pNext && host.buffer == vk.guestBuffer &&
@@ -872,9 +1460,14 @@ void VKAPI_CALL Barrier(VkCommandBuffer cmd, VkPipelineStageFlags src, VkPipelin
                 !host.offset && host.size == vk.bufferSize) {
                 host.buffer = vk.buffer;
                 DeviceDriver<PFN_vkCmdPipelineBarrier>("vkCmdPipelineBarrier")(vk.command, src, dst, 0, 0, nullptr, 1, &host, 0, nullptr);
-                ++vk.commands;
+                if (vk.frame == Frame::Recording) ++vk.commands;
+                else ++vk.offscreenStep;
                 return VK_SUCCESS;
             }
+        }
+        if (vk.frame != Frame::Recording) {
+            vk.frame = Frame::Invalid;
+            return VK_ERROR_FEATURE_NOT_PRESENT;
         }
         const auto& image = vk.images[vk.imageIndex];
         const bool before = vk.commands == 0 && src == VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT && dst == VK_PIPELINE_STAGE_TRANSFER_BIT;
@@ -930,14 +1523,21 @@ void VKAPI_CALL FillBuffer(VkCommandBuffer cmd, VkBuffer buffer, VkDeviceSize of
     });
 }
 
-/// Ends a transfer clear with or without the optional fill and its required barrier.
+/// Ends a transfer clear or offscreen graphics pass with its required barrier.
 VkResult VKAPI_CALL EndCommand(VkCommandBuffer cmd) {
     return Run([=] {
         if (!cmd || cmd != vk.guestCommand ||
-            (vk.frame != Frame::Recording && vk.frame != Frame::Invalid)) return VK_ERROR_INITIALIZATION_FAILED;
-        const bool complete = vk.frame == Frame::Recording && (vk.commands == 3 || vk.commands == 5);
+            (vk.frame != Frame::Recording && vk.frame != Frame::OffscreenRecording && vk.frame != Frame::Invalid))
+            return VK_ERROR_INITIALIZATION_FAILED;
+        const bool wasOffscreen = vk.frame == Frame::OffscreenRecording;
+        const bool complete = (vk.frame == Frame::Recording && (vk.commands == 3 || vk.commands == 5)) ||
+                              (wasOffscreen && vk.offscreenStep == 6);
         const auto result = DeviceDriver<PFN_vkEndCommandBuffer>("vkEndCommandBuffer")(vk.command);
-        vk.frame = complete && result == VK_SUCCESS ? Frame::Executable : Frame::Ready;
+        if (complete && result == VK_SUCCESS) {
+            vk.frame = wasOffscreen ? Frame::OffscreenExecutable : Frame::Executable;
+        } else {
+            vk.frame = wasOffscreen ? Frame::Idle : Frame::Ready;
+        }
         return complete ? result : VK_ERROR_FEATURE_NOT_PRESENT;
     });
 }
@@ -948,12 +1548,14 @@ VkResult VKAPI_CALL Submit(VkQueue q, uint32_t n, const VkSubmitInfo* info, VkFe
         if (!q || q != vk.guestQueue || n != 1 || !info || info->sType != VK_STRUCTURE_TYPE_SUBMIT_INFO ||
             info->pNext || info->waitSemaphoreCount || info->signalSemaphoreCount || fence ||
             info->commandBufferCount != 1 || !info->pCommandBuffers || *info->pCommandBuffers != vk.guestCommand ||
-            vk.frame != Frame::Executable) return VK_ERROR_INITIALIZATION_FAILED;
+            (vk.frame != Frame::Executable && vk.frame != Frame::OffscreenExecutable)) return VK_ERROR_INITIALIZATION_FAILED;
+        const bool offscreen = vk.frame == Frame::OffscreenExecutable;
         auto host = *info;
         host.pCommandBuffers = &vk.command;
-        if (vk.commands == 5) vk.bufferReadable = false;
+        if (offscreen || vk.commands == 5) vk.bufferReadable = false;
         const auto result = DeviceDriver<PFN_vkQueueSubmit>("vkQueueSubmit")(vk.queue, 1, &host, VK_NULL_HANDLE);
-        vk.frame = result == VK_SUCCESS ? Frame::Submitted : Frame::Ready;
+        if (offscreen) vk.frame = result == VK_SUCCESS ? Frame::OffscreenSubmitted : Frame::Idle;
+        else vk.frame = result == VK_SUCCESS ? Frame::Submitted : Frame::Ready;
         return result;
     });
 }
@@ -966,6 +1568,9 @@ VkResult VKAPI_CALL QueueIdle(VkQueue q) {
         if (vk.frame == Frame::Submitted) {
             vk.frame = result == VK_SUCCESS ? Frame::Complete : Frame::Ready;
             if (result == VK_SUCCESS && vk.commands == 5) vk.bufferReadable = true;
+        } else if (vk.frame == Frame::OffscreenSubmitted) {
+            vk.frame = Frame::Idle;
+            if (result == VK_SUCCESS) vk.bufferReadable = true;
         }
         return result;
     });
@@ -1002,14 +1607,15 @@ PFN_vkVoidFunction VKAPI_CALL Proc(VkInstance instance, const char* name);
 PFN_vkVoidFunction VKAPI_CALL DeviceProc(VkDevice device, const char* name);
 
 /// Describes one audited fixed-signature import and its resolution scope.
-enum class Scope { Global, Instance, Surface, AndroidSurface, Device };
-struct Entry { guest::HostSymbol symbol; Scope scope; };
+enum class Scope { Global, Instance, Surface, AndroidSurface, DebugReport, Device };
+struct Entry { guest::HostSymbol symbol; Scope scope; bool exported = true; };
 /// Type-checks each registered wrapper against the locked Vulkan Headers PFN.
-template<class P, class F> Entry CheckedEntry(const char* name, F fn, Scope scope) {
+template<class P, class F> Entry CheckedEntry(const char* name, F fn, Scope scope, bool exported = true) {
     static_assert(std::is_same_v<P, F>);
-    return {{name, reinterpret_cast<void*>(fn)}, scope};
+    return {{name, reinterpret_cast<void*>(fn)}, scope, exported};
 }
 #define ENTRY(name, fn, scope) CheckedEntry<PFN_##name>(#name, &fn, Scope::scope)
+#define EXT_ENTRY(name, fn, scope) CheckedEntry<PFN_##name>(#name, &fn, Scope::scope, false)
 const Entry entries[] = {
     ENTRY(vkGetInstanceProcAddr, Proc, Global),
     ENTRY(vkEnumerateInstanceVersion, Version, Global),
@@ -1026,6 +1632,9 @@ const Entry entries[] = {
     ENTRY(vkGetPhysicalDeviceSurfaceCapabilitiesKHR, Capabilities, Surface),
     ENTRY(vkGetPhysicalDeviceSurfaceFormatsKHR, Formats, Surface),
     ENTRY(vkGetPhysicalDeviceSurfacePresentModesKHR, PresentModes, Surface),
+    EXT_ENTRY(vkCreateDebugReportCallbackEXT, CreateDebugReportCallback, DebugReport),
+    EXT_ENTRY(vkDestroyDebugReportCallbackEXT, DestroyDebugReportCallback, DebugReport),
+    EXT_ENTRY(vkDebugReportMessageEXT, DebugReportMessage, DebugReport),
     ENTRY(vkEnumerateDeviceExtensionProperties, DeviceExtensions, Instance),
     ENTRY(vkCreateDevice, CreateDevice, Instance),
     ENTRY(vkGetDeviceProcAddr, DeviceProc, Instance),
@@ -1054,11 +1663,33 @@ const Entry entries[] = {
     ENTRY(vkDestroyBuffer, DestroyBuffer, Device),
     ENTRY(vkFreeMemory, FreeMemory, Device),
     ENTRY(vkCmdFillBuffer, FillBuffer, Device),
+    ENTRY(vkCreateImage, CreateImage, Device),
+    ENTRY(vkGetImageMemoryRequirements, ImageRequirements, Device),
+    ENTRY(vkBindImageMemory, BindImage, Device),
+    ENTRY(vkDestroyImage, DestroyImage, Device),
+    ENTRY(vkCreateImageView, CreateImageView, Device),
+    ENTRY(vkDestroyImageView, DestroyImageView, Device),
+    ENTRY(vkCreateShaderModule, CreateShaderModule, Device),
+    ENTRY(vkDestroyShaderModule, DestroyShaderModule, Device),
+    ENTRY(vkCreateRenderPass, CreateRenderPass, Device),
+    ENTRY(vkDestroyRenderPass, DestroyRenderPass, Device),
+    ENTRY(vkCreateFramebuffer, CreateFramebuffer, Device),
+    ENTRY(vkDestroyFramebuffer, DestroyFramebuffer, Device),
+    ENTRY(vkCreatePipelineLayout, CreatePipelineLayout, Device),
+    ENTRY(vkDestroyPipelineLayout, DestroyPipelineLayout, Device),
+    ENTRY(vkCreateGraphicsPipelines, CreateGraphicsPipelines, Device),
+    ENTRY(vkDestroyPipeline, DestroyPipeline, Device),
+    ENTRY(vkCmdBeginRenderPass, BeginRenderPass, Device),
+    ENTRY(vkCmdBindPipeline, BindPipeline, Device),
+    ENTRY(vkCmdDraw, CmdDraw, Device),
+    ENTRY(vkCmdEndRenderPass, EndRenderPass, Device),
+    ENTRY(vkCmdCopyImageToBuffer, CopyImageToBuffer, Device),
     ENTRY(vkEndCommandBuffer, EndCommand, Device),
     ENTRY(vkQueueSubmit, Submit, Device),
     ENTRY(vkQueueWaitIdle, QueueIdle, Device),
     ENTRY(vkQueuePresentKHR, Present, Device),
 };
+#undef EXT_ENTRY
 #undef ENTRY
 
 /// Resolves only a declared bridge entry, never a driver pointer.
@@ -1067,11 +1698,12 @@ PFN_vkVoidFunction VKAPI_CALL Proc(VkInstance instance, const char* name) {
     for (const auto& entry : entries) {
         if (std::strcmp(entry.symbol.name, name) != 0) continue;
         if (entry.scope == Scope::Global && !instance) return reinterpret_cast<PFN_vkVoidFunction>(entry.symbol.address);
-        if (!instance) return nullptr;
+        if (!instance || entry.scope == Scope::Device) return nullptr;
         return Run([&] {
             return instance == vk.guestInstance &&
                 (entry.scope != Scope::Surface || vk.surfaceExtension) &&
-                (entry.scope != Scope::AndroidSurface || vk.androidSurfaceExtension)
+                (entry.scope != Scope::AndroidSurface || vk.androidSurfaceExtension) &&
+                (entry.scope != Scope::DebugReport || vk.debugReportExtension)
                 ? VK_SUCCESS : VK_ERROR_INITIALIZATION_FAILED;
         }) == VK_SUCCESS ? reinterpret_cast<PFN_vkVoidFunction>(entry.symbol.address) : nullptr;
     }
@@ -1092,9 +1724,11 @@ PFN_vkVoidFunction VKAPI_CALL DeviceProc(VkDevice device, const char* name) {
 
 void AddGuestVulkanLibrary(std::vector<guest::BuiltinLibrary>& libraries) {
     guest::BuiltinLibrary library{"libvulkan.so", {}, ""};
-    for (const auto& entry : entries) library.symbols.push_back(entry.symbol);
+    for (const auto& entry : entries) if (entry.exported) library.symbols.push_back(entry.symbol);
     libraries.push_back(std::move(library));
 }
+
+void SetGuestVulkanModules(guest::ModuleSet* modules) { g_guestModules = modules; }
 
 bool GuestVulkanOwnsWindow() { return vk.surface && !vk.retired; }
 

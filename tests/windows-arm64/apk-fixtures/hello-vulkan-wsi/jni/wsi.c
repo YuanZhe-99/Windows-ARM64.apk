@@ -1,10 +1,18 @@
 #include <android/native_window_jni.h>
 #include <stdint.h>
 #include <stddef.h>
+#include <stdlib.h>
 #include <string.h>
 
 #define VK_USE_PLATFORM_ANDROID_KHR
 #include <vulkan/vulkan.h>
+
+static const uint32_t tri_vert_spv[] =
+#include "tri.vert.inc"
+;
+static const uint32_t tri_frag_spv[] =
+#include "tri.frag.inc"
+;
 
 _Static_assert(sizeof(VkInstanceCreateInfo) == 64 && sizeof(VkApplicationInfo) == 48, "instance ABI");
 _Static_assert(sizeof(VkAndroidSurfaceCreateInfoKHR) == 32 && offsetof(VkAndroidSurfaceCreateInfoKHR, window) == 24, "Android surface ABI");
@@ -27,6 +35,62 @@ static ANativeWindow* native;
 static PFN_vkCreateAndroidSurfaceKHR create_surface;
 static PFN_vkGetPhysicalDeviceSurfaceCapabilitiesKHR caps;
 static PFN_vkQueuePresentKHR present_frame;
+static VkDebugReportCallbackEXT debug_handle;
+static PFN_vkDestroyDebugReportCallbackEXT destroy_debug;
+
+typedef struct {
+    uint32_t magic;
+    int allocs;
+    int frees;
+    int fail_next;
+} guest_alloc_state;
+
+static void* VKAPI_PTR guest_alloc(void* user, size_t size, size_t align, VkSystemAllocationScope scope) {
+    (void)align;
+    (void)scope;
+    guest_alloc_state* st = (guest_alloc_state*)user;
+    if (!st || st->magic != 0xA110CA7Eu) return NULL;
+    if (st->fail_next) {
+        st->fail_next = 0;
+        return NULL;
+    }
+    void* p = malloc(size ? size : 1);
+    if (p) st->allocs++;
+    return p;
+}
+
+static void* VKAPI_PTR guest_realloc(void* user, void* orig, size_t size, size_t align, VkSystemAllocationScope scope) {
+    (void)align;
+    (void)scope;
+    guest_alloc_state* st = (guest_alloc_state*)user;
+    if (!st || st->magic != 0xA110CA7Eu) return NULL;
+    return realloc(orig, size ? size : 1);
+}
+
+static void VKAPI_PTR guest_free(void* user, void* mem) {
+    guest_alloc_state* st = (guest_alloc_state*)user;
+    if (!st || st->magic != 0xA110CA7Eu || !mem) return;
+    st->frees++;
+    free(mem);
+}
+
+typedef struct {
+    uint32_t seen;
+    int32_t code;
+} guest_debug_state;
+
+static VkBool32 VKAPI_PTR guest_debug_cb(VkDebugReportFlagsEXT flags, VkDebugReportObjectTypeEXT obj_type,
+                                         uint64_t obj, size_t loc, int32_t code,
+                                         const char* prefix, const char* msg, void* user) {
+    guest_debug_state* st = (guest_debug_state*)user;
+    if (st && flags == VK_DEBUG_REPORT_WARNING_BIT_EXT && obj_type == VK_DEBUG_REPORT_OBJECT_TYPE_INSTANCE_EXT &&
+        obj == 0x42u && loc == 7u && prefix && strcmp(prefix, "t13") == 0 && msg && strcmp(msg, "guest-cb-ok") == 0) {
+        st->seen++;
+        st->code = code;
+    }
+    return VK_FALSE;
+}
+static guest_debug_state debug_state;
 
 /** Checks the fixed device, synchronization and command buffer layouts on Android ARM64. */
 _Static_assert(sizeof(VkDeviceQueueCreateInfo) == 40 && sizeof(VkDeviceCreateInfo) == 72 &&
@@ -35,6 +99,11 @@ _Static_assert(sizeof(VkDeviceQueueCreateInfo) == 40 && sizeof(VkDeviceCreateInf
 _Static_assert(sizeof(VkBufferCreateInfo) == 56 && sizeof(VkMemoryAllocateInfo) == 32 &&
     sizeof(VkMemoryRequirements) == 24 && sizeof(VkPhysicalDeviceMemoryProperties) == 520 &&
     sizeof(VkBufferMemoryBarrier) == 56, "transfer ABI");
+_Static_assert(sizeof(VkAllocationCallbacks) == 48 && sizeof(VkShaderModuleCreateInfo) == 40 &&
+    sizeof(VkImageCreateInfo) == 88 && sizeof(VkImageViewCreateInfo) == 80 &&
+    sizeof(VkRenderPassCreateInfo) == 64 && sizeof(VkFramebufferCreateInfo) == 64 &&
+    sizeof(VkPipelineLayoutCreateInfo) == 48 && sizeof(VkGraphicsPipelineCreateInfo) == 144 &&
+    sizeof(VkRenderPassBeginInfo) == 64 && sizeof(VkBufferImageCopy) == 56, "graphics pipeline ABI");
 
 /** Creates real WSI and checks that the bridge, rather than the guest, retains its native window. */
 static int attach(JNIEnv* env, jobject holder) {
@@ -57,14 +126,15 @@ JNIEXPORT jint JNICALL Java_org_winapk_fixture_vulkanwsi_MainActivity_open(JNIEn
     uint32_t count = 0;
     VkResult result = vkEnumerateInstanceExtensionProperties(NULL, &count, NULL);
     if (result == VK_ERROR_INITIALIZATION_FAILED || (!result && !count)) return -1;
-    if (result || count != 2) return 2;
-    VkExtensionProperties exts[2];
+    if (result || count != 3) return 2;
+    VkExtensionProperties exts[3];
     count = 1;
     if (vkEnumerateInstanceExtensionProperties(NULL, &count, exts) != VK_INCOMPLETE || count != 1) return 3;
-    count = 2;
-    if (vkEnumerateInstanceExtensionProperties(NULL, &count, exts) || count != 2 ||
+    count = 3;
+    if (vkEnumerateInstanceExtensionProperties(NULL, &count, exts) || count != 3 ||
         strcmp(exts[0].extensionName, VK_KHR_SURFACE_EXTENSION_NAME) ||
-        strcmp(exts[1].extensionName, VK_KHR_ANDROID_SURFACE_EXTENSION_NAME)) return 4;
+        strcmp(exts[1].extensionName, VK_KHR_ANDROID_SURFACE_EXTENSION_NAME) ||
+        strcmp(exts[2].extensionName, VK_EXT_DEBUG_REPORT_EXTENSION_NAME)) return 4;
 
     VkApplicationInfo app = { .sType = VK_STRUCTURE_TYPE_APPLICATION_INFO, .apiVersion = VK_API_VERSION_1_0 };
     VkInstanceCreateInfo ci = { .sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO, .pApplicationInfo = &app };
@@ -72,8 +142,12 @@ JNIEXPORT jint JNICALL Java_org_winapk_fixture_vulkanwsi_MainActivity_open(JNIEn
     ci.enabledExtensionCount = 1;
     ci.ppEnabledExtensionNames = unsupported;
     if (vkCreateInstance(&ci, NULL, &instance) != VK_ERROR_EXTENSION_NOT_PRESENT || instance) return 5;
-    const char* want[] = {VK_KHR_SURFACE_EXTENSION_NAME, VK_KHR_ANDROID_SURFACE_EXTENSION_NAME};
-    ci.enabledExtensionCount = 2;
+    const char* want[] = {
+        VK_KHR_SURFACE_EXTENSION_NAME,
+        VK_KHR_ANDROID_SURFACE_EXTENSION_NAME,
+        VK_EXT_DEBUG_REPORT_EXTENSION_NAME,
+    };
+    ci.enabledExtensionCount = 3;
     ci.ppEnabledExtensionNames = want;
     VkAllocationCallbacks allocator = {0};
     if (vkCreateInstance(&ci, &allocator, &instance) != VK_ERROR_FEATURE_NOT_PRESENT || instance) return 6;
@@ -84,12 +158,38 @@ JNIEXPORT jint JNICALL Java_org_winapk_fixture_vulkanwsi_MainActivity_open(JNIEn
     result = vkCreateInstance(&ci, NULL, &instance);
     if (result == VK_ERROR_INCOMPATIBLE_DRIVER) return -1;
     if (result || !instance || !vkGetInstanceProcAddr(instance, "vkDestroySurfaceKHR") ||
-        vkGetInstanceProcAddr(instance, "vkCreateAndroidSurfaceKHR")) return 15;
+        vkGetInstanceProcAddr(instance, "vkCreateAndroidSurfaceKHR") ||
+        vkGetInstanceProcAddr(instance, "vkCreateDebugReportCallbackEXT")) return 15;
     vkDestroyInstance(instance, NULL);
-    ci.enabledExtensionCount = 2;
+    ci.enabledExtensionCount = 3;
     result = vkCreateInstance(&ci, NULL, &instance);
     if (result == VK_ERROR_INCOMPATIBLE_DRIVER) return -1;
     if (result || !instance) return 8;
+    PFN_vkCreateDebugReportCallbackEXT create_debug =
+        (PFN_vkCreateDebugReportCallbackEXT)vkGetInstanceProcAddr(instance, "vkCreateDebugReportCallbackEXT");
+    destroy_debug =
+        (PFN_vkDestroyDebugReportCallbackEXT)vkGetInstanceProcAddr(instance, "vkDestroyDebugReportCallbackEXT");
+    PFN_vkDebugReportMessageEXT send_debug =
+        (PFN_vkDebugReportMessageEXT)vkGetInstanceProcAddr(instance, "vkDebugReportMessageEXT");
+    if (!create_debug || !destroy_debug || !send_debug) return 16;
+    VkDebugReportCallbackCreateInfoEXT bad_dbg = {
+        .sType = VK_STRUCTURE_TYPE_DEBUG_REPORT_CALLBACK_CREATE_INFO_EXT,
+        .flags = VK_DEBUG_REPORT_WARNING_BIT_EXT,
+        .pfnCallback = (PFN_vkDebugReportCallbackEXT)(uintptr_t)4
+    };
+    if (create_debug(instance, &bad_dbg, NULL, &debug_handle) != VK_ERROR_FEATURE_NOT_PRESENT || debug_handle) return 17;
+    debug_state.seen = 0;
+    debug_state.code = 0;
+    VkDebugReportCallbackCreateInfoEXT dbg_ci = {
+        .sType = VK_STRUCTURE_TYPE_DEBUG_REPORT_CALLBACK_CREATE_INFO_EXT,
+        .flags = VK_DEBUG_REPORT_WARNING_BIT_EXT,
+        .pfnCallback = &guest_debug_cb,
+        .pUserData = &debug_state
+    };
+    if (create_debug(instance, &dbg_ci, NULL, &debug_handle) != VK_SUCCESS || !debug_handle) return 18;
+    send_debug(instance, VK_DEBUG_REPORT_WARNING_BIT_EXT, VK_DEBUG_REPORT_OBJECT_TYPE_INSTANCE_EXT,
+               0x42u, 7u, 1234, "t13", "guest-cb-ok");
+    if (debug_state.seen != 1 || debug_state.code != 1234) return 19;
     create_surface = (PFN_vkCreateAndroidSurfaceKHR)vkGetInstanceProcAddr(instance, "vkCreateAndroidSurfaceKHR");
     caps = (PFN_vkGetPhysicalDeviceSurfaceCapabilitiesKHR)vkGetInstanceProcAddr(instance, "vkGetPhysicalDeviceSurfaceCapabilitiesKHR");
     if (!create_surface || create_surface != &vkCreateAndroidSurfaceKHR || !caps ||
@@ -271,6 +371,182 @@ static int show_frame(float red, float blue) {
     return 0;
 }
 
+/** Exercises offscreen VkImage, SPIR-V graphics pipeline, image-to-buffer readback and guest VkAllocationCallbacks. */
+static int run_graphics_shader_check(void) {
+    guest_alloc_state ast = { .magic = 0xA110CA7Eu, .allocs = 0, .frees = 0, .fail_next = 1 };
+    const VkAllocationCallbacks cb = {
+        .pUserData = &ast,
+        .pfnAllocation = &guest_alloc,
+        .pfnReallocation = &guest_realloc,
+        .pfnFree = &guest_free,
+    };
+    VkShaderModule vert = VK_NULL_HANDLE, frag = VK_NULL_HANDLE;
+    const VkShaderModuleCreateInfo vci = {
+        .sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
+        .codeSize = sizeof(tri_vert_spv), .pCode = tri_vert_spv
+    };
+    const VkShaderModuleCreateInfo fci = {
+        .sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
+        .codeSize = sizeof(tri_frag_spv), .pCode = tri_frag_spv
+    };
+    if (vkCreateShaderModule(device, &vci, &cb, &vert) != VK_ERROR_OUT_OF_HOST_MEMORY || vert || ast.fail_next != 0)
+        return 50;
+    if (vkCreateShaderModule(device, &vci, &cb, &vert) || !vert ||
+        vkCreateShaderModule(device, &fci, &cb, &frag) || !frag || ast.allocs != 2)
+        return 51;
+
+    VkImage img = VK_NULL_HANDLE;
+    const VkImageCreateInfo ici = {
+        .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
+        .imageType = VK_IMAGE_TYPE_2D, .format = VK_FORMAT_R8G8B8A8_UNORM,
+        .extent = {4, 4, 1}, .mipLevels = 1, .arrayLayers = 1,
+        .samples = VK_SAMPLE_COUNT_1_BIT, .tiling = VK_IMAGE_TILING_OPTIMAL,
+        .usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
+        .sharingMode = VK_SHARING_MODE_EXCLUSIVE, .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED
+    };
+    if (vkCreateImage(device, &ici, NULL, &img) || !img) return 52;
+    VkMemoryRequirements ireq;
+    vkGetImageMemoryRequirements(device, img, &ireq);
+    VkPhysicalDeviceMemoryProperties mprops;
+    vkGetPhysicalDeviceMemoryProperties(physical, &mprops);
+    uint32_t itype = 32;
+    for (uint32_t i = 0; i < mprops.memoryTypeCount && i < 32; ++i) {
+        if (ireq.memoryTypeBits & (1u << i)) {
+            itype = i;
+            if (mprops.memoryTypes[i].propertyFlags & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT) break;
+        }
+    }
+    if (itype >= 32 || !ireq.size) return 53;
+    VkDeviceMemory imem = VK_NULL_HANDLE;
+    const VkMemoryAllocateInfo iai = {
+        .sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO, .allocationSize = ireq.size, .memoryTypeIndex = itype
+    };
+    if (vkAllocateMemory(device, &iai, NULL, &imem) || !imem || vkBindImageMemory(device, img, imem, 0)) return 54;
+
+    VkImageView view = VK_NULL_HANDLE;
+    const VkImageViewCreateInfo ivci = {
+        .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO, .image = img, .viewType = VK_IMAGE_VIEW_TYPE_2D,
+        .format = VK_FORMAT_R8G8B8A8_UNORM, .subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1}
+    };
+    if (vkCreateImageView(device, &ivci, NULL, &view) || !view) return 55;
+
+    VkRenderPass rp = VK_NULL_HANDLE;
+    const VkAttachmentDescription att = {
+        .format = VK_FORMAT_R8G8B8A8_UNORM, .samples = VK_SAMPLE_COUNT_1_BIT,
+        .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR, .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
+        .stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE, .stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
+        .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED, .finalLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL
+    };
+    const VkAttachmentReference cref = {0, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL};
+    const VkSubpassDescription sub = {
+        .pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS, .colorAttachmentCount = 1, .pColorAttachments = &cref
+    };
+    const VkRenderPassCreateInfo rpci = {
+        .sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO,
+        .attachmentCount = 1, .pAttachments = &att, .subpassCount = 1, .pSubpasses = &sub
+    };
+    if (vkCreateRenderPass(device, &rpci, NULL, &rp) || !rp) return 56;
+
+    VkFramebuffer fb = VK_NULL_HANDLE;
+    const VkFramebufferCreateInfo fbci = {
+        .sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO, .renderPass = rp,
+        .attachmentCount = 1, .pAttachments = &view, .width = 4, .height = 4, .layers = 1
+    };
+    if (vkCreateFramebuffer(device, &fbci, NULL, &fb) || !fb) return 57;
+
+    VkPipelineLayout layout = VK_NULL_HANDLE;
+    const VkPipelineLayoutCreateInfo plci = { .sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO };
+    if (vkCreatePipelineLayout(device, &plci, NULL, &layout) || !layout) return 58;
+
+    const VkPipelineShaderStageCreateInfo stages[2] = {
+        { .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, .stage = VK_SHADER_STAGE_VERTEX_BIT, .module = vert, .pName = "main" },
+        { .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, .stage = VK_SHADER_STAGE_FRAGMENT_BIT, .module = frag, .pName = "main" },
+    };
+    const VkPipelineVertexInputStateCreateInfo vi = { .sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO };
+    const VkPipelineInputAssemblyStateCreateInfo ia = {
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO, .topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST
+    };
+    const VkViewport vp = {0.f, 0.f, 4.f, 4.f, 0.f, 1.f};
+    const VkRect2D sc = {{0, 0}, {4, 4}};
+    const VkPipelineViewportStateCreateInfo vs = {
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO,
+        .viewportCount = 1, .pViewports = &vp, .scissorCount = 1, .pScissors = &sc
+    };
+    const VkPipelineRasterizationStateCreateInfo rs = {
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO,
+        .polygonMode = VK_POLYGON_MODE_FILL, .cullMode = VK_CULL_MODE_NONE, .lineWidth = 1.f
+    };
+    const VkPipelineMultisampleStateCreateInfo ms = {
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO, .rasterizationSamples = VK_SAMPLE_COUNT_1_BIT
+    };
+    const VkPipelineColorBlendAttachmentState cba = { .colorWriteMask = 0xFu };
+    const VkPipelineColorBlendStateCreateInfo cb_state = {
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO, .attachmentCount = 1, .pAttachments = &cba
+    };
+    const VkGraphicsPipelineCreateInfo gpci = {
+        .sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,
+        .stageCount = 2, .pStages = stages, .pVertexInputState = &vi, .pInputAssemblyState = &ia,
+        .pViewportState = &vs, .pRasterizationState = &rs, .pMultisampleState = &ms,
+        .pColorBlendState = &cb_state, .layout = layout, .renderPass = rp, .basePipelineIndex = -1
+    };
+    VkPipeline pipe = VK_NULL_HANDLE;
+    if (vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &gpci, NULL, &pipe) || !pipe) return 59;
+
+    const VkCommandBufferBeginInfo begin = {
+        .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO, .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT
+    };
+    if (vkBeginCommandBuffer(command, &begin)) return 60;
+    const VkClearValue clear = { .color = { .float32 = {0.f, 0.f, 0.f, 1.f} } };
+    const VkRenderPassBeginInfo rpbi = {
+        .sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO, .renderPass = rp, .framebuffer = fb,
+        .renderArea = {{0, 0}, {4, 4}}, .clearValueCount = 1, .pClearValues = &clear
+    };
+    vkCmdBeginRenderPass(command, &rpbi, VK_SUBPASS_CONTENTS_INLINE);
+    vkCmdBindPipeline(command, VK_PIPELINE_BIND_POINT_GRAPHICS, pipe);
+    vkCmdDraw(command, 3, 1, 0, 0);
+    vkCmdEndRenderPass(command);
+    const VkBufferImageCopy copy = {
+        .imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1},
+        .imageExtent = {4, 4, 1}
+    };
+    vkCmdCopyImageToBuffer(command, img, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, readback, 1, &copy);
+    const VkBufferMemoryBarrier host_read = {
+        .sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
+        .srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT, .dstAccessMask = VK_ACCESS_HOST_READ_BIT,
+        .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED, .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+        .buffer = readback, .size = readback_words * sizeof(uint32_t)
+    };
+    vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_HOST_BIT,
+                         0, 0, NULL, 1, &host_read, 0, NULL);
+    if (vkEndCommandBuffer(command)) return 61;
+    const VkSubmitInfo sub_info = { .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO, .commandBufferCount = 1, .pCommandBuffers = &command };
+    if (vkQueueSubmit(queue, 1, &sub_info, VK_NULL_HANDLE) || vkQueueWaitIdle(queue)) return 62;
+
+    void* mapped = NULL;
+    if (vkMapMemory(device, storage, 0, readback_words * sizeof(uint32_t), 0, &mapped) || !mapped) return 63;
+    const uint32_t* pixels = (const uint32_t*)mapped;
+    int shader_ok = 1;
+    for (uint32_t i = 0; i < readback_words; ++i)
+        if (pixels[i] != UINT32_C(0xFFCC8822)) shader_ok = 0;
+    vkUnmapMemory(device, storage);
+    if (!shader_ok) return 64;
+
+    vkDestroyPipeline(device, pipe, NULL);
+    vkDestroyPipelineLayout(device, layout, NULL);
+    vkDestroyShaderModule(device, frag, &cb);
+    vkDestroyShaderModule(device, vert, &cb);
+    if (ast.frees != 2) return 65;
+    vkDestroyFramebuffer(device, fb, NULL);
+    vkDestroyRenderPass(device, rp, NULL);
+    vkDestroyImageView(device, view, NULL);
+    vkDestroyImage(device, img, NULL);
+    vkFreeMemory(device, imem, NULL);
+    VkMemoryRequirements stale_img;
+    vkGetImageMemoryRequirements(device, img, &stale_img);
+    if (stale_img.size || stale_img.alignment || stale_img.memoryTypeBits) return 66;
+    return 0;
+}
+
 /** Presents at launch, restore or resize, requiring the previous swapchain to be stale when rebuilding. */
 JNIEXPORT jint JNICALL Java_org_winapk_fixture_vulkanwsi_MainActivity_present(JNIEnv* env, jclass type, jboolean resized) {
     (void)env;
@@ -284,6 +560,8 @@ JNIEXPORT jint JNICALL Java_org_winapk_fixture_vulkanwsi_MainActivity_present(JN
         int status = start_device();
         if (status) return status;
         status = start_readback();
+        if (status) return status;
+        status = run_graphics_shader_check();
         if (status) return status;
     }
     int status = start_swapchain();
@@ -332,6 +610,10 @@ JNIEXPORT jboolean JNICALL Java_org_winapk_fixture_vulkanwsi_MainActivity_replac
     if (!attach(env, holder) || old == surface || caps(physical, old, &value) != VK_ERROR_SURFACE_LOST_KHR ||
         caps(physical, surface, &value)) return JNI_FALSE;
     vkDestroySurfaceKHR(instance, surface, NULL);
+    if (destroy_debug && debug_handle) {
+        destroy_debug(instance, debug_handle, NULL);
+        debug_handle = VK_NULL_HANDLE;
+    }
     vkDestroyInstance(instance, NULL);
     return vkGetInstanceProcAddr(instance, "vkDestroyInstance") == NULL;
 }

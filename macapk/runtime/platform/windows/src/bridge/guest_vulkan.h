@@ -6,6 +6,8 @@ namespace winapk::bridge {
 
 /// Adds the restricted Android Vulkan instance/WSI provider to the guest namespace.
 void AddGuestVulkanLibrary(std::vector<guest::BuiltinLibrary>& libraries);
+/// Records the active guest namespace so host->guest Vulkan callbacks verify executable ranges.
+void SetGuestVulkanModules(guest::ModuleSet* modules);
 /// Reports whether a live guest Vulkan surface owns the window's graphics endpoint.
 bool GuestVulkanOwnsWindow();
 /// Reports that the active guest Vulkan swapchain has presented to this HWND.
