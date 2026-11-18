@@ -52,7 +52,7 @@ function Copy-Payload([string]$Base, [string]$Source, [string]$Relative) {
 if ($Target -eq 'Bundle') {
     Copy-Payload $appOut 'Windows-ARM64.apk.exe' 'Windows-ARM64.apk.exe'
 }
-foreach ($file in Get-ChildItem $native -File | Where-Object { $_.Name -in @('winapk.exe','winapk-bridge.dll','winapk-probe.jar','z.dll','sqlite3.dll','capstone.dll','lzma.dll') }) {
+foreach ($file in Get-ChildItem $native -File | Where-Object { $_.Name -in @('winapk.exe','winapk-bridge.dll','winapk-probe.jar','z.dll','sqlite3.dll','capstone.dll','liblzma.dll') }) {
     Copy-Payload $native $file.Name "bin\$($file.Name)"
 }
 foreach ($req in 'winapk.exe','winapk-bridge.dll','winapk-probe.jar','z.dll','sqlite3.dll','capstone.dll') {

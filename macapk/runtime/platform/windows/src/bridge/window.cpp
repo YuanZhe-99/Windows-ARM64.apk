@@ -23,6 +23,7 @@
 #include "graphics.h"
 #include "guest_graphics.h"
 #include "guest_vulkan.h"
+#include "host_services.h"
 #include "surface.h"
 
 #include <windows.h>
@@ -603,8 +604,14 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             return TRUE;
         }
         case WM_DPICHANGED: {
+            const UINT newDpi = HIWORD(wp);
             const RECT* r = reinterpret_cast<const RECT*>(lp);
             SetWindowPos(hwnd, nullptr, r->left, r->top, r->right - r->left, r->bottom - r->top, SWP_NOZORDER | SWP_NOACTIVATE);
+            if (w->content) w->content->sizedW = w->content->sizedH = -1;
+            RECT client{};
+            if (GetClientRect(hwnd, &client)) ResizeSurface(hwnd, client.right, client.bottom);
+            InvalidateRect(hwnd, nullptr, FALSE);
+            LogLine("[winapk] window: dpi changed to " + std::to_string(newDpi) + " (scale " + std::to_string(newDpi / 96.0f) + ")");
             return 0;
         }
         case WM_CLOSE:
@@ -1095,6 +1102,12 @@ const JNINativeMethod kMethods[] = {
     M("moveTaskToFront", "()V", MoveTaskToFront),
     M("setDataSubdir", "(Ljava/lang/String;)V", SetDataSubdir),
     M("setNativeLibDir", "(Ljava/lang/String;)V", SetNativeLibDir),
+    M("hostFontFile", "(Ljava/lang/String;)Ljava/lang/String;", HostFontFile),
+    M("setSystemFontsDir", "(Ljava/lang/String;)V", SetSystemFontsDir),
+    M("setSystemProperty", "(Ljava/lang/String;Ljava/lang/String;)V", SetSystemProperty),
+    M("setSharedStorageRoot", "(Ljava/lang/String;)V", SetSharedStorageRoot),
+    M("remapProcPath", "(Ljava/lang/String;)Ljava/lang/String;", RemapProcPath),
+    M("openHostUrl", "(Ljava/lang/String;)Z", OpenHostUrl),
 };
 #undef M
 

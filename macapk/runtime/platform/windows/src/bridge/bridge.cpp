@@ -68,6 +68,13 @@ extern "C" __declspec(dllexport) jboolean winapk_bridge_register(JNIEnv* env) {
     ok = RegisterWindow(env) && ok;
     ok = RegisterGuest(env) && ok;
     ok = RegisterJavaGraphics(env) && ok;
+    // Host services (NativeOs / Clipboard) are optional on minimal HostProbe classpaths that lack macapk-loader.jar.
+    if (jclass osCls = env->FindClass("com/macapk/loader/NativeOs")) {
+        env->DeleteLocalRef(osCls);
+        ok = RegisterHostServices(env) && ok;
+    } else {
+        env->ExceptionClear();
+    }
     macapk::sqlite::RegisterNativeSqliteMethods(env);  // logs its own result, as upstream
     return ok ? JNI_TRUE : JNI_FALSE;
 }

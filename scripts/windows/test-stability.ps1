@@ -14,6 +14,7 @@ Executes:
 [CmdletBinding()]
 param(
     [string]$WinApkExe = '',
+    [string]$ApkPath = '',
     [int]$LaunchCount = 20,
     [int]$ResizeMinimizeCycles = 100,
     [int]$EnduranceSeconds = 60,
@@ -27,7 +28,7 @@ $repo = Get-RepoRoot
 $out = Join-Path $repo 'build\windows-arm64'
 if (-not $WinApkExe) { $WinApkExe = Join-Path $out 'bin\winapk.exe' }
 if (-not (Test-Path -LiteralPath $WinApkExe)) { throw "Missing winapk.exe at $WinApkExe" }
-$apk = Join-Path $repo 'tests\fixtures\hello-java.apk'
+$apk = if ($ApkPath) { $ApkPath } else { Join-Path $repo 'tests\fixtures\hello-java.apk' }
 if (-not (Test-Path -LiteralPath $apk)) { throw "Missing fixture $apk; run build.ps1 -Component Fixtures" }
 $jdk = Find-Jdk
 
@@ -35,7 +36,7 @@ Add-Type @"
 using System;
 using System.Runtime.InteropServices;
 public static class WinApkStabWin {
-    [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern IntPtr FindWindowW(string cls, string title);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern IntPtr FindWindowExW(IntPtr parent, IntPtr after, string cls, string title);
     [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
     [DllImport("user32.dll")] public static extern bool PostMessageW(IntPtr h, uint msg, IntPtr w, IntPtr l);
     [DllImport("user32.dll")] public static extern bool SetWindowPos(IntPtr h, IntPtr after, int x, int y, int cx, int cy, uint flags);
@@ -59,11 +60,14 @@ function Find-WindowByPid([int]$TargetPid, [string]$Title, [int]$TimeoutSec, $Pr
     $deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSec)
     while ([DateTime]::UtcNow -lt $deadline) {
         if ($Proc -and $Proc.HasExited) { break }
-        $h = [WinApkStabWin]::FindWindowW('WinApkAppWindow', $Title)
-        if ($h -ne [IntPtr]::Zero) {
+        $after = [IntPtr]::Zero
+        for (;;) {
+            $h = [WinApkStabWin]::FindWindowExW([IntPtr]::Zero, $after, 'WinApkAppWindow', $Title)
+            if ($h -eq [IntPtr]::Zero) { break }
             [uint32]$ownerPid = 0
             [void][WinApkStabWin]::GetWindowThreadProcessId($h, [ref]$ownerPid)
             if ([int]$ownerPid -eq $TargetPid) { return $h }
+            $after = $h
         }
         Start-Sleep -Milliseconds 40
     }

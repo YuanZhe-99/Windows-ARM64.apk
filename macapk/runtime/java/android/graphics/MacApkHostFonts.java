@@ -72,10 +72,27 @@ public final class MacApkHostFonts {
     public static final boolean ENABLED =
         !"0".equals(System.getenv("MACAPK_SYSTEM_FONTS_HOST"));
 
+    private static final boolean IS_WINDOWS =
+        System.getProperty("os.name", "").startsWith("Windows");
+
     /** One device CJK family: its fonts.xml lang attribute and, per weight, the
      *  host PostScript names to try in order (the first that resolves wins; the
-     *  later ones are older macOS faces for the same script). */
-    private static final Object[][] TABLE = {
+     *  later ones are older macOS or Windows faces for the same script). */
+    private static final Object[][] TABLE = IS_WINDOWS ? new Object[][] {
+        { "zh-Hans",
+          new Object[] { 400, "MicrosoftYaHei", "MicrosoftYaHeiUI", "SimSun" },
+          new Object[] { 700, "MicrosoftYaHei-Bold", "MicrosoftYaHeiUI-Bold" } },
+        { "zh-Hant,zh-Bopo",
+          new Object[] { 400, "MicrosoftJhengHeiRegular", "MicrosoftJhengHeiUIRegular", "PMingLiU" },
+          new Object[] { 700, "MicrosoftJhengHeiBold", "MicrosoftJhengHeiUIBold" } },
+        { "ja",
+          new Object[] { 400, "YuGothic-Regular", "YuGothicUI-Regular", "Meiryo", "MS-Gothic" },
+          new Object[] { 500, "YuGothic-Medium" },
+          new Object[] { 700, "YuGothic-Bold", "YuGothicUI-Bold", "Meiryo-Bold" } },
+        { "ko",
+          new Object[] { 400, "MalgunGothic" },
+          new Object[] { 700, "MalgunGothicBold" } },
+    } : new Object[][] {
         { "zh-Hans",
           new Object[] { 400, "PingFangSC-Regular", "HiraginoSansGB-W3", "STHeitiSC-Light" },
           new Object[] { 500, "PingFangSC-Medium" },

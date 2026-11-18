@@ -113,8 +113,16 @@ public final class MacApkSystemFonts {
             for (MacApkHostFonts.Family fam : host) {
                 for (MacApkHostFonts.Face f : fam.faces) {
                     if (linked.add(f.linkName)) {
-                        Files.createSymbolicLink(new File(part, f.linkName).toPath(),
-                                                 f.file.toPath());
+                        Path linkPath = new File(part, f.linkName).toPath();
+                        if (System.getProperty("os.name", "").startsWith("Windows")) {
+                            try {
+                                Files.createLink(linkPath, f.file.toPath());
+                            } catch (IOException linkErr) {
+                                Files.copy(f.file.toPath(), linkPath);
+                            }
+                        } else {
+                            Files.createSymbolicLink(linkPath, f.file.toPath());
+                        }
                     }
                 }
             }
@@ -150,6 +158,14 @@ public final class MacApkSystemFonts {
     }
 
     private static File root() throws IOException {
+        if (System.getProperty("os.name", "").startsWith("Windows")) {
+            String local = System.getenv("LOCALAPPDATA");
+            if (local != null && !local.isEmpty()) {
+                File d = new File(local, "Windows-ARM64.apk/Caches/android-system-fonts");
+                Files.createDirectories(d.toPath());
+                return d;
+            }
+        }
         String home = System.getProperty("user.home");
         if (home == null || home.isEmpty()) home = System.getenv("HOME");
         if (home == null || home.isEmpty()) throw new IOException("no home directory");

@@ -45,7 +45,7 @@ Local runtime ZIP from package.ps1, required for Package.
 #>
 [CmdletBinding()]
 param(
-    [ValidateSet('Host', 'Java', 'Native', 'Bionic', 'Modules', 'Memory', 'Io', 'Faults', 'Format', 'Libraries', 'Jni', 'ApkJni', 'GraphicsHost', 'GraphicsJava', 'Surface', 'GraphicsGuest', 'VulkanWsi', 'DexJob', 'Package', 'Stability')]
+    [ValidateSet('Host', 'HostServices', 'Java', 'Native', 'Bionic', 'Modules', 'Memory', 'Io', 'Faults', 'Format', 'Libraries', 'Jni', 'ApkJni', 'GraphicsHost', 'GraphicsJava', 'Surface', 'GraphicsGuest', 'VulkanWsi', 'DexJob', 'Package', 'Stability')]
     [string]$Suite = 'Host',
     [string]$PackageZip
 )
@@ -154,7 +154,9 @@ Add-Type @"
 using System; using System.Runtime.InteropServices;
 public static class WinApkTestWin {
   [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern IntPtr FindWindowW(string c, string t);
+  [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern IntPtr FindWindowExW(IntPtr parent, IntPtr after, string c, string t);
   [DllImport("user32.dll")] public static extern bool PostMessageW(IntPtr h, uint m, IntPtr w, IntPtr l);
+  [DllImport("user32.dll")] public static extern IntPtr SendMessageW(IntPtr h, uint m, IntPtr w, ref RECT l);
   [DllImport("user32.dll")] public static extern bool GetClientRect(IntPtr h, out RECT r);
   [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h, out RECT r);
   [DllImport("user32.dll")] public static extern bool SetWindowPos(IntPtr h, IntPtr a, int x, int y, int cx, int cy, uint f);
@@ -231,13 +233,20 @@ function Wait-Log([string]$Log, [string]$Pattern, [int]$Seconds = 30, $Process =
     $null
 }
 
-<# Finds the app window of process $Id titled $Title. #>
+<# Finds the app window of process $Id titled $Title (safe across concurrent app instances). #>
 function Find-AppWindow([int]$Id, [string]$Title, [int]$Seconds = 60, $Process = $null) {
     $until = (Get-Date).AddSeconds($Seconds)
     while ((Get-Date) -lt $until) {
         if ($Process -and $Process.HasExited) { break }
-        $h = [WinApkTestWin]::FindWindowW('WinApkAppWindow', $Title)
-        if ($h -ne [IntPtr]::Zero) { $p = 0; [WinApkTestWin]::GetWindowThreadProcessId($h, [ref]$p) | Out-Null; if ($p -eq $Id) { return $h } }
+        $after = [IntPtr]::Zero
+        for (;;) {
+            $h = [WinApkTestWin]::FindWindowExW([IntPtr]::Zero, $after, 'WinApkAppWindow', $Title)
+            if ($h -eq [IntPtr]::Zero) { break }
+            $p = 0
+            [WinApkTestWin]::GetWindowThreadProcessId($h, [ref]$p) | Out-Null
+            if ($p -eq $Id) { return $h }
+            $after = $h
+        }
         Start-Sleep -Milliseconds 250
     }
     [IntPtr]::Zero
@@ -1329,7 +1338,83 @@ function Test-Package {
     } finally { Set-TestEnv $saved }
 }
 
-switch ($Suite) { 'Host' { Test-Host } 'Java' { Test-Java } 'Native' { Test-Native } 'Bionic' { Test-Bionic } 'Modules' { Test-Modules } 'Memory' { Test-Bionic -Command memory } 'Io' { Test-Bionic -Command io } 'Faults' { Test-Bionic -Command faults } 'Format' { Test-Bionic -Command format } 'Libraries' { Test-Libraries } 'Jni' { Test-Jni } 'ApkJni' { Test-ApkJni } 'GraphicsHost' { Test-GraphicsHost } 'GraphicsJava' { Test-GraphicsJava } 'Surface' { Test-Surface } 'GraphicsGuest' { Test-GraphicsGuest } 'VulkanWsi' { Test-VulkanWsi } 'DexJob' { Test-DexJob } 'Package' { Test-Package } 'Stability' { & "$PSScriptRoot\test-stability.ps1"; if ($LASTEXITCODE) { $script:failed++ } } }
+<# Verifies NativeOs, isolated host clipboard, DirectWrite fonts, /proc synthesis, URL allowlist and WM_DPICHANGED. #>
+function Test-HostServices {
+    $jdk = Find-Jdk
+    $lib = Join-Path $out 'lib'
+    $bridge = Join-Path $out 'bin\winapk-bridge.dll'
+    if (-not (Test-Path $bridge)) { throw "Missing $bridge; run build.ps1 -Component Host" }
+    $root = Join-Path $out ('test-data\host-services-' + [guid]::NewGuid().ToString('N'))
+    $classes = Join-Path $root 'classes'
+    $work = Join-Path $root 'work'
+    $urlCap = Join-Path $root 'url-capture.txt'
+    New-Item -ItemType Directory -Force $classes, $work | Out-Null
+
+    $cp = "$lib\android-framework.jar;$lib\macapk-loader.jar;$lib\bcprov-jdk18on-1.79.jar"
+    Invoke-Checked (Join-Path $jdk 'bin\javac.exe') @(
+        '--release', '21', '-encoding', 'UTF-8', '-cp', $cp, '-d', $classes,
+        (Join-Path $repo 'tests\windows-arm64\host-probes\HostServicesProbe.java')
+    )
+    $saved = @{
+        MACAPK_CLIPBOARD_TEST_PASTEBOARD = [Environment]::GetEnvironmentVariable('MACAPK_CLIPBOARD_TEST_PASTEBOARD')
+        WINAPK_TEST_CAPTURE_URL = [Environment]::GetEnvironmentVariable('WINAPK_TEST_CAPTURE_URL')
+        PATH = [Environment]::GetEnvironmentVariable('PATH')
+    }
+    Set-TestEnv @{
+        MACAPK_CLIPBOARD_TEST_PASTEBOARD = 'unique'
+        WINAPK_TEST_CAPTURE_URL = $urlCap
+        PATH = "$(Split-Path $bridge);$($saved.PATH)"
+    }
+    try {
+        $javaArgs = @(
+            '-Xcheck:jni',
+            "--patch-module=java.base=$lib\java_base_patch",
+            "--patch-module=jdk.unsupported=$lib\jdk_unsupported_patch",
+            '--enable-native-access=ALL-UNNAMED',
+            '--add-opens=java.base/java.io=ALL-UNNAMED',
+            '--add-opens=java.base/java.lang=ALL-UNNAMED',
+            '-cp', "$classes;$cp", 'HostServicesProbe', $bridge, $work, $urlCap
+        )
+        $probeOut = & (Join-Path $jdk 'bin\java.exe') @javaArgs 2>&1
+        $probeCode = $LASTEXITCODE
+        $txt = ($probeOut -join "`n")
+        Check 'HostServices.nativeOs' ($probeCode -eq 0 -and $txt -match 'PASS NativeOs fd/memfd/lock/sysconf/statvfs/env/xz') 'fd/memfd/flock/sysconf/statvfs/env/liblzma xz positive + negative'
+        Check 'HostServices.clipboard' ($probeCode -eq 0 -and $txt -match 'PASS ClipboardManager isolated roundtrip') 'isolated pasteboard UTF-16 emoji, CF_HTML, ConcealedType and focus gate'
+        Check 'HostServices.fontsProcUrl' ($probeCode -eq 0 -and $txt -match 'PASS DirectWrite host fonts, /proc synthesis and openHostUrl allowlist' -and
+            $txt -notmatch 'WARNING in native method|FATAL ERROR in native method') 'DirectWrite CJK fonts.xml, /proc/meminfo + status, URL scheme allowlist and CheckJNI'
+        if ($probeCode -ne 0) { Write-Host $txt }
+    } finally {
+        Set-TestEnv $saved
+    }
+
+    # Dynamic WM_DPICHANGED check on a real WinApkAppWindow
+    $apk = Join-Path $repo 'tests\fixtures\hello-java.apk'
+    $dpiLog = Join-Path $root 'dpi.log'
+    $script:appSize = '360x720'
+    $p = Start-App $apk (Join-Path $root 'dpi-data') $dpiLog 'off'
+    try {
+        $h = Find-AppWindow $p.Id 'Hello Java' 20 $p
+        $first = Wait-Log $dpiLog 'ViewCanvasDriver: macapkDrawFrame fire #1 present' 25 $p
+        $dpiOk = $false
+        if ($h -ne [IntPtr]::Zero -and $first) {
+            $wr = New-Object WinApkTestWin+RECT
+            [void][WinApkTestWin]::GetWindowRect($h, [ref]$wr)
+            $wr.R = $wr.L + 540
+            $wr.B = $wr.T + 1080
+            $wparam = [IntPtr]((144 -shl 16) -bor 144)
+            [void][WinApkTestWin]::SendMessageW($h, 0x02E0, $wparam, [ref]$wr) # WM_DPICHANGED
+            $dpiHit = Wait-Log $dpiLog '\[winapk\] window: dpi changed to 144' 10 $p
+            $code = Close-App $h $p
+            $dpiOk = [bool]$dpiHit -and ($code -eq 0)
+        }
+        Check 'HostServices.dpiChanged' $dpiOk 'WM_DPICHANGED resizes window, invalidates surface/canvas and exits cleanly'
+    } finally {
+        if (!$p.HasExited) { $p.Kill(); $p.WaitForExit() }
+        $p.Dispose()
+    }
+}
+
+switch ($Suite) { 'Host' { Test-Host } 'HostServices' { Test-HostServices } 'Java' { Test-Java } 'Native' { Test-Native } 'Bionic' { Test-Bionic } 'Modules' { Test-Modules } 'Memory' { Test-Bionic -Command memory } 'Io' { Test-Bionic -Command io } 'Faults' { Test-Bionic -Command faults } 'Format' { Test-Bionic -Command format } 'Libraries' { Test-Libraries } 'Jni' { Test-Jni } 'ApkJni' { Test-ApkJni } 'GraphicsHost' { Test-GraphicsHost } 'GraphicsJava' { Test-GraphicsJava } 'Surface' { Test-Surface } 'GraphicsGuest' { Test-GraphicsGuest } 'VulkanWsi' { Test-VulkanWsi } 'DexJob' { Test-DexJob } 'Package' { Test-Package } 'Stability' { & "$PSScriptRoot\test-stability.ps1"; if ($LASTEXITCODE) { $script:failed++ } } }
 if ($script:failed -gt 0) { Write-Host "$script:failed check(s) failed"; exit 1 }
 Write-Host 'all checks passed'
 exit 0

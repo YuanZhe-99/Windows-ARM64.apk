@@ -33,6 +33,12 @@ public final class RunLock {
     private static volatile int sFd = -1;
 
     static File runDir() {
+        if (System.getProperty("os.name", "").startsWith("Windows")) {
+            String local = System.getenv("LOCALAPPDATA");
+            if (local != null && !local.isEmpty()) {
+                return new File(local, "Windows-ARM64.apk/run");
+            }
+        }
         return new File(SharedStorage.hostHome(), "Library/Application Support/Mac.apk/run");
     }
 
@@ -50,7 +56,7 @@ public final class RunLock {
         if (fd >= 0) {
             sFd = fd;
             NativeLog.i(TAG, "took " + path + " (started without a stub)");
-        } else if (fd != -35 /* EWOULDBLOCK on Darwin */) {
+        } else if (fd != -35 /* EWOULDBLOCK on Darwin */ && fd != -11 /* EWOULDBLOCK on Bionic/Windows bridge */) {
             NativeLog.w(TAG, "cannot take " + path + ": errno " + (-fd));
         }
     }
