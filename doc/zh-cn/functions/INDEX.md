@@ -7,10 +7,10 @@
 |---|---|---|
 | `cmd/windows-arm64-apk` | 界面的入口，对接 `winapk.Mock` | `main` |
 | `internal/gui` | 界面（[gui.md](../gui.md)）：主窗口、窗格和组、应用窗口、面板、设置、诊断 | `App`、`New`、`view`、`launch`、`group`、`showTab` |
-| `internal/winapk` | 界面对运行时的期望（契约草案）及 Mock | `Client`、`Process`、`Report`、`APK`、`State`、`Mock` |
+| `internal/winapk` | 运行时 ↔ 前端契约：真实 `winapk.exe` 客户端、`--embed` 共享内存帧/IPC 监管、私有 ARM64 OpenJDK 21 安装器、存储辅助函数及 `Mock` | `Client`、`Runtime`、`Process`、`Report`、`APK`、`State`、`InstallJava`、`MoveDataDir`、`Mock` |
 | `locales` | 界面的 ARB 目录（en、zh-Hans）及生成的访问函数 | `en.json` |
 | `macapk/runtime/platform/windows` | Windows ARM64 宿主：`winapk.exe`（`doctor`、`inspect`、`run`、`dex`）、APK/ARSC/ELF 静态读取器、JVM 和 Vulkan 探测、`windows.cmake`、`vcpkg.json`、`winapk.manifest` | `wmain`、`Run`、`ConvertDex`、`StageCode`、`BuildId`、`InspectApk`、`ResolveResources`、`InspectArm64Elf`、`FindJvm`、`CreateJvm`、`ProbeVulkan` |
-| `macapk/runtime/platform/windows/src/bridge` | `winapk-bridge.dll`：Java 宿主 native、窗口/输入/呈现、SQLite 及进程私有受限客体命名空间 | `winapk_bridge_register`、`RegisterGuest`、`GuestRuntime`、`Open`、`BindExports`、`RunOnUi`、`PresentBitmap` |
+| `macapk/runtime/platform/windows/src/bridge` | `winapk-bridge.dll`：Java 宿主 native、窗口/输入/呈现、`--embed` 共享内存/管道 IPC、SQLite 及进程私有受限客体命名空间 | `winapk_bridge_register`、`winapk_bridge_connect_embed`、`RegisterGuest`、`GuestRuntime`、`Open`、`BindExports`、`RunOnUi`、`PresentBitmap` |
 | `macapk/runtime/java/com/macapk/loader/GuestNativeLoader.java` | 仅 Windows 的客体调用点服务及应用类导出绑定 hook；宿主/JDK 加载不变 | `loadLibrary`、`load`、`defined`、`bind`、`openNative` |
 | `macapk/runtime/guest/loader` | N0/P3 ELF 依赖图、逻辑提供方、导入版本及故障范围；JNI 自身映像 hook 查询及命名空间执行准入（[native-profiles.md](../native-profiles.md)） | `Load`、`ModuleSet::Open`、`ModuleSet::FindOwn`、`ModuleSet::Executable`、`BuiltinLibrary`、`GuestFault` |
 | `macapk/runtime/guest/bionic` | 宿主线程/TLS、持久宿主线程绑定、同步、内存、文件/时间/dl/日志与客体 CRT 生命周期；Android `format.c` 及辅助库/提供方所有权（[native-profiles.md](../native-profiles.md)） | `ThreadRuntime`、`ThreadBinding`、`GuestThreadContext`、`CxaFinalize`、`BionicLibraries::Load`、`vsnprintf` |

@@ -53,6 +53,7 @@ target_link_libraries(winapk PRIVATE Vulkan::Headers ZLIB::ZLIB dxgi advapi32 bc
 # The Windows host natives (ADR-0001): loaded by winapk.exe and by a test java.exe alike.
 add_library(winapk-bridge SHARED
   ${_win}/src/bridge/bridge.cpp
+  ${_win}/src/bridge/embed.cpp
   ${_win}/src/bridge/log.cpp
   ${_win}/src/bridge/window.cpp
   ${_win}/src/bridge/graphics.cpp

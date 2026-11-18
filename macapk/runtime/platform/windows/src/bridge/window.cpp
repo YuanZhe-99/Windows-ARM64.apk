@@ -19,6 +19,7 @@
 // (1/96 inch); a point is a dp because the runtime starts with density = 160 × the window's
 // DPI scale.
 #include "bridge.h"
+#include "embed.h"
 #include "graphics.h"
 #include "guest_graphics.h"
 #include "guest_vulkan.h"
@@ -518,6 +519,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         case WM_PAINT: Paint(w); return 0;
         case WM_ERASEBKGND: return 1;
         case WM_TIMER: if (wp == kFrameTimer) Tick(w); return 0;
+        case kEmbedWindowMessage: PumpEmbedCommands(); return 0;
         case WM_LBUTTONDOWN:
             SetCapture(hwnd);
             w->pointerDown = true;
@@ -726,13 +728,80 @@ jlong JNICALL CreateWindowNative(JNIEnv* env, jclass, jstring title) {
     HWND result = nullptr;
     RunOnUi("createWindow", [&] {
         const float s = Scale(nullptr);
-        RECT r{0, 0, static_cast<LONG>(g_phoneW * s), static_cast<LONG>(g_phoneH * s)};
-        AdjustWindowRectExForDpi(&r, WS_OVERLAPPEDWINDOW, FALSE, 0, DefaultDpi());
-        HWND hwnd = CreateWindowExW(0, L"WinApkAppWindow", t.c_str(), WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT,
-                                    r.right - r.left, r.bottom - r.top, nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
+        HWND hwnd = nullptr;
+        if (IsEmbedded()) {
+            const int pw = std::max(1, static_cast<int>(std::lround(g_phoneW * s)));
+            const int ph = std::max(1, static_cast<int>(std::lround(g_phoneH * s)));
+            hwnd = CreateWindowExW(WS_EX_TOOLWINDOW, L"WinApkAppWindow", t.c_str(), WS_POPUP,
+                                   -32000, -32000, pw, ph, nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
+        } else {
+            RECT r{0, 0, static_cast<LONG>(g_phoneW * s), static_cast<LONG>(g_phoneH * s)};
+            AdjustWindowRectExForDpi(&r, WS_OVERLAPPEDWINDOW, FALSE, 0, DefaultDpi());
+            hwnd = CreateWindowExW(0, L"WinApkAppWindow", t.c_str(), WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT,
+                                   r.right - r.left, r.bottom - r.top, nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
+        }
         if (!hwnd) return;
-        g_windows[hwnd] = new Window{hwnd};
+        auto* win = new Window{hwnd};
+        g_windows[hwnd] = win;
         SetTimer(hwnd, kFrameTimer, 16, nullptr);
+        if (IsEmbedded()) {
+            SetEmbedDispatcher(hwnd, [hwnd](const EmbedCmd& cmd) {
+                auto it = g_windows.find(hwnd);
+                if (it == g_windows.end()) return;
+                Window* w = it->second;
+                RECT rc{};
+                GetClientRect(hwnd, &rc);
+                const float sc = Scale(hwnd);
+                const float vw = rc.right > 0 ? rc.right / sc : static_cast<float>(g_phoneW);
+                const float vh = rc.bottom > 0 ? rc.bottom / sc : static_cast<float>(g_phoneH);
+                switch (cmd.kind) {
+                    case EmbedCmdKind::Resize: {
+                        g_phoneW = cmd.w;
+                        g_phoneH = cmd.h;
+                        g_userLandscape = cmd.w > cmd.h;
+                        const int pw = std::max(1, static_cast<int>(std::lround(cmd.w * sc)));
+                        const int ph = std::max(1, static_cast<int>(std::lround(cmd.h * sc)));
+                        SetWindowPos(hwnd, nullptr, -32000, -32000, pw, ph, SWP_NOZORDER | SWP_NOACTIVATE);
+                        Tick(w);
+                        break;
+                    }
+                    case EmbedCmdKind::Pointer:
+                        if (g_touch) {
+                            JNIEnv* e = Env();
+                            static jmethodID mid = TouchMethod(e, "dispatch", "(IFFFF)V");
+                            if (mid) {
+                                e->CallVoidMethod(g_touch, mid, cmd.action, cmd.x, vh - cmd.y, vw, vh);
+                                CheckCallback(e, "TouchDispatcher.dispatch");
+                            }
+                        }
+                        break;
+                    case EmbedCmdKind::Wheel:
+                        if (g_touch) {
+                            JNIEnv* e = Env();
+                            static jmethodID mid = TouchMethod(e, "dispatchWheel", "(FFFFFF)Z");
+                            if (mid) {
+                                e->CallBooleanMethod(g_touch, mid, cmd.x, vh - cmd.y, vw, vh, cmd.dy, cmd.dx);
+                                CheckCallback(e, "TouchDispatcher.dispatchWheel");
+                            }
+                        }
+                        break;
+                    case EmbedCmdKind::Key: {
+                        const int code = AndroidKey(static_cast<WPARAM>(cmd.w));
+                        if (g_touch && code != 0) DispatchKey(cmd.action ? 0 : 1, code, cmd.h, cmd.meta);
+                        break;
+                    }
+                    case EmbedCmdKind::Text:
+                        for (wchar_t ch : cmd.text) Text(ch);
+                        break;
+                    case EmbedCmdKind::Back:
+                        if (g_touch) { DispatchKey(0, 4, 0, 0); DispatchKey(1, 4, 0, 0); }
+                        break;
+                    case EmbedCmdKind::Stop:
+                        SendMessageW(hwnd, WM_CLOSE, 0, 0);
+                        break;
+                }
+            });
+        }
         result = hwnd;
     });
     return reinterpret_cast<jlong>(result);
@@ -769,8 +838,13 @@ void JNICALL SetContentView(JNIEnv*, jclass, jlong window, jlong view) {
 void JNICALL ShowWindowNative(JNIEnv*, jclass, jlong window) {
     RunOnUi("showWindow", [&] {
         if (Window* w = FromHandle(window)) {
-            ShowWindow(w->hwnd, SW_SHOWNORMAL);
-            SetForegroundWindow(w->hwnd);
+            if (IsEmbedded()) {
+                SendEmbedEvent("state running");
+                Tick(w);
+            } else {
+                ShowWindow(w->hwnd, SW_SHOWNORMAL);
+                SetForegroundWindow(w->hwnd);
+            }
         }
     });
 }
@@ -893,6 +967,10 @@ void JNICALL PresentBitmap(JNIEnv* env, jclass, jintArray argb, jint w, jint h) 
         env->GetIntArrayRegion(argb, 0, w * h, reinterpret_cast<jint*>(v->pixels.data()));
         v->frameW = w;
         v->frameH = h;
+        if (IsEmbedded()) {
+            SendEmbedEvent("backend java2d");
+            PublishEmbedArgb(v->pixels.data(), w, h);
+        }
     }
     // InvalidateRect is safe from any thread.
     for (auto& [hwnd, win] : g_windows) if (win->content == v) InvalidateRect(hwnd, nullptr, FALSE);
@@ -929,7 +1007,7 @@ void Orient(bool landscape) {
             const bool wide = rc.right > rc.bottom;
             if (wide == (g_phoneW > g_phoneH) || rc.right == rc.bottom) continue;
             RECT r{0, 0, rc.bottom, rc.right};
-            AdjustWindowRectExForDpi(&r, WS_OVERLAPPEDWINDOW, FALSE, 0, GetDpiForWindow(hwnd));
+            if (!IsEmbedded()) AdjustWindowRectExForDpi(&r, WS_OVERLAPPEDWINDOW, FALSE, 0, GetDpiForWindow(hwnd));
             SetWindowPos(hwnd, nullptr, 0, 0, r.right - r.left, r.bottom - r.top, SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
         }
     });

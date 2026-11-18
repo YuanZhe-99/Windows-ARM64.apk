@@ -81,25 +81,20 @@ and versions; panes and Home say what happened in words.
 Both are written atomically (a temporary file renamed over the old one); a missing or broken
 file leaves the defaults. The `demo` folder keeps the sample run apart from a real one.
 
-## The runtime ↔ front-end contract (draft)
+## The runtime ↔ front-end contract
 
-`internal/winapk` is what the interface expects of the runtime, written from the interface's side
-before the runtime exists; the runtime agent turns it into the `winapk` CLI and the per-APK runtime
-process, changing this package and the views in the same change set where it has to differ.
+`internal/winapk` (`Runtime`) implements the runtime ↔ front-end contract over `winapk.exe` and
+one per-APK runtime process (`winapk run --embed <token>`).
 
-| Call | Expected from the runtime |
+| Call | Runtime contract |
 |---|---|
-| `Doctor(ctx, javaHome)` | `winapk doctor --json`: `Report` with the Java runtime found (own or chosen, native ARM64 or not), the machine, and each feature's level (`works`, `experimental`, `unavailable`) |
-| `Inspect(ctx, path)` | `winapk inspect --json`: `APK` with package, label, version, size, SDK levels, ABIs, native libraries, GLES/Vulkan use, the least profile needed, the verdict (`can-run`, `needs-native`, `not-yet`, `unsupported`) and the launcher icon; runs nothing |
-| `Launch(spec, report)` | One runtime process per APK; `State` updates (`starting`, `running`, `not-responding`, `stopped`, `failed` with a `PLAN.md` §14.2 category, the graphics backend, the log) until it ends |
-| `Process.Stop`, `Kill`, `Back`, `Resize` | Ask to close, end at once, Android Back, the screen's size in DIPs |
-| `Process.Reattach(window)` | Move the surface between a pane and a window of its own without restarting, or report it can't |
-| `InstallJava(ctx, dir, progress)` | Get, verify, install and test the private Java runtime in `dir`, reporting the step |
-
-Not in the draft yet, and so not done by the interface: handing the app's surface into a pane or
-a window (the plan prescribes no technique), moving the App data folder's contents, the sizes of
-app data and converted code, clearing converted code, and the automatic updates of the private
-Java runtime (the setting is kept; the runtime does the updating).
+| `Doctor(ctx, javaHome)` | `winapk doctor --json`: `Report` with the Java runtime found (own or chosen, native ARM64 or not), the machine, GPU/Vulkan/ANGLE inventory, Mac.apk commit, and each feature's level (`works`, `experimental`, `unavailable`) |
+| `Inspect(ctx, path)` | `winapk inspect --json`: `APK` with package, label (`resources.arsc`), version, size, SDK levels, permissions, ABIs, native libraries, GLES/Vulkan use, the least profile needed (`N0`–`N2`), the verdict (`can-run`, `needs-native`, `not-yet`, `unsupported`) and the launcher PNG icon; runs nothing |
+| `Launch(spec, report)` | Starts `winapk run --embed <token>` with a current-user overlapped duplex pipe (`\\.\pipe\winapk-<token>`) and double-buffered top-down `RGBA8` shared memory (`Local\winapk-frame-<token>`); streams `State` (`starting`, `running`, `stopped`, `failed` with a `PLAN.md` §14.2 category, graphics backend, structured log entries) and `*image.RGBA` frames |
+| `Process.Stop`, `Kill`, `Back`, `Resize`, input | Sends graceful `stop` (`WM_CLOSE`), immediate `Kill`, `back`, `resize` in DIPs, and `pointer`, `wheel`, `key`, `text` over the duplex pipe without coupling Win32 thread input queues |
+| `Process.Reattach(window)` | Returns `true`: the front end moves the `*ui.Bitmap` surface between a pane and a standalone window without restarting the runtime process |
+| `InstallJava(ctx, dir, progress)` / `CheckJavaUpdate` | Downloads Microsoft Build of OpenJDK 21 ARM64 over HTTPS, verifies its SHA-256 and `0xAA64` PE `jvm.dll`, extracts into `dir`, runs `winapk doctor` before swapping in, and checks for newer `21.x` digests when idle |
+| Storage helpers | `AppDataSize`, `TotalAppDataSize`, `ConvertedCodeSize`, `ClearAppData`, `ClearAppArtifacts`, `ClearConvertedCode` and `MoveDataDir` manage `<AppData>\android`, `code` and `logs` |
 
 ## Sample data
 

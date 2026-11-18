@@ -2,6 +2,7 @@
 #include "guest_graphics.h"
 #include "guest_vulkan.h"
 #include "bridge.h"
+#include "embed.h"
 
 #ifdef WINAPK_HAS_ANGLE_HEADERS
 #include <EGL/egl.h>
@@ -259,6 +260,7 @@ EGLint EnsureSurface(uint64_t resume) {
             }
             session.rendererChecked = true;
             LogLine(std::string("[winapk] guest GLES renderer backend=") + session.backend + " name=" + text);
+            SendEmbedEvent(std::string("backend gles-") + session.backend);
         }
     }
     return EGL_SUCCESS;
@@ -368,6 +370,11 @@ EGLBoolean Swap(EGLDisplay d, EGLSurface surface) {
         if (!surface || surface != session.surfaceId || !session.native) return EGL_BAD_SURFACE;
         if (session.current != id) return EGL_BAD_CURRENT_SURFACE;
         if (auto error = EnsureSurface(id); error != EGL_SUCCESS) return error;
+        if (IsEmbedded() && session.width > 0 && session.height > 0) {
+            std::vector<uint8_t> pixels(static_cast<size_t>(session.width) * static_cast<size_t>(session.height) * 4);
+            session.glReadPixels(0, 0, session.width, session.height, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
+            PublishEmbedGlRgba(pixels.data(), session.width, session.height);
+        }
         if (!session.eglSwapBuffers(session.display, session.drawable)) {
             const auto error = DriverError();
             LogLine("GRAPHICS_RENDER_FAILED: guest eglSwapBuffers error=" + std::to_string(error));

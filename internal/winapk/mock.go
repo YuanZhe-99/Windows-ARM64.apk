@@ -3,6 +3,7 @@ package winapk
 import (
 	"context"
 	"fmt"
+	"image"
 	"os"
 	"path/filepath"
 	"strings"
@@ -10,9 +11,9 @@ import (
 	"time"
 )
 
-// Mock stands in for the runtime until it exists: sample apps, a sample
-// doctor report marked Demo, and processes that only report states. No
-// APK is read and nothing runs.
+// Mock stands in for the runtime in unit tests and explicit sample previews:
+// sample apps, a sample doctor report marked Demo, and processes that report
+// deterministic states without reading or executing any APK.
 type Mock struct {
 	mu   sync.Mutex
 	java Java
@@ -31,9 +32,10 @@ func NewMock(withJava bool, step time.Duration) *Mock {
 }
 
 func mockJava(own bool) Java {
-	j := Java{Found: true, Own: own, Version: "21.0.5+11-LTS", Vendor: "Microsoft", Native: true, Path: `C:\Program Files\Microsoft\jdk-21.0.5.11-hotspot`}
+	j := Java{Found: true, Own: own, Version: "21.0.5+11-LTS", Vendor: "Microsoft", Native: true, Started: "ok", Path: `C:\Program Files\Microsoft\jdk-21.0.5.11-hotspot`}
 	if own {
 		j.Path = `%LOCALAPPDATA%\Windows-ARM64.apk\Runtime`
+		j.InstalledAt = "2 November"
 	}
 	return j
 }
@@ -43,12 +45,12 @@ func (m *Mock) Samples() []APK { return samples() }
 
 func samples() []APK {
 	return []APK{
-		{Path: "sample:NotesLite.apk", Package: "com.example.noteslite", Label: "Notes Lite", Version: "1.4", Size: 3_100_000, MinSDK: 24, TargetSDK: 34, Verdict: CanRun},
-		{Path: "sample:GLTriangle.apk", Package: "com.example.gltriangle", Label: "GL Triangle", Version: "1.0", Size: 2_400_000, MinSDK: 26, TargetSDK: 34, ABIs: []string{"arm64-v8a"}, NativeLibs: []string{"lib/arm64-v8a/libgltriangle.so"}, GLES: true, Profile: N2, Verdict: CanRun},
-		{Path: "sample:HelloJava.apk", Package: "com.example.hellojava", Label: "Hello Java", Version: "1.0", Size: 900_000, MinSDK: 21, TargetSDK: 34, Verdict: CanRun},
-		{Path: "sample:TilePuzzle-2.3.apk", Package: "com.example.tilepuzzle", Label: "Tile Puzzle", Version: "2.3", Size: 8_400_000, MinSDK: 24, TargetSDK: 34, ABIs: []string{"arm64-v8a", "armeabi-v7a"}, NativeLibs: []string{"lib/arm64-v8a/libtiles.so", "lib/arm64-v8a/libpng16.so", "lib/armeabi-v7a/libtiles.so"}, GLES: true, Profile: N1, Verdict: NeedsNative},
-		{Path: "sample:VulkanCube.apk", Package: "com.example.vulkancube", Label: "Vulkan Cube", Version: "0.9", Size: 5_200_000, MinSDK: 28, TargetSDK: 34, ABIs: []string{"arm64-v8a"}, NativeLibs: []string{"lib/arm64-v8a/libcube.so"}, Vulkan: true, Profile: N2, Verdict: NotYet},
-		{Path: "sample:OldCalc.apk", Package: "com.example.oldcalc", Label: "Old Calc", Version: "3.1", Size: 1_200_000, MinSDK: 14, TargetSDK: 19, ABIs: []string{"armeabi-v7a"}, NativeLibs: []string{"lib/armeabi-v7a/libcalc.so"}, Verdict: Unsupported},
+		{Path: "sample:NotesLite.apk", Package: "com.example.noteslite", Label: "Notes Lite", Version: "1.4", Size: 3_100_000, MinSDK: 24, TargetSDK: 34, Permissions: []string{"android.permission.INTERNET"}, Verdict: CanRun, SHA256: "31a8bc901e"},
+		{Path: "sample:GLTriangle.apk", Package: "com.example.gltriangle", Label: "GL Triangle", Version: "1.0", Size: 2_400_000, MinSDK: 26, TargetSDK: 34, ABIs: []string{"arm64-v8a"}, NativeLibs: []string{"lib/arm64-v8a/libgltriangle.so"}, GLES: true, GLESVersion: "3.0", Profile: N2, Verdict: CanRun, SHA256: "9c41d208e07a"},
+		{Path: "sample:HelloJava.apk", Package: "com.example.hellojava", Label: "Hello Java", Version: "1.0", Size: 900_000, MinSDK: 21, TargetSDK: 34, Verdict: CanRun, SHA256: "70b144ef19"},
+		{Path: "sample:TilePuzzle-2.3.apk", Package: "com.example.tilepuzzle", Label: "Tile Puzzle", Version: "2.3", Size: 8_400_000, MinSDK: 24, TargetSDK: 34, ABIs: []string{"arm64-v8a", "armeabi-v7a"}, NativeLibs: []string{"lib/arm64-v8a/libtiles.so", "lib/arm64-v8a/libpng16.so", "lib/armeabi-v7a/libtiles.so"}, Permissions: []string{"android.permission.INTERNET", "android.permission.VIBRATE"}, GLES: true, GLESVersion: "3.0", Profile: N1, Verdict: NeedsNative, SHA256: "84ff02ac12"},
+		{Path: "sample:VulkanCube.apk", Package: "com.example.vulkancube", Label: "Vulkan Cube", Version: "0.9", Size: 5_200_000, MinSDK: 28, TargetSDK: 34, ABIs: []string{"arm64-v8a"}, NativeLibs: []string{"lib/arm64-v8a/libcube.so"}, Vulkan: true, Profile: N2, Verdict: NotYet, SHA256: "52dd19ca44"},
+		{Path: "sample:OldCalc.apk", Package: "com.example.oldcalc", Label: "Old Calc", Version: "3.1", Size: 1_200_000, MinSDK: 14, TargetSDK: 19, ABIs: []string{"armeabi-v7a"}, NativeLibs: []string{"lib/armeabi-v7a/libcalc.so"}, Verdict: Unsupported, SHA256: "1200aa9130"},
 	}
 }
 
@@ -75,7 +77,13 @@ func (m *Mock) Doctor(ctx context.Context, javaHome string) (Report, error) {
 	}
 	return Report{
 		Demo: true, Version: "sample", Java: j,
-		Machine: Machine{Windows: "10.0.26300.1000 · arm64", CPU: "Snapdragon X Elite · arm64", GPU: "Qualcomm Adreno X1-85", Driver: "31.0.97.0", Vulkan: "1.3.295"},
+		Machine: Machine{
+			Windows: "10.0.26300.1000 · arm64", OSBuild: "10.0.26300.1000", OSArch: "arm64", ProcessArch: "arm64",
+			CPU: "Snapdragon X Elite · arm64", MemoryMB: 32768, GPU: "Qualcomm Adreno X1-85",
+			VendorID: "0x5143", DeviceID: "0x36334330", Driver: "31.0.97.0", Vulkan: "1.3.295",
+			VulkanLoader: "available", VulkanInstance: "1.4.304", VulkanDevice: "Qualcomm Adreno X1-85",
+			VulkanQueues: 3, Win32Surface: true, Win32Present: "passed", AngleArm64: true, FrameworkCommit: "3f35611",
+		},
 		Features: []Feature{
 			{ID: "java", Level: Works, Detail: "arm64 · not emulated"},
 			{ID: "native-n0", Level: Experimental, Detail: "available"},
@@ -119,7 +127,7 @@ func (m *Mock) Launch(spec LaunchSpec, report func(State)) (Process, error) {
 		return nil, fmt.Errorf("%w: no Java runtime", ErrNoRuntime)
 	}
 	apk, _ := m.Inspect(context.Background(), spec.Path)
-	p := &mockProcess{m: m, report: report, stop: make(chan bool, 1)}
+	p := &mockProcess{m: m, report: report, stop: make(chan bool, 1), st: State{PID: 18244}}
 	mode := "pane"
 	if spec.Window {
 		mode = "window"
@@ -131,7 +139,7 @@ func (m *Mock) Launch(spec LaunchSpec, report func(State)) (Process, error) {
 			native = "default"
 		}
 	}
-	p.log("info  launch       package %s %s, mode %s, native %s", apk.Package, apk.Version, mode, native)
+	p.log("info", "launch", "package %s %s, mode %s, native %s", apk.Package, apk.Version, mode, native)
 	go p.run(apk, spec)
 	return p, nil
 }
@@ -142,11 +150,17 @@ type mockProcess struct {
 	stop   chan bool // true: Kill
 	mu     sync.Mutex
 	st     State
+	onFrm  func(*image.RGBA)
 }
 
-func (p *mockProcess) log(format string, args ...any) {
+func (p *mockProcess) log(level, stage, format string, args ...any) {
+	now := time.Now().Format("15:04:05.000")
+	msg := fmt.Sprintf(format, args...)
 	p.mu.Lock()
-	p.st.Log = append(p.st.Log, time.Now().Format("15:04:05.000")+"  "+fmt.Sprintf(format, args...))
+	p.st.Log = append(p.st.Log, fmt.Sprintf("%s  %-5s %-12s %s", now, level, stage, msg))
+	p.st.Entries = append(p.st.Entries, LogEntry{
+		Time: now, PIDTID: "18244/18244", Level: level, Stage: stage, Message: msg,
+	})
 	p.mu.Unlock()
 }
 
@@ -155,13 +169,14 @@ func (p *mockProcess) set(ph Phase, category string) {
 	p.st.Phase, p.st.Category = ph, category
 	st := p.st
 	st.Log = append([]string(nil), p.st.Log...)
+	st.Entries = append([]LogEntry(nil), p.st.Entries...)
 	p.mu.Unlock()
 	p.report(st)
 }
 
 func (p *mockProcess) run(apk APK, spec LaunchSpec) {
 	p.set(Starting, "")
-	p.log("info  dex.convert  cache hit, 2 dex files")
+	p.log("info", "dex.convert", "cache hit, 2 dex files")
 	select {
 	case kill := <-p.stop:
 		p.end(kill)
@@ -170,27 +185,44 @@ func (p *mockProcess) run(apk APK, spec LaunchSpec) {
 	}
 	switch {
 	case apk.Verdict == Unsupported:
-		p.log("error launch       APK_UNSUPPORTED only armeabi-v7a native code")
+		p.mu.Lock()
+		p.st.ExitCode = 65
+		p.st.Failure = FailureInfo{Stage: "launch", Detail: "only armeabi-v7a native code"}
+		p.mu.Unlock()
+		p.log("error", "launch", "APK_UNSUPPORTED only armeabi-v7a native code")
 		p.set(Failed, "APK_UNSUPPORTED")
 		return
 	case apk.Verdict == NotYet:
-		p.log("error gfx.select   GRAPHICS_CAPABILITY_MISSING guest Vulkan is not bridged")
+		p.mu.Lock()
+		p.st.ExitCode = 64
+		p.st.Failure = FailureInfo{Stage: "gfx.select", Detail: "guest Vulkan is not bridged"}
+		p.mu.Unlock()
+		p.log("error", "gfx.select", "GRAPHICS_CAPABILITY_MISSING guest Vulkan is not bridged")
 		p.set(Failed, "GRAPHICS_CAPABILITY_MISSING")
 		return
 	case spec.Native == NativeRestricted && apk.Profile == N1 && len(apk.NativeLibs) > 0:
 		lib := filepath.Base(apk.NativeLibs[0])
-		p.log("info  jni.load     System.loadLibrary(%q)", strings.TrimSuffix(strings.TrimPrefix(lib, "lib"), ".so"))
-		p.log("error elf.link     GUEST_SYMBOL_UNRESOLVED android_set_abort_message (%s)", lib)
+		p.log("info", "jni.load", "System.loadLibrary(%q)", strings.TrimSuffix(strings.TrimPrefix(lib, "lib"), ".so"))
+		p.mu.Lock()
+		p.st.ExitCode = 3
+		p.st.Failure = FailureInfo{
+			Stage: "jni.load → elf.link", Module: apk.NativeLibs[0],
+			Symbol: "android_set_abort_message", Where: "+0x1a2b0 (GOT)",
+		}
+		p.mu.Unlock()
+		p.log("error", "elf.link", "GUEST_SYMBOL_UNRESOLVED android_set_abort_message (%s)", lib)
 		p.set(Failed, "GUEST_SYMBOL_UNRESOLVED")
 		return
 	}
-	p.log("info  jvm.start    OpenJDK 21.0.5 arm64, heap 512 MB")
+	p.log("info", "jvm.start", "OpenJDK 21.0.5 arm64, heap 512 MB")
 	p.mu.Lock()
 	switch {
 	case spec.Native == NativeRestricted && apk.Vulkan:
 		p.st.Graphics = "vulkan"
 	case apk.GLES && spec.Native == NativeRestricted:
 		p.st.Graphics = "gles"
+	default:
+		p.st.Graphics = "java2d"
 	}
 	p.mu.Unlock()
 	p.set(Running, "")
@@ -200,9 +232,9 @@ func (p *mockProcess) run(apk APK, spec LaunchSpec) {
 
 func (p *mockProcess) end(kill bool) {
 	if kill {
-		p.log("info  shutdown     killed")
+		p.log("info", "shutdown", "killed")
 	} else {
-		p.log("info  shutdown     stopped by request")
+		p.log("info", "shutdown", "stopped by request")
 	}
 	p.set(Stopped, "")
 }
@@ -230,18 +262,37 @@ func (p *mockProcess) Kill() error {
 
 // Back is logged: the sample app has no screens to go back from.
 func (p *mockProcess) Back() error {
-	p.log("info  input        back")
+	p.log("info", "input", "back")
 	return nil
 }
 
 // Resize is logged.
 func (p *mockProcess) Resize(w, h int) error {
-	p.log("info  surface      resize %d×%d", w, h)
+	p.log("info", "surface", "resize %d×%d", w, h)
 	return nil
 }
 
 // Reattach succeeds: the sample app draws nothing to move.
 func (p *mockProcess) Reattach(bool) bool { return true }
+
+// SetFrameHandler stores fn; sample processes render placeholder cards in the UI.
+func (p *mockProcess) SetFrameHandler(fn func(*image.RGBA)) {
+	p.mu.Lock()
+	p.onFrm = fn
+	p.mu.Unlock()
+}
+
+// SendPointer is a no-op on Mock.
+func (p *mockProcess) SendPointer(int, float32, float32) {}
+
+// SendWheel is a no-op on Mock.
+func (p *mockProcess) SendWheel(float32, float32, float32, float32) {}
+
+// SendKey is a no-op on Mock.
+func (p *mockProcess) SendKey(bool, int, int, int) {}
+
+// SendText is a no-op on Mock.
+func (p *mockProcess) SendText(string) {}
 
 // InstallJava steps through the download and installs nothing; afterwards
 // Doctor reports Windows-ARM64.apk's own runtime.

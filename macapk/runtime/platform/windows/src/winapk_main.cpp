@@ -189,6 +189,8 @@ int wmain(int argc, wchar_t** argv) {
             else if (a.rfind(L"--graphics=", 0) == 0) ra.graphics = a.substr(11);
             else if (a == L"--data-dir" && i + 1 < argc) ra.dataDir = full(argv[++i]);
             else if (a == L"--java-home" && i + 1 < argc) ra.javaHome = argv[++i];
+            else if (a == L"--embed" && i + 1 < argc) ra.embed = argv[++i];
+            else if (a.rfind(L"--embed=", 0) == 0) ra.embed = a.substr(8);
             else if (a == L"--size" && i + 1 < argc && swscanf_s(argv[++i], L"%dx%d", &ra.width, &ra.height) == 2) {}
             else return Usage();
         }

@@ -478,6 +478,13 @@ int Run(const RunArgs& a) {
     auto reg = bridge ? reinterpret_cast<jboolean (*)(JNIEnv*)>(GetProcAddress(bridge, "winapk_bridge_register")) : nullptr;
     auto setSize = bridge ? reinterpret_cast<void (*)(int, int)>(GetProcAddress(bridge, "winapk_bridge_set_phone_size")) : nullptr;
     if (!reg || !setSize) { Log("DEPENDENCY_MISSING: winapk-bridge.dll is missing its entry points"); return 69; }
+    if (!a.embed.empty()) {
+        auto connectEmbed = reinterpret_cast<jboolean (*)(const wchar_t*)>(GetProcAddress(bridge, "winapk_bridge_connect_embed"));
+        if (!connectEmbed || !connectEmbed(a.embed.c_str())) {
+            Log("IO_ERROR: cannot connect to front-end embed channel");
+            return 74;
+        }
+    }
     if (a.native == L"restricted") {
         auto configure = reinterpret_cast<void (*)(const wchar_t*, const wchar_t*, const wchar_t*, const char*, const char*)>(
             GetProcAddress(bridge, "winapk_bridge_configure_guest"));

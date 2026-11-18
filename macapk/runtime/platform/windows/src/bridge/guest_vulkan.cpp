@@ -2,6 +2,7 @@
 #include "guest_vulkan.h"
 #include "guest_graphics.h"
 #include "bridge.h"
+#include "embed.h"
 
 #define VK_USE_PLATFORM_WIN32_KHR
 #define VK_USE_PLATFORM_ANDROID_KHR
@@ -985,7 +986,13 @@ VkResult VKAPI_CALL Present(VkQueue q, const VkPresentInfoKHR* info) {
         } else if (info->pResults) *info->pResults = result;
         vk.frame = Frame::Idle;
         vk.imageIndex = UINT32_MAX;
-        if (result == VK_SUCCESS || result == VK_SUBOPTIMAL_KHR) vk.presented = true;
+        if (result == VK_SUCCESS || result == VK_SUBOPTIMAL_KHR) {
+            vk.presented = true;
+            if (IsEmbedded()) {
+                SendEmbedEvent("backend vulkan");
+                PublishEmbedHwnd(vk.window);
+            }
+        }
         else if (result < 0) vk.swapchainError = result;
         return result;
     });

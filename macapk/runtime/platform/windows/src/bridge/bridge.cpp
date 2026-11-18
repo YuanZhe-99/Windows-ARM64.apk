@@ -1,5 +1,6 @@
 // bridge.cpp -- the registration entry points of winapk-bridge.dll.
 #include "bridge.h"
+#include "embed.h"
 #include "graphics.h"
 
 #include <windows.h>
@@ -49,11 +50,14 @@ std::string Utf8(JNIEnv* env, jstring s) {
 }
 
 void LogLine(const std::string& line) {
-    static std::mutex mu;
-    std::lock_guard<std::mutex> lock(mu);
-    std::fwrite(line.data(), 1, line.size(), stderr);
-    std::fputc('\n', stderr);
-    std::fflush(stderr);
+    {
+        static std::mutex mu;
+        std::lock_guard<std::mutex> lock(mu);
+        std::fwrite(line.data(), 1, line.size(), stderr);
+        std::fputc('\n', stderr);
+        std::fflush(stderr);
+    }
+    SendEmbedLog(line);
 }
 
 }  // namespace winapk::bridge

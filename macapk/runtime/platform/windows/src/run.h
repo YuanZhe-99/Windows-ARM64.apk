@@ -13,6 +13,7 @@ struct RunArgs {
     std::wstring graphics = L"off"; ///< optional Windows ANGLE Java GLSurfaceView backend
     std::wstring dataDir;         ///< "" for %LOCALAPPDATA%\Windows-ARM64.apk\Apps
     std::wstring javaHome;        ///< "" to search as doctor does
+    std::wstring embed;           ///< "" for a standalone Win32 window, else front-end channel token
     int width = 0, height = 0;    ///< the app's size in points; 0 to fit the screen
 };
 

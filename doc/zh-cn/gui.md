@@ -67,23 +67,19 @@ MyGo 前端（`cmd/windows-arm64-apk`、`internal/gui`），按 `design/` 中的
 两者都以原子方式写入（临时文件改名覆盖旧文件）；文件缺失或损坏时使用默认值。`demo` 文件夹把示例
 运行与真实运行分开。
 
-## 运行时 ↔ 前端契约（草案）
+## 运行时 ↔ 前端契约
 
-`internal/winapk` 是界面对运行时的期望，在运行时出现之前从界面一侧写成；运行时 Agent 把它变成
-`winapk` CLI 和每个 APK 一个的运行时进程，需要不同之处，在同一变更中同时修改这个包和视图。
+`internal/winapk`（`Runtime`）基于 `winapk.exe` 与每个 APK 一个的运行时进程（`winapk run --embed <token>`）实现运行时 ↔ 前端契约。
 
-| 调用 | 期望运行时提供 |
+| 调用 | 运行时契约 |
 |---|---|
-| `Doctor(ctx, javaHome)` | `winapk doctor --json`：`Report`，包括找到的 Java 运行时（自带或选定、是否原生 ARM64）、机器信息，以及每项功能的级别（`works`、`experimental`、`unavailable`） |
-| `Inspect(ctx, path)` | `winapk inspect --json`：`APK`，包括包名、标签、版本、大小、SDK 级别、ABI、原生库、GLES/Vulkan 使用、所需的最低 profile、结论（`can-run`、`needs-native`、`not-yet`、`unsupported`）和启动器图标；不运行任何东西 |
-| `Launch(spec, report)` | 每个 APK 一个运行时进程；`State` 更新（`starting`、`running`、`not-responding`、`stopped`、带 `PLAN.md` §14.2 类别的 `failed`、图形后端、日志），直到进程结束 |
-| `Process.Stop`、`Kill`、`Back`、`Resize` | 请求关闭、立即结束、Android 返回、以 DIP 计的屏幕尺寸 |
-| `Process.Reattach(window)` | 不重启地把画面在窗格和独立窗口之间移动，或报告做不到 |
-| `InstallJava(ctx, dir, progress)` | 在 `dir` 中获取、校验、安装并测试私有 Java 运行时，报告进行到哪一步 |
-
-草案中还没有、因此界面也还没做的：把应用的画面交给窗格或窗口（计划不规定具体技术）、移动应用数据
-文件夹的内容、应用数据和转换后代码的大小、清除转换后的代码，以及私有 Java 运行时的自动更新（界面
-保存这个设置；更新由运行时完成）。
+| `Doctor(ctx, javaHome)` | `winapk doctor --json`：`Report`，包括找到的 Java 运行时（自带或选定、是否原生 ARM64）、机器信息、GPU/Vulkan/ANGLE 清单、Mac.apk 提交，以及每项功能的级别（`works`、`experimental`、`unavailable`） |
+| `Inspect(ctx, path)` | `winapk inspect --json`：`APK`，包括包名、标签（`resources.arsc`）、版本、大小、SDK 级别、权限、ABI、原生库、GLES/Vulkan 使用、所需的最低 profile（`N0`–`N2`）、结论（`can-run`、`needs-native`、`not-yet`、`unsupported`）和启动器 PNG 图标；不运行任何东西 |
+| `Launch(spec, report)` | 启动 `winapk run --embed <token>`，使用当前用户的重叠双工命名管道（`\\.\pipe\winapk-<token>`）与双缓冲自上而下 `RGBA8` 共享内存（`Local\winapk-frame-<token>`）；持续推送 `State`（`starting`、`running`、`stopped`、带 `PLAN.md` §14.2 类别的 `failed`、图形后端、结构化日志条目）及 `*image.RGBA` 帧 |
+| `Process.Stop`、`Kill`、`Back`、`Resize`、输入 | 通过双工管道发送优雅 `stop`（`WM_CLOSE`）、立即 `Kill`、`back`、以 DIP 计的 `resize` 以及 `pointer`、`wheel`、`key`、`text`，不耦合 Win32 线程输入队列 |
+| `Process.Reattach(window)` | 返回 `true`：前端在窗格与独立窗口之间移动 `*ui.Bitmap` 画面，无需重启运行时进程 |
+| `InstallJava(ctx, dir, progress)` / `CheckJavaUpdate` | 通过 HTTPS 下载 Microsoft Build of OpenJDK 21 ARM64，校验 SHA-256 及 `0xAA64` PE `jvm.dll`，解压到 `dir`，切换前执行 `winapk doctor` 自检，并在空闲时检查更新的 `21.x` 摘要 |
+| 存储辅助函数 | `AppDataSize`、`TotalAppDataSize`、`ConvertedCodeSize`、`ClearAppData`、`ClearAppArtifacts`、`ClearConvertedCode` 与 `MoveDataDir` 管理 `<AppData>\android`、`code` 和 `logs` |
 
 ## 示例数据
 

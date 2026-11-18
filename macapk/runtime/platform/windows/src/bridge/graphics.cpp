@@ -1,6 +1,7 @@
 // Windows host EGL and the bounded Java GLES20 JNI surface.
 #include "graphics.h"
 #include "bridge.h"
+#include "embed.h"
 #include "guest_graphics.h"
 
 #ifdef WINAPK_HAS_ANGLE_HEADERS
@@ -242,6 +243,7 @@ std::shared_ptr<JavaGraphics> JavaGraphics::Open(HWND window, const std::string&
                     if (matches && version) {
                         LogLine("[winapk] Java GLES request=" + request + " backend=" + backend + " renderer=" +
                             renderer + " gl=" + version + " egl=" + std::to_string(major) + "." + std::to_string(minor));
+                        SendEmbedEvent(std::string("backend gles-") + backend);
                         if (graphics->End(false, error)) return graphics;
                     } else {
                         graphics->End(false, error);
@@ -283,6 +285,11 @@ bool JavaGraphics::Begin(int width, int height, std::string& error) {
 
 bool JavaGraphics::End(bool present, std::string& error) {
     auto& s = *state_;
+    if (present && IsEmbedded() && s.width > 0 && s.height > 0) {
+        std::vector<uint8_t> pixels(static_cast<size_t>(s.width) * static_cast<size_t>(s.height) * 4);
+        s.gl.glReadPixels(0, 0, s.width, s.height, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
+        PublishEmbedGlRgba(pixels.data(), s.width, s.height);
+    }
     const bool swapped = !present || s.eglSwapBuffers(s.display, s.surface);
     if (!swapped) error = "eglSwapBuffers error=" + std::to_string(s.eglGetError());
     currentGl = nullptr;
