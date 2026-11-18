@@ -10,7 +10,7 @@ APK 路径使用它。该路径在本机为已声明、自有源码的 C/JNI 子
 |---|---|
 | N0，可审计的 leaf ELF | 已实现；G2 在本机通过（[platform-notes.md](platform-notes.md)） |
 | N1，受限的 C/JNI ELF（依赖、导入、构造函数、JNI） | 已声明 C/Bionic/JNI 子集及普通 NDK API-30 APK 夹具通过 G3；默认关闭，排除项见下文 |
-| N2，图形样例 | 未开始（P5、P6） |
+| N2，图形样例 | 本机验证了受限 T11 客体 EGL/GLES 和 T13 客体 Vulkan 夹具；不等于 G4（[图形能力](graphics-capabilities.md)） |
 
 ## N0
 

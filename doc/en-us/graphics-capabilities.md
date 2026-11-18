@@ -15,7 +15,8 @@ independent; enabling guest native does not enable GLES or guest Vulkan.
 | Guest Vulkan instance/WSI | PASS for T13.wsi on Dozen | real APK, Android→Win32 surface, actual support/capabilities, resize, replacement and refusal; no drawing |
 | Guest Vulkan transfer-clear | PASS for the bounded T13 profile on Dozen | real guest device/queue, command buffer and swapchain; three presents across resize |
 | Guest Vulkan transfer buffer | PASS for the bounded T13 profile on Dozen | coherent allocation and GPU fill, exact 16-word readback and lifecycle refusals |
-| Guest Vulkan shader/general resources and G4 | NOT_RUN | shader pipelines, general buffers/images, callbacks and validation-layer run |
+| Guest Vulkan compute experiment | FAIL on this Dozen stack; not shipped | `vkCreateComputePipelines` returned `VK_ERROR_OUT_OF_HOST_MEMORY` in both APK and native Windows control |
+| Guest Vulkan general resources and G4 | NOT_RUN | graphics pipelines, general buffers/images, callbacks and validation-layer run |
 | Vendor ARM64 Vulkan ICD | BLOCKED | a machine with that driver; Dozen results cannot fill this row |
 
 ## ANGLE source build
@@ -189,3 +190,8 @@ host-visible, coherent device-memory allocation. The bridge translates both toke
 an actual fill and transfer-to-host barrier, and admits mapping only after the queue
 completes. The APK checks every word against a known pattern. This is a transfer test,
 not shader execution, general resource support or swapchain pixel readback.
+
+The compute experiment did not advance past pipeline creation. The native Windows control
+used the same validated SPIR-V module and storage-buffer layout but did not load the APK
+bridge. See [platform-notes.md](platform-notes.md) for the failure and local reproduction
+evidence. The tested bridge does not export compute commands.

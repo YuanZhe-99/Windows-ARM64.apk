@@ -2,6 +2,7 @@
 
 ## 0.1.0 (in progress)
 
+- 2026-11-17: added compile-time signature checks to the admitted Vulkan bridge table and retained the validated transfer profile. The compute experiment failed at pipeline creation on Dozen, including the native control; no compute entry ships. Go 1.27.4, MyGo v0.10.0 and merged Mac.apk `3f35611` checked, unchanged.
 - 2026-11-17: verified a Vulkan GPU transfer fill and exact coherent-memory readback in the existing T13 launch, with ownership and synchronization refusals. Go 1.27.4, MyGo v0.10.0 and merged Mac.apk `3f35611` checked, unchanged.
 - 2026-11-17: verified T13 swapchain invalidation at zero extent and fresh presentation after restore on Dozen, without extra fixture launches. Go 1.27.4, MyGo v0.10.0 and merged Mac.apk `3f35611` checked, unchanged.
 - 2026-11-17: put DEX conversion in a kill-on-close Windows job and verified cancellation of the live child. Go 1.27.4, MyGo v0.10.0 and merged Mac.apk `3f35611` checked, unchanged.

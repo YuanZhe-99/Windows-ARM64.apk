@@ -29,6 +29,6 @@
 | `macapk/runtime/platform/windows/src/bridge/graphics.cpp`、`android/opengl/GLSurfaceView.java` | T10 Java GLES20：私有 ANGLE DLL、宿主管理窗口 context、受限于当前帧的 renderer 回调及有界回读 | `JavaGraphics::Open`、`Begin`、`End`、`RegisterJavaGraphics`、`macapkWindowsDrawFrame`、`Test-GraphicsJava` |
 | `macapk/runtime/platform/windows/src/bridge/surface.cpp` | 受限 `libandroid.so` 的窗口身份、挂载寿命和客户区尺寸 | `PublishSurface`、`ResizeSurface`、`RetireSurface`、`NativeWindowLibrary` |
 | `macapk/runtime/platform/windows/src/bridge/guest_graphics.cpp` | T11 固定 Android EGL/GLES 入口、客体句柄归属、最小化/恢复及消息线程驱动分发 | `AddGuestGraphicsLibraries`、`MakeCurrent`、`EnsureSurface`、`Swap`、`GetProc`、`Test-GraphicsGuest` |
-| `macapk/runtime/platform/windows/src/bridge/guest_vulkan.cpp` | T13 Android→Win32 WSI、受限交换链呈现及一致内存传输缓冲区回读 | `CreateSurface`、`CreateDevice`、`CreateSwapchain`、`CreateBuffer`、`FillBuffer`、`MapMemory`、`Present`、`Test-VulkanWsi` |
+| `macapk/runtime/platform/windows/src/bridge/guest_vulkan.cpp` | T13 WSI、受限呈现、一致内存传输缓冲区回读及桥入口 PFN 类型检查 | `CreateSwapchain`、`CreateBuffer`、`FillBuffer`、`MapMemory`、`Present`、`CheckedEntry`、`Test-VulkanWsi` |
 | `scripts/windows/package.ps1` | 从已有 ARM64 Release 产物离线打包，生成运行时与源码 ZIP 及本地依赖清单 | `Copy-Payload`、`Test-Package` |
 | `macapk/runtime/platform/windows/src/run.cpp` | APK 启动、按内容寻址的 DEX 缓存及用于回收转换器的 Job Object | `Spawn`、`StageCode`、`ConvertDex`、`Test-DexJob` |

@@ -13,7 +13,7 @@ CFG build. Default-build and CFG-build results are reported separately.
 |---|---|
 | N0, an auditable leaf ELF | implemented; G2 passes on this PC ([platform-notes.md](platform-notes.md)) |
 | N1, a restricted C/JNI ELF (dependencies, imports, constructors, JNI) | declared C/Bionic/JNI subset and ordinary NDK API-30 APK fixture pass G3; off by default, with the exclusions below |
-| N2, graphics samples | not started (P5, P6) |
+| N2, graphics samples | bounded T11 guest EGL/GLES and T13 guest Vulkan fixtures run on this PC; not G4 ([graphics-capabilities.md](graphics-capabilities.md)) |
 
 ## N0
 

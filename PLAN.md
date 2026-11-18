@@ -430,11 +430,12 @@ Vulkan GPU 命令和 SPIR-V 原则上交给 Windows 原生驱动；本层负责�
 - [x] T13 验证最小化零尺寸时拒绝 acquire，恢复到原尺寸后旧交换链仍过期，重建后呈现；仍用原正例进程。
 - [x] T13 验证单个传输目标缓冲区、真实 coherent 设备内存分配/绑定、GPU 执行填充后逐字比对，以及外来分配、过早映射、过期令牌拒绝；不覆盖 shader 或独立图像。
 - [x] 为虚拟 `libvulkan.so` 提供上述受限 profile 的 bootstrap、instance/device dispatch 及版本拒绝。
-- [ ] 基于固定 `vk.xml` 生成签名/桥表或采用经过验证的等价方式；首轮可以只开放完成的命令集合。
+- [x] 已开放的桥入口在编译时与锁定 Vulkan Headers 中的逐命令 PFN 类型比对；不对未开放命令作声明。
 - [ ] 若只实现 Vulkan 核心命令的受限子集，产品能力报告标为 fixture/PoC profile；不能据此宣称符合某个完整 Vulkan 版本或通过 Khronos 一致性认证。
 - [ ] 审计所有返回函数指针的路径：`vkGetInstanceProcAddr`、`vkGetDeviceProcAddr`、扩展入口和回调。
 - [ ] 仅当固定签名、结构布局和 ABI 证据齐全时允许直通；其余通过 thunk。
 - [ ] 处理 guest `VkAllocationCallbacks` 和 debug callback 的回调 ABI、user data、寿命与线程上下文。
+- [ ] 计算 shader 实验为 `FAIL`：同一 SPIR-V 与存储布局在 APK 和原生 Windows 对照的 pipeline 创建都返回 `VK_ERROR_OUT_OF_HOST_MEMORY`；本地保存实验，不并入已验证桥，不推断根因。
 - [ ] 保持 dispatchable/non-dispatchable handles 的表示、映射和所有权一致，不在不同 device/instance 中串用。
 
 ### 13.3 Android Surface → Win32 Surface

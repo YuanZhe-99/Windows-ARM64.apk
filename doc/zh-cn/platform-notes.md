@@ -287,6 +287,21 @@ APK SHA-256 为 `9fbcdea8730a473a050c7e9b5dcbacad704ddaac1c5587e61d400a330bdb3a3
 另验证外来分配、同步之前映射和已销毁缓冲区令牌的拒绝。没有新增帧或启动；
 shader、通用图像和分配/调试回调仍为 `NOT_RUN`。
 
+### 计算 pipeline 实验（未纳入交付）
+
+ARM64 T13 APK 原型和原生 Windows 对照在同一 Adreno 8cx Gen 3／Dozen 上调用
+`vkCreateComputePipelines` 均返回 `VK_ERROR_OUT_OF_HOST_MEMORY`（`-1`）。
+对照使用 System32 Vulkan loader、同一个 SPIR-V 1.0 模块和单个存储缓冲区描述符，
+不加载客体桥或窗口桥。模块通过 NDK `spirv-val --target-env vulkan1.0`。
+pipeline 创建为 `FAIL`；shader dispatch 和回读为 `NOT_RUN`。
+单凭返回码不能断定宿主内存耗尽或驱动根因。
+
+本地复现证据：`build/windows-arm64/test-data/vulkan-compute-isolation.cpp`、
+同目录下的 `readback.comp` 与 `readback.comp.inc`，以及
+`logs/T13-compute-isolation.log` 和 `logs/T13-compute-failed-apk.log`。
+原型仅在本地保存，不开放未验证的命令。未安装、复制或捆绑驱动或 SDK DLL。
+下一步需要独立的原生 ARM64 ICD 做对照。
+
 ## P7 本地 CLI 包
 
 Release CLI 及四个 DLL 均为 ARM64，不导入 Debug CRT。`Package` 四项通过：产物和源码清单、

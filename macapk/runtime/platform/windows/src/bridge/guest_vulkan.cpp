@@ -13,6 +13,7 @@
 #include <cstddef>
 #include <cstring>
 #include <new>
+#include <type_traits>
 #include <utility>
 
 namespace winapk::bridge {
@@ -996,7 +997,12 @@ PFN_vkVoidFunction VKAPI_CALL DeviceProc(VkDevice device, const char* name);
 /// Describes one audited fixed-signature import and its resolution scope.
 enum class Scope { Global, Instance, Surface, AndroidSurface, Device };
 struct Entry { guest::HostSymbol symbol; Scope scope; };
-#define ENTRY(name, fn, scope) {{#name, reinterpret_cast<void*>(&fn)}, Scope::scope}
+/// Type-checks each registered wrapper against the locked Vulkan Headers PFN.
+template<class P, class F> Entry CheckedEntry(const char* name, F fn, Scope scope) {
+    static_assert(std::is_same_v<P, F>);
+    return {{name, reinterpret_cast<void*>(fn)}, scope};
+}
+#define ENTRY(name, fn, scope) CheckedEntry<PFN_##name>(#name, &fn, Scope::scope)
 const Entry entries[] = {
     ENTRY(vkGetInstanceProcAddr, Proc, Global),
     ENTRY(vkEnumerateInstanceVersion, Version, Global),

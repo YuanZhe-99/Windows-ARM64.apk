@@ -308,6 +308,22 @@ The same positive launch verifies an actual Vulkan fill and exact CPU readback o
 allocation, mapping before synchronization, and a destroyed buffer token. No extra frames
 or launches were added; shaders, general images and allocation/debug callbacks remain `NOT_RUN`.
 
+### Compute pipeline experiment (not shipped)
+
+Both the ARM64 T13 APK prototype and a native Windows control on the same Adreno
+8cx Gen 3 with Dozen returned `VK_ERROR_OUT_OF_HOST_MEMORY` (`-1`) from
+`vkCreateComputePipelines`. The control used the System32 Vulkan loader, the same
+SPIR-V 1.0 module and one storage-buffer descriptor, but no guest or window bridge.
+NDK `spirv-val --target-env vulkan1.0` accepted the module. The result is `FAIL` for
+pipeline creation; shader dispatch and readback are `NOT_RUN`. The error alone does
+not establish host memory exhaustion or a driver root cause.
+
+Local reproduction evidence: `build/windows-arm64/test-data/vulkan-compute-isolation.cpp`,
+`readback.comp` and `readback.comp.inc` in that directory, and
+`logs/T13-compute-isolation.log` / `logs/T13-compute-failed-apk.log`. The prototype is
+kept locally rather than exposing unverified commands. No driver or SDK DLL was installed,
+copied or bundled. An independent native ARM64 ICD is needed for comparison.
+
 ## P7 local CLI package
 
 The Release CLI and its four DLLs are ARM64, with no Debug CRT imports. `Package` passed

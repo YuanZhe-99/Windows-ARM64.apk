@@ -55,6 +55,10 @@ Native`); the case names below are its own. Verified 2026-11-04 on the machine o
 | `open`/`open64` optional mode | — | specialized fixed `(pointer, int32, uint32)` entry reads x2 only for creation; no host varargs or shared va_list | T08 `io`: two-argument open, three-argument create, fortified `__open_2` and unsupported flags/modes |
 | `long double`, C++ classes, exceptions | not supported | not supported | — |
 
+Windows Vulkan bridge entries are type-checked against the PFN typedef for each command in
+the locked Vulkan Headers before pointer type erasure. This checks wrapper signatures,
+not nested structure translation, callbacks or Vulkan conformance.
+
 Direct means the host calls through a pointer of the matching host prototype, or the guest's
 import is bound to the host function's address, with nothing in between. A signature is direct only
 when this table lists it; the rest of a module's imports and exports are not called.

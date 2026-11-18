@@ -15,7 +15,8 @@ G3 之后 P5/P6 进行中，尚无图形关卡通过。Java 位图路径保持�
 | 客体 Vulkan 实例/WSI | T13.wsi 在 Dozen 上 PASS | 真实 APK、Android→Win32 surface、实际支持与 capabilities、resize、换挂载及拒绝；不绘制 |
 | 客体 Vulkan 交换链清屏 | Dozen 上受限 T13 profile PASS | 真实客体设备/队列、命令缓冲区及交换链，resize 前后共三次呈现 |
 | 客体 Vulkan 传输缓冲区 | Dozen 上受限 T13 profile PASS | 一致内存分配及 GPU 填充，16 个字精确回读及生命周期拒绝 |
-| 客体 Vulkan shader/通用资源与 G4 | NOT_RUN | shader pipeline、通用缓冲区/图像、回调及 validation layers |
+| 客体 Vulkan 计算实验 | 本机 Dozen 上 FAIL，未纳入交付 | APK 与原生 Windows 对照的 `vkCreateComputePipelines` 均返回 `VK_ERROR_OUT_OF_HOST_MEMORY` |
+| 客体 Vulkan 通用资源与 G4 | NOT_RUN | 图形 pipeline、通用缓冲区/图像、回调及 validation layers |
 | 厂商 ARM64 Vulkan ICD | BLOCKED | 具有该驱动的机器；Dozen 结果不能填入此行 |
 
 ## ANGLE 源码构建
@@ -160,3 +161,7 @@ Vulkan loader。桥筛选实例扩展，把 Android surface 创建翻译为 Win3
 同一 APK 进程还验证一个受限传输目标缓冲区和一份宿主可见且一致的设备内存分配。
 桥翻译两个令牌，记录真实填充与 transfer→host barrier，仅在队列完成后允许映射。
 APK 逐字核对已知值。这是传输测试，不是 shader 执行、通用资源支持或交换链像素回读。
+
+计算实验未通过 pipeline 创建阶段。原生 Windows 对照使用同一个已校验的 SPIR-V 模块与
+存储缓冲区布局，但未加载 APK 桥。失败及本地复现证据见 [平台说明](platform-notes.md)。
+已验证的桥不导出计算命令。
