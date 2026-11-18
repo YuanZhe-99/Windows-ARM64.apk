@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"hash/fnv"
 
+	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
 )
 
@@ -81,7 +82,14 @@ const (
 	maxPanes  = 4
 )
 
-// svg is a line icon on a 24-point grid, drawn in the text colour.
+// menuSVG converts a line *ui.SVG into a template menu icon.
+func menuSVG(s *ui.SVG) *mygo.MenuIcon {
+	ic, err := mygo.NewMenuIconSVG(s, true)
+	if err != nil {
+		panic(err)
+	}
+	return ic
+}
 func svg(body string) *ui.SVG {
 	return ui.MustParseSVG([]byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">` + body + `</svg>`))
 }
@@ -120,6 +128,27 @@ var (
 	icPower    = svg(`<path d="M12 3v9M6.3 7.3a8 8 0 1 0 11.4 0"/>`)
 	icMonitor  = svg(`<rect x="3" y="4" width="18" height="12" rx="1.5"/><path d="M8 20h8M12 16v4"/>`)
 	icApk      = svg(`<rect x="6" y="2" width="12" height="20" rx="2.5"/><path d="M10 18h4"/>`)
+	icPlay     = svg(`<path d="M8 5l11 7-11 7z"/>`)
+	icCircleX  = svg(`<circle cx="12" cy="12" r="9"/><path d="M9 9l6 6M15 9l-6 6"/>`)
+	icDockIn   = svg(`<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M14 4v16"/><path d="M6 12h5M9 9.5l2.5 2.5L9 14.5"/>`)
+	icTrash    = svg(`<path d="M4 7h16M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2M7 7l1 12a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1l1-12"/>`)
+
+	// Menu icons matching design/ menus (OpenMenu.html, ContextMenu.html, LibrarySplit.html).
+	miPane   = menuSVG(icApk)
+	miSplitR = menuSVG(icSplitR)
+	miSplitD = menuSVG(icSplitD)
+	miWindow = menuSVG(icWindow)
+	miDockIn = menuSVG(icDockIn)
+	miGear   = menuSVG(icGear)
+	miStop   = menuSVG(icStop)
+	miKill   = menuSVG(icCircleX)
+	miRotate = menuSVG(icRotate)
+	miMax    = menuSVG(icMax)
+	miDoc    = menuSVG(icDoc)
+	miFolder = menuSVG(icFolder)
+	miTrash  = menuSVG(icTrash)
+	miPlus   = menuSVG(icPlus)
+	miHome   = menuSVG(icHome)
 
 	// The mark, a placeholder of Windows-ARM64.apk's own icon
 	// (design/README.md): a window holding a phone, drawn in white on the
@@ -287,6 +316,22 @@ func sectionTitle(c *ui.Context, text string) {
 // muted is secondary text.
 func muted(c *ui.Context, text string, size float32) ui.Element {
 	return ui.Text(c, text).FontSize(size).TextColor(pal(c).muted)
+}
+
+// dangerButton is an outline button tinted for destructive actions.
+func dangerButton(c *ui.Context, key, label string) ui.Element {
+	p := pal(c)
+	b := ui.ButtonBase(c.Key(key)).Height(32).Padding(0, 14).Radius(radiusCtl).Border(1, p.dangerBorder).Background(p.pane).Label(label)
+	if b.Hovered() {
+		b.Background(p.dangerBg)
+	}
+	if b.IsDisabled() {
+		b.Opacity(0.5)
+	}
+	b.Children(func() {
+		ui.Text(c, label).FontWeight(600).TextColor(p.danger).NoWrap()
+	})
+	return b
 }
 
 // mib is a byte count in megabytes, as the design shows sizes.

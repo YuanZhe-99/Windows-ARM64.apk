@@ -1,9 +1,12 @@
 package gui
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
+	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
 
 	"github.com/YuanZhe-99/Windows-ARM64.apk/internal/winapk"
@@ -40,19 +43,22 @@ func (a *App) inspect(path string) {
 }
 
 // sheet is a dialog over the dimmed window with a title and a close
-// button; body fills it.
-func sheet(c *ui.Context, key string, open *bool, title string, width float32, body func()) {
+// button; body fills it and foot (optional) anchors at the bottom.
+func sheet(c *ui.Context, key string, open *bool, title string, width float32, body func(), foot ...func()) {
 	p := pal(c)
 	ui.DialogBase(c.Key(key), open, func(backdrop, panel ui.Element) {
 		backdrop.Background(p.scrim)
 		panel.Width(width).MaxWidthPercent(92).MaxHeightPercent(90).Radius(radiusDlg).Background(p.pane).Clip().Shadow(0, 18, 48, 0, ui.RGBA(10, 16, 24, 0.3)).Label(title).Children(func() {
-			ui.Row(c).FillWidth().Height(52).Shrink(0).Padding(0, 12, 0, 20).BorderWidth(0, 0, 1, 0).BorderColor(p.border).Children(func() {
+			ui.Row(c).FillWidth().Height(52).Shrink(0).Padding(0, 12, 0, 20).AlignItems(ui.Center).BorderWidth(0, 0, 1, 0).BorderColor(p.border).Children(func() {
 				ui.Text(c, title).FontSize(16).FontWeight(600).Grow(1).Level(1)
 				if iconButton(c, key+"-close", icClose, L.WindowClose()).Clicked() {
 					*open = false
 				}
 			})
 			ui.Scroll(c.Key(key+"-body")).Grow(1).FillWidth().Padding(20, 24).Gap(16).Children(body)
+			if len(foot) > 0 && foot[0] != nil {
+				ui.Row(c).FillWidth().Shrink(0).Padding(12, 24).Gap(8).AlignItems(ui.Center).Background(p.subtle).BorderWidth(1, 0, 0, 0).BorderColor(p.border).Children(foot[0])
+			}
 		})
 	})
 }
@@ -61,7 +67,7 @@ func sheet(c *ui.Context, key string, open *bool, title string, width float32, b
 // sentence, and how far it works here.
 func featureRow(c *ui.Context, i int, icon *ui.SVG, title, hint, word string, t tone) {
 	p := pal(c)
-	ui.Row(c).FillWidth().Gap(14).Padding(12, 16).BorderWidth(min(float32(i), 1), 0, 0, 0).BorderColor(p.hover).Children(func() {
+	ui.Row(c).FillWidth().Gap(14).Padding(10, 16).AlignItems(ui.Center).BorderWidth(min(float32(i), 1), 0, 0, 0).BorderColor(p.hover).Children(func() {
 		tile(c, icon, 32, p.hover, p.text)
 		ui.Column(c).Grow(1).MinWidth(0).Children(func() {
 			ui.Text(c, title).FontWeight(600)
@@ -75,16 +81,58 @@ func featureRow(c *ui.Context, i int, icon *ui.SVG, title, hint, word string, t 
 	})
 }
 
+// permissionWords formats Android permission identifiers into readable words.
+func permissionWords(perms []string) string {
+	var words []string
+	seen := map[string]bool{}
+	other := 0
+	add := func(w string) {
+		if !seen[w] {
+			seen[w] = true
+			words = append(words, w)
+		}
+	}
+	for _, p := range perms {
+		switch p {
+		case "android.permission.INTERNET":
+			add(L.PermInternet())
+		case "android.permission.ACCESS_NETWORK_STATE", "android.permission.ACCESS_WIFI_STATE":
+			add(L.PermNetwork())
+		case "android.permission.VIBRATE":
+			add(L.PermVibrate())
+		case "android.permission.READ_EXTERNAL_STORAGE", "android.permission.WRITE_EXTERNAL_STORAGE",
+			"android.permission.READ_MEDIA_IMAGES", "android.permission.READ_MEDIA_VIDEO", "android.permission.READ_MEDIA_AUDIO":
+			add(L.PermStorage())
+		case "android.permission.RECORD_AUDIO":
+			add(L.PermAudio())
+		case "android.permission.CAMERA":
+			add(L.PermCamera())
+		case "android.permission.ACCESS_FINE_LOCATION", "android.permission.ACCESS_COARSE_LOCATION":
+			add(L.PermLocation())
+		case "android.permission.POST_NOTIFICATIONS":
+			add(L.PermNotifications())
+		case "android.permission.BLUETOOTH", "android.permission.BLUETOOTH_CONNECT", "android.permission.BLUETOOTH_SCAN":
+			add(L.PermBluetooth())
+		default:
+			other++
+		}
+	}
+	if other > 0 {
+		words = append(words, L.PermOther(other))
+	}
+	return strings.Join(words, ", ")
+}
+
 // apkFeatures are the lines of what an APK holds (design/Inspect.html,
 // AppDetails.html), with how far each works for e's settings.
-func (a *App) apkFeatures(c *ui.Context, apk winapk.APK, native winapk.Native) {
+func (a *App) apkFeatures(c *ui.Context, apk winapk.APK, native winapk.Native, showPerms bool) {
 	p := pal(c)
 	ui.Column(c).FillWidth().Border(1, p.border).Radius(radiusCard).Clip().Children(func() {
 		i := 0
 		featureRow(c, i, icJava, L.FeatJava(), L.FeatJavaHint(), L.LevelWorks(), toneGood)
 		i++
 		if len(apk.NativeLibs) > 0 {
-			word, t := L.NativeOffChip(), toneNeutral
+			word, t := L.NativeOffChip(), toneWarn
 			switch {
 			case apk.Verdict == winapk.Unsupported:
 				word, t = L.NotSupported(), toneBad
@@ -95,11 +143,21 @@ func (a *App) apkFeatures(c *ui.Context, apk winapk.APK, native winapk.Native) {
 			i++
 		}
 		if apk.GLES {
-			featureRow(c, i, icCube, "OpenGL ES", L.FeatGLESHint(), L.LevelExperimental(), toneWarn)
+			glesTitle := "OpenGL ES"
+			if apk.GLESVersion != "" {
+				glesTitle += " " + apk.GLESVersion
+			}
+			featureRow(c, i, icCube, glesTitle, L.FeatGLESHint(), L.LevelExperimental(), toneWarn)
 			i++
 		}
 		if apk.Vulkan {
 			featureRow(c, i, icMonitor, "Vulkan", L.FeatVulkanHint(), L.LevelNotYet(), toneNeutral)
+			i++
+		}
+		if showPerms && len(apk.Permissions) > 0 {
+			if pw := permissionWords(apk.Permissions); pw != "" {
+				featureRow(c, i, icShield, L.AsksFor(), L.AsksForHint(pw), "", toneNeutral)
+			}
 		}
 	})
 }
@@ -117,9 +175,16 @@ func verdictCard(c *ui.Context, apk winapk.APK) {
 		title, body, t = L.NotSupported(), L.VerdictUnsupportedBody(), toneBad
 	}
 	fg, bg := t.colors(p)
-	ui.Column(c).FillWidth().Gap(4).Padding(12, 16).Radius(radiusCard).Background(bg).Children(func() {
-		ui.Text(c, title).FontWeight(600).TextColor(fg)
-		ui.Text(c, body).FontSize(13).Wrap()
+	icon := icCheck
+	if t != toneGood {
+		icon = icWarn
+	}
+	ui.Row(c).FillWidth().Gap(12).Padding(12, 16).Radius(radiusCard).Background(bg).Children(func() {
+		ui.Icon(c, icon).FontSize(18).TextColor(fg).Shrink(0)
+		ui.Column(c).Grow(1).MinWidth(0).Gap(3).Children(func() {
+			ui.Text(c, title).FontWeight(600).TextColor(fg)
+			ui.Text(c, body).FontSize(13).Wrap()
+		})
 	})
 }
 
@@ -130,7 +195,9 @@ func (a *App) addSheet(c *ui.Context) {
 		return
 	}
 	p := pal(c)
-	sheet(c, "add", &a.add.open, L.AddAnApp(), 640, func() {
+	apk := a.add.apk
+	ready := !a.add.reading && !a.add.failed
+	sheet(c, "add", &a.add.open, L.AddAnApp(), 680, func() {
 		if a.add.reading {
 			ui.Row(c).Gap(10).Children(func() {
 				ui.Spinner(c)
@@ -142,13 +209,12 @@ func (a *App) addSheet(c *ui.Context) {
 			ui.Text(c, L.ReadFailed(filepath.Base(a.add.path))).Wrap()
 			return
 		}
-		apk := a.add.apk
 		tmp := &entry{ID: apk.Package, APK: apk}
 		a.loadIcon(tmp)
-		ui.Row(c).FillWidth().Gap(14).Children(func() {
-			appIcon(c, tmp, 48)
+		ui.Row(c).FillWidth().Gap(16).AlignItems(ui.Center).Children(func() {
+			appIcon(c, tmp, 52)
 			ui.Column(c).Grow(1).MinWidth(0).Gap(2).Children(func() {
-				ui.Text(c, apk.Label).FontSize(18).FontWeight(600)
+				ui.Text(c, apk.Label).FontSize(20).FontWeight(600)
 				muted(c, L.VersionLine(apk.Version, apk.Package, mib(apk.Size)), 13)
 				muted(c, L.FromFile(filepath.Base(a.add.path)), 13)
 			})
@@ -158,27 +224,28 @@ func (a *App) addSheet(c *ui.Context) {
 		})
 		verdictCard(c, apk)
 		sectionTitle(c, L.WhatsInside())
-		a.apkFeatures(c, apk, winapk.NativeOff)
+		a.apkFeatures(c, apk, winapk.NativeOff, true)
 		if a.entry(apk.Package) != nil {
 			ui.Text(c, L.AlreadyAdded()).FontSize(13).TextColor(p.warn).Wrap()
 		}
 		ui.Row(c).FillWidth().Gap(12).AlignItems(ui.Center).Children(func() {
-			ui.Text(c, L.Opens()).FontWeight(600).Grow(1)
+			muted(c, L.Opens(), 13).Grow(1)
 			ui.Segmented(c.Key("add-opens"), &a.add.inWindow, L.AsPane(), L.InOwnWindow()).Label(L.Opens())
 		})
-		muted(c, L.NothingRan(), 13)
-		ui.Row(c).FillWidth().Gap(8).Children(func() {
-			ui.Spacer(c)
-			if button(c, "add-cancel", L.Cancel(), nil).Clicked() {
-				a.add.open = false
-			}
+	}, func() {
+		ui.Icon(c, icInfo).FontSize(16).TextColor(p.muted)
+		muted(c, L.NothingRan(), 13).Grow(1)
+		if button(c, "add-cancel", L.Cancel(), nil).Clicked() {
+			a.add.open = false
+		}
+		if ready {
 			if button(c, "add-lib", L.AddToLibrary(), nil).Clicked() {
 				a.addEntry(false)
 			}
 			if primary(c, "add-open", L.AddAndOpen(), nil).Disabled(apk.Verdict == winapk.NotYet || apk.Verdict == winapk.Unsupported || !a.report.Ready()).Clicked() {
 				a.addEntry(true)
 			}
-		})
+		}
 	})
 }
 
@@ -203,186 +270,308 @@ func (a *App) addEntry(open bool) {
 	}
 }
 
-// detailsState is an app's details while open.
+// detailsState is an app's details while open on Home.
 type detailsState struct {
 	open     bool
 	id       string
 	advanced bool
 }
 
-// openDetails opens an app's details and settings.
-func (a *App) openDetails(id string) { a.details = detailsState{open: true, id: id} }
+// openDetails opens an app's details and settings inside Home (design/AppDetails.html).
+func (a *App) openDetails(id string) {
+	a.details = detailsState{open: true, id: id, advanced: true}
+	a.refreshStorage()
+	a.showTab(tabHome, false)
+}
 
-// detailsSheet is an app's details and settings (design/AppDetails.html):
-// what works here, how it opens, its screen size, its data, and under
-// Advanced its native code and graphics.
-func (a *App) detailsSheet(c *ui.Context) {
-	if !a.details.open {
-		return
+func addedWords(t time.Time) string {
+	if t.IsZero() {
+		return L.AddedToday()
 	}
+	now := time.Now()
+	if t.Year() == now.Year() && t.YearDay() == now.YearDay() {
+		return L.AddedToday()
+	}
+	return L.AddedOn(t.Format("2 Jan 2006"))
+}
+
+// detailsView is an app's two-column details and settings inside Home
+// (design/AppDetails.html).
+func (a *App) detailsView(c *ui.Context) {
 	e := a.entry(a.details.id)
 	if e == nil {
 		a.details.open = false
 		return
 	}
 	p := pal(c)
-	sheet(c, "details", &a.details.open, e.APK.Label, 680, func() {
-		s := a.open[e.ID]
-		ui.Row(c).FillWidth().Gap(14).AlignItems(ui.Center).Children(func() {
+	s := a.open[e.ID]
+	live := s != nil && s.live()
+
+	ui.Column(c.Key("details-" + e.ID)).Fill().Children(func() {
+		// Header bar: < Back, 48pt icon, title & metadata, state, Open/Show ▾, ⋯
+		ui.Row(c).FillWidth().Padding(14, 24).Gap(12).Shrink(0).AlignItems(ui.Center).BorderWidth(0, 0, 1, 0).BorderColor(p.hover).Children(func() {
+			if iconButton(c, "det-back", icBack, L.BackToApps()).Clicked() {
+				a.details.open = false
+			}
 			appIcon(c, e, 48)
 			ui.Column(c).Grow(1).MinWidth(0).Gap(2).Children(func() {
-				ui.Text(c, e.APK.Label).FontSize(18).FontWeight(600)
-				muted(c, L.VersionLine(e.APK.Version, e.APK.Package, mib(e.APK.Size)), 13)
+				ui.Text(c, e.APK.Label).FontSize(22).FontWeight(600).Ellipsis("…").MaxLines(1)
+				muted(c, L.Version()+" "+e.APK.Version+" · "+e.APK.Package+" · "+addedWords(e.Added), 13).Ellipsis("…").MaxLines(1)
 			})
 			state := L.StateStopped()
 			if s != nil {
 				state = stateWords(s, false, e, a)
 			}
-			muted(c, state, 13)
-			if e.runnable() && (s == nil || !s.live()) {
-				if primary(c, "det-open", L.Open(), nil).Disabled(!a.report.Ready()).Clicked() {
-					a.details.open = false
-					a.launch(e, e.InWindow, false)
-				}
+			muted(c, state, 13).NoWrap()
+			if live {
+				a.showButton(c, e)
+			} else if e.runnable() {
+				a.openButton(c, e)
 			}
+			iconButton(c, "det-more", icMore, L.More()).Menu(func(m *ui.Menu) { a.rowMenu(m, e) })
 		})
-		sectionTitle(c, L.WhatWorks())
-		a.apkFeatures(c, e.APK, e.Native)
-		if e.LastFailed != "" {
-			ui.Row(c).FillWidth().Gap(10).Padding(10, 14).Radius(radiusCard).Background(p.warnBg).Children(func() {
-				ui.Text(c, L.LastFailed()).FontSize(13).Grow(1).Wrap()
-				if link(c, "det-log", L.WhatHappened()).Clicked() {
-					a.details.open = false
-					a.diag.page, a.diag.app = 1, e.ID
-					a.showTab(tabDiag, false)
-				}
-			})
+
+		scroll := ui.Scroll(c.Key("det-scroll")).Grow(1).FillWidth().Padding(18, 24).Gap(24)
+		cols := 2
+		if scroll.LayoutBounds().W > 0 && scroll.LayoutBounds().W < 780 {
+			cols = 1
 		}
-		sectionTitle(c, L.Opening())
-		settingRow(c, L.OpensTitle(), L.OpensHint(), func() {
-			cur := 0
-			if e.InWindow {
-				cur = 1
-			}
-			if ui.Segmented(c.Key("det-opens"), &cur, L.AsPane(), L.InOwnWindow()).Label(L.OpensTitle()).Changed() {
-				e.InWindow = cur == 1
-				a.saveLibrary()
-			}
-		})
-		settingRow(c, L.ScreenSize(), L.ScreenSizeHint(), func() {
-			if ui.Segmented(c.Key("det-screen"), &e.Screen, L.ScreenPhone(), L.ScreenTablet(), L.ScreenFit()).Label(L.ScreenSize()).Changed() {
-				a.saveLibrary()
-			}
-		})
-		sectionTitle(c, L.Data())
-		settingRow(c, L.AppData(), L.AppDataHint(), func() {
-			if button(c, "det-remove", L.RemoveApp(), nil).Clicked() {
-				a.confirm = confirmState{open: true, kind: confirmRemove, id: e.ID}
-			}
-		})
-		if len(e.APK.NativeLibs) > 0 || e.APK.GLES || e.APK.Vulkan {
-			ui.Row(c).FillWidth().Children(func() {
-				sectionTitle(c, L.Advanced())
-				ui.Spacer(c)
-				label := L.ShowAdvanced()
-				if a.details.advanced {
-					label = L.Hide()
-				}
-				if link(c, "det-adv", label).Clicked() {
-					a.details.advanced = !a.details.advanced
-				}
+		scroll.Children(func() {
+			ui.Grid(c.Key("det-grid")).Columns(cols).Gap(24).FillWidth().Children(func() {
+				// Left column: What works on this PC, Opening, Data.
+				ui.Column(c).Gap(18).MinWidth(0).Children(func() {
+					ui.Column(c).Gap(8).FillWidth().Children(func() {
+						sectionTitle(c, L.WhatWorks())
+						a.apkFeatures(c, e.APK, e.Native, false)
+						if e.LastFailed != "" {
+							ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
+								muted(c, L.LastFailed(), 13)
+								if link(c, "det-log", L.WhatHappened()).Clicked() {
+									a.details.open = false
+									a.diag.page, a.diag.app = 1, e.ID
+									a.showTab(tabDiag, false)
+								}
+							})
+						}
+					})
+
+					ui.Column(c).Gap(8).FillWidth().Children(func() {
+						sectionTitle(c, L.Opening())
+						ui.Column(c).FillWidth().Border(1, p.border).Radius(radiusCard).Clip().Children(func() {
+							ui.Row(c).FillWidth().Gap(14).Padding(10, 16).AlignItems(ui.Center).Children(func() {
+								ui.Column(c).Grow(1).MinWidth(0).Children(func() {
+									ui.Text(c, L.OpensTitle()).FontWeight(600)
+									muted(c, L.OpensHint(), 13).Wrap()
+								})
+								cur := 0
+								if e.InWindow {
+									cur = 1
+								}
+								if ui.Segmented(c.Key("det-opens"), &cur, L.AsPane(), L.InOwnWindow()).Label(L.OpensTitle()).Changed() {
+									e.InWindow = cur == 1
+									a.saveLibrary()
+								}
+							})
+							ui.Row(c).FillWidth().Gap(14).Padding(10, 16).AlignItems(ui.Center).BorderWidth(1, 0, 0, 0).BorderColor(p.hover).Children(func() {
+								ui.Column(c).Grow(1).MinWidth(0).Children(func() {
+									ui.Text(c, L.ScreenSize()).FontWeight(600)
+									muted(c, L.ScreenSizeHint(), 13).Wrap()
+								})
+								opts := []string{L.ScreenPhone(), L.ScreenTablet(), L.ScreenFit()}
+								cur := opts[min(max(e.Screen, 0), 2)]
+								if ui.Select(c.Key("det-screen"), &cur, opts).Label(L.ScreenSize()).MinWidth(175).Changed() {
+									for i, o := range opts {
+										if o == cur {
+											e.Screen = i
+										}
+									}
+									a.saveLibrary()
+								}
+							})
+						})
+					})
+
+					ui.Column(c).Gap(8).FillWidth().Children(func() {
+						sectionTitle(c, L.Data())
+						dataSz := mib(a.appDataBytes[e.ID])
+						ui.Column(c).FillWidth().Border(1, p.border).Radius(radiusCard).Clip().Children(func() {
+							ui.Row(c).FillWidth().Gap(10).Padding(10, 16).AlignItems(ui.Center).Children(func() {
+								tile(c, icFolder, 32, p.hover, p.text)
+								ui.Column(c).Grow(1).MinWidth(0).Children(func() {
+									ui.Text(c, L.AppDataSize(dataSz)).FontWeight(600)
+									muted(c, L.AppDataHint(), 13).Wrap()
+								})
+								if iconButton(c, "det-folder", icFolder, L.OpenFolder()).Clicked() {
+									dir := winapk.AppDataDir(a.appDataDir(), e.APK.Package)
+									a.async(func() {
+										_ = os.MkdirAll(dir, 0o700)
+										_ = mygo.Shell.OpenPath(dir)
+									})
+								}
+								if button(c, "det-clear", L.Clear(), nil).Disabled(live).Clicked() {
+									pkg := e.APK.Package
+									root := a.appDataDir()
+									a.async(func() {
+										_ = winapk.ClearAppData(root, pkg)
+										a.later(func() {
+											a.appDataBytes[pkg] = 0
+											a.refreshStorage()
+											a.setToast(L.ClearDone())
+										})
+									})
+								}
+								if dangerButton(c, "det-remove", L.RemoveApp()).Clicked() {
+									a.confirm = confirmState{open: true, kind: confirmRemove, id: e.ID}
+								}
+							})
+						})
+					})
+				})
+
+				// Right column: Advanced (native profile & graphics backend).
+				ui.Column(c).Gap(8).MinWidth(0).Children(func() {
+					ui.Row(c).FillWidth().AlignItems(ui.Center).Children(func() {
+						sectionTitle(c, L.Advanced())
+						ui.Spacer(c)
+						advLabel := L.ShowAdvanced()
+						if a.details.advanced {
+							advLabel = L.Hide()
+						}
+						if link(c, "det-adv", advLabel).Clicked() {
+							a.details.advanced = !a.details.advanced
+						}
+					})
+					if a.details.advanced {
+						a.advanced(c, e)
+					}
+				})
 			})
-			if a.details.advanced {
-				a.advanced(c, e)
-			}
-		}
+		})
 	})
 }
 
-// advanced is an app's native code and graphics settings.
+// advanced is an app's native code and graphics settings card (design/AppDetails.html).
 func (a *App) advanced(c *ui.Context, e *entry) {
 	p := pal(c)
-	if len(e.APK.NativeLibs) > 0 && e.APK.Verdict != winapk.Unsupported {
-		settingRow(c, L.NativeCodeTitle(), L.NativeCodeHint(), func() {
-			cur := 0
-			if e.Native == winapk.NativeRestricted {
-				cur = 1
-			}
-			if ui.Segmented(c.Key("det-native"), &cur, L.NativeOff(), L.NativeRestricted()).Label(L.NativeCodeTitle()).Changed() {
-				e.Native = winapk.NativeOff
-				if cur == 1 {
-					e.Native = winapk.NativeRestricted
-				}
-				a.saveLibrary()
-			}
-		})
-		if e.Native == winapk.NativeRestricted {
-			ui.Column(c).FillWidth().Gap(4).Padding(4, 16).Children(func() {
-				ui.Text(c, L.ProfileTitle()).FontWeight(600)
-				choices := []struct {
-					p           winapk.Profile
-					title, hint string
-				}{
-					{"", L.ProfileDefault(string(a.prefs.Profile)), L.ProfileDefaultHint()},
-					{winapk.N0, L.ProfileN0(), L.ProfileN0Hint()},
-					{winapk.N1, L.ProfileN1(), L.ProfileN1Hint()},
-					{winapk.N2, L.ProfileN2(), L.ProfileN2Hint()},
-				}
-				for _, ch := range choices {
-					r := ui.Radio(c.Key("det-prof-"+string(ch.p)), &e.Profile, ch.p, ch.title)
-					if r.Changed() {
+	ui.Column(c).FillWidth().Border(1, p.border).Radius(radiusCard).Clip().Children(func() {
+		rowIdx := 0
+		if len(e.APK.NativeLibs) > 0 && e.APK.Verdict != winapk.Unsupported {
+			ui.Column(c).FillWidth().Padding(12, 16).Gap(10).Children(func() {
+				ui.Row(c).FillWidth().Gap(14).AlignItems(ui.Start).Children(func() {
+					tile(c, icChip, 32, p.hover, p.text)
+					ui.Column(c).Grow(1).MinWidth(0).Children(func() {
+						ui.Text(c, L.NativeCodeTitle()).FontWeight(600)
+						muted(c, L.NativeCodeHint(), 13).Wrap()
+					})
+					cur := 0
+					if e.Native == winapk.NativeRestricted {
+						cur = 1
+					}
+					if ui.Segmented(c.Key("det-native"), &cur, L.NativeOff(), L.NativeRestricted()).Label(L.NativeCodeTitle()).Changed() {
+						e.Native = winapk.NativeOff
+						if cur == 1 {
+							e.Native = winapk.NativeRestricted
+						}
 						a.saveLibrary()
 					}
-					hint := ch.hint
-					if ch.p != "" && ch.p == e.APK.Profile {
-						hint += " " + L.ProfileNeeded()
-					}
-					muted(c, hint, fontSmall).Wrap().Padding(0, 0, 6, 28)
+				})
+				if e.Native == winapk.NativeRestricted {
+					ui.Column(c).FillWidth().Padding(0, 0, 0, 46).Gap(4).Children(func() {
+						ui.Text(c, L.ProfileTitle()).FontSize(13).FontWeight(600)
+						choices := []struct {
+							p           winapk.Profile
+							title, hint string
+						}{
+							{"", L.ProfileDefault(string(a.prefs.Profile)), L.ProfileDefaultHint()},
+							{winapk.N0, L.ProfileN0(), L.ProfileN0Hint()},
+							{winapk.N1, L.ProfileN1(), L.ProfileN1Hint()},
+							{winapk.N2, L.ProfileN2(), L.ProfileN2Hint()},
+						}
+						for _, ch := range choices {
+							on := e.Profile == ch.p
+							hint := ch.hint
+							if ch.p != "" && ch.p == e.APK.Profile {
+								hint += " " + L.ProfileNeeded()
+							}
+							card := ui.ButtonBase(c.Key("det-prof-"+string(ch.p))).FillWidth().Padding(8, 10).Radius(radiusCtl).Selected(on).Label(ch.title)
+							if on {
+								card.Background(p.tint)
+							} else if card.Hovered() {
+								card.Background(p.subtle)
+							}
+							card.Children(func() {
+								ui.Row(c).FillWidth().Gap(10).AlignItems(ui.Start).Children(func() {
+									ringCol := p.muted
+									if on {
+										ringCol = p.accent
+									}
+									ui.Box(c).Size(16, 16).Radius(8).Border(1.5, ringCol).Center().Margin(2, 0, 0, 0).Shrink(0).Children(func() {
+										if on {
+											ui.Box(c).Size(8, 8).Radius(4).Background(p.accent)
+										}
+									})
+									ui.Column(c).Grow(1).MinWidth(0).Gap(1).Children(func() {
+										ui.Text(c, ch.title).FontSize(13).FontWeight(600).TextColor(p.text)
+										muted(c, hint, fontSmall).Wrap()
+									})
+								})
+							})
+							if card.Clicked() && e.Profile != ch.p {
+								e.Profile = ch.p
+								a.saveLibrary()
+							}
+						}
+					})
 				}
 			})
+			rowIdx++
 		}
-	}
-	settingRow(c, L.GraphicsTitle(), L.GraphicsHint(), func() {
-		a.graphicsSelect(c, "det-gfx", &e.Graphics, true, func() { a.saveLibrary() })
+		ui.Row(c).FillWidth().Gap(14).Padding(12, 16).AlignItems(ui.Start).BorderWidth(min(float32(rowIdx), 1), 0, 0, 0).BorderColor(p.hover).Children(func() {
+			tile(c, icCube, 32, p.hover, p.text)
+			ui.Column(c).Grow(1).MinWidth(0).Children(func() {
+				ui.Text(c, L.GraphicsTitle()).FontWeight(600)
+				muted(c, L.GraphicsHint(), 13).Wrap()
+			})
+			a.graphicsSelect(c, "det-gfx", &e.Graphics, true, func() { a.saveLibrary() })
+		})
 	})
 	muted(c, L.ChangesNextOpen(), 13).TextColor(p.muted)
 }
 
-// graphicsSelect chooses a graphics backend; withDefault offers "Use the
-// default" (an app's own choice).
+// graphicsSelect chooses a graphics backend via a segmented control matching design/.
 func (a *App) graphicsSelect(c *ui.Context, key string, v *string, withDefault bool, changed func()) {
+	effective := *v
+	if withDefault && effective == "" {
+		effective = a.prefs.Graphics
+		if effective == "" {
+			effective = "auto"
+		}
+	}
 	ids := []string{"auto", "vulkan", "d3d11"}
-	opts := []string{L.GfxAuto(), "Vulkan", "Direct3D 11"}
-	if withDefault {
-		ids = append([]string{""}, ids...)
-		opts = append([]string{L.UseDefault()}, opts...)
-	}
-	cur := opts[0]
+	cur := 0
 	for i, id := range ids {
-		if id == *v {
-			cur = opts[i]
+		if id == effective {
+			cur = i
 		}
 	}
-	if ui.Select(c.Key(key), &cur, opts).Label(L.GraphicsTitle()).MinWidth(180).Changed() {
-		for i, o := range opts {
-			if o == cur {
-				*v = ids[i]
-			}
-		}
+	if ui.Segmented(c.Key(key), &cur, L.GfxAuto(), "Vulkan", "Direct3D 11").Label(L.GraphicsTitle()).Changed() {
+		*v = ids[cur]
 		changed()
 	}
 }
 
-// settingRow is a title over a sentence, and its control at the end.
-func settingRow(c *ui.Context, title, hint string, control func()) {
-	ui.Row(c).FillWidth().Gap(14).Padding(4, 0).AlignItems(ui.Center).Children(func() {
-		ui.Column(c).Grow(1).MinWidth(0).Children(func() {
-			ui.Text(c, title).FontWeight(600)
-			if hint != "" {
-				muted(c, hint, 13).Wrap()
-			}
-		})
-		ui.Row(c).Gap(8).Shrink(0).Children(control)
+// docViewSheet shows a local text document (LICENSE or THIRD_PARTY_NOTICES.md).
+func (a *App) docViewSheet(c *ui.Context) {
+	if !a.docView.open {
+		return
+	}
+	sheet(c, "docview", &a.docView.open, a.docView.title, 740, func() {
+		ui.Text(c, a.docView.body).Font(fontMono).FontSize(fontSmall).Wrap()
+	}, func() {
+		ui.Spacer(c)
+		if primary(c, "docview-ok", L.CloseDoc(), nil).Clicked() {
+			a.docView.open = false
+		}
 	})
 }
 
@@ -483,12 +672,9 @@ func (a *App) confirmDialog(c *ui.Context) {
 						pr.AskOnClose = false
 						a.setPrefs(pr)
 					}
-					w := a.window
 					a.confirm = confirmState{closing: true}
-					if w != nil {
-						w.Close()
-					} else {
-						a.closeMain()
+					if a.window != nil {
+						a.window.Close()
 					}
 				}
 			})

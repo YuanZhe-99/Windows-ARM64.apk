@@ -2,8 +2,8 @@
 
 The MyGo front end (`cmd/windows-arm64-apk`, `internal/gui`), built from the screens in `design/`.
 It keeps the library and its own settings; running an app is the runtime's, reached only through
-package `internal/winapk`. Until the runtime exists it runs against `winapk.Mock`, which shows
-sample apps and says so.
+package `internal/winapk`. By default it connects to `winapk.Runtime`; `WINAPK_DEMO=1` runs against
+`winapk.Mock`, which shows sample apps and says so.
 
 ## Windows
 
@@ -75,7 +75,7 @@ and versions; panes and Home say what happened in words.
 
 | File | Holds |
 |---|---|
-| `%APPDATA%\Windows-ARM64.apk\demo\gui.json` | The interface's settings (`Prefs`): theme, language, how new apps open, closing, App data folder, Java folder, Keep it up to date, default graphics and profile, sidebar hidden |
+| `%APPDATA%\Windows-ARM64.apk\gui.json` (`demo\gui.json` under `WINAPK_DEMO=1`) | The interface's settings (`Prefs`): theme, language, how new apps open, closing, App data folder, Java folder, Keep it up to date, default graphics and profile, sidebar hidden |
 | `library.json` (same folder) | The library (`entry`): each APK's `Inspect` result and the person's choices for it; not written while the demo's sample library shows |
 
 Both are written atomically (a temporary file renamed over the old one); a missing or broken

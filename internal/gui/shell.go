@@ -23,6 +23,7 @@ func (a *App) mainWindow() *mygo.Window {
 	w := mygo.NewWindow(mygo.WindowOptions{
 		Title: "Windows-ARM64.apk", Width: 1280, Height: 820, MinWidth: 900, MinHeight: 600,
 		TitleBarStyle: mygo.TitleBarHidden, HideWindowButtons: true,
+		Vibrancy: mygo.VibrancyMica,
 		StateKey: "main", Hidden: true,
 		Content: ui.View(a.view),
 	})
@@ -102,7 +103,10 @@ func (a *App) closeMain() {
 func (a *App) view(c *ui.Context) {
 	applyTheme(c)
 	p := pal(c)
-	shell := ui.Row(c.Key("shell")).Fill().AlignItems(ui.Stretch).Background(p.base).TextColor(p.text).FontSize(fontBody)
+	shell := ui.Row(c.Key("shell")).Fill().AlignItems(ui.Stretch).TextColor(p.text).FontSize(fontBody)
+	if !c.Vibrancy() {
+		shell.Background(p.base)
+	}
 	// An APK dropped anywhere on the window opens Add an app.
 	if apk := firstAPK(shell.DroppedFiles()); apk != "" {
 		a.inspect(apk)
@@ -123,7 +127,7 @@ func (a *App) view(c *ui.Context) {
 	a.toastView(c)
 	a.settingsSheet(c)
 	a.addSheet(c)
-	a.detailsSheet(c)
+	a.docViewSheet(c)
 	a.installDialog(c)
 	a.confirmDialog(c)
 	switch {
@@ -161,11 +165,12 @@ func (a *App) sidebar(c *ui.Context) {
 			}
 		})
 		hg := a.homeGroup()
-		if sbRow(c, "sb-home", a.cur == hg, func() {
+		if sbRow(c, "sb-home", a.cur == hg && !a.details.open, func() {
 			mark(c, 22)
 			ui.Text(c, L.NavHome()).FontWeight(600).Grow(1)
 			muted(c, L.AppsCount(len(a.library)), fontSmall)
 		}).Clicked() {
+			a.details.open = false
 			a.cur = hg
 			hg.focus = tabHome
 		}
@@ -194,7 +199,7 @@ func (a *App) sidebar(c *ui.Context) {
 			if ws := a.windowApps(); len(ws) > 0 {
 				muted(c, L.InOwnWindows(), fontSmall).FontWeight(600).Padding(14, 8, 4, 8)
 				for _, id := range ws {
-					a.tabRow(c, "sb-win-"+id, appTab(id), false, func() { a.reveal(id) })
+					a.tabRowExt(c, "sb-win-"+id, appTab(id), false, true, func() { a.reveal(id) })
 				}
 			}
 		})
@@ -267,7 +272,14 @@ func (a *App) groupEntry(c *ui.Context, gi int, g *group) {
 		card.Background(p.pane.Alpha(0.35))
 	}
 	card.Children(func() {
-		muted(c, strings.Join(names, " + "), fontSmall).FontWeight(600).Padding(2, 6).Ellipsis("…").MaxLines(1)
+		splitIcon := icSplitR
+		if g.root != nil && !g.root.across {
+			splitIcon = icSplitD
+		}
+		ui.Row(c).Gap(6).Padding(2, 6).AlignItems(ui.Center).Children(func() {
+			ui.Icon(c, splitIcon).FontSize(14).TextColor(p.muted)
+			muted(c, strings.Join(names, " + "), fontSmall).FontWeight(600).Ellipsis("…").MaxLines(1)
+		})
 		for _, t := range ts {
 			a.tabRow(c, "sb-g"+strconv.Itoa(gi)+"-"+t, t, a.cur == g && g.focus == t, pick(t))
 		}
@@ -276,14 +288,29 @@ func (a *App) groupEntry(c *ui.Context, gi int, g *group) {
 
 // tabRow is a tab's row in the sidebar: its icon, name and state in words.
 func (a *App) tabRow(c *ui.Context, key, t string, selected bool, onClick func()) {
+	a.tabRowExt(c, key, t, selected, false, onClick)
+}
+
+func (a *App) tabRowExt(c *ui.Context, key, t string, selected, ownWin bool, onClick func()) {
+	p := pal(c)
 	row := sbRow(c, key, selected, func() {
 		a.tabIcon(c, t, 22)
 		ui.Column(c).Grow(1).MinWidth(0).Children(func() {
-			ui.Text(c, a.tabName(t)).Ellipsis("…").MaxLines(1)
-			if s := a.open[appOf(t)]; s != nil {
-				muted(c, stateWords(s, false, a.entry(s.id), a), fontSmall).Ellipsis("…").MaxLines(1)
+			ui.Text(c, a.tabName(t)).FontWeight(600).FontSize(13).Ellipsis("…").MaxLines(1)
+			if t == tabDiag {
+				muted(c, L.DiagSub(), fontSmall).Ellipsis("…").MaxLines(1)
+			} else if s := a.open[appOf(t)]; s != nil {
+				st := ui.Text(c, stateWords(s, false, a.entry(s.id), a)).FontSize(fontSmall).Ellipsis("…").MaxLines(1)
+				if s.state.Phase == winapk.Failed {
+					st.TextColor(p.danger)
+				} else {
+					st.TextColor(p.muted)
+				}
 			}
 		})
+		if ownWin {
+			ui.Icon(c, icWindow).FontSize(15).TextColor(p.muted)
+		}
 	})
 	row.Drag(tabDrag{t})
 	if e := a.entry(appOf(t)); e != nil {
@@ -367,8 +394,10 @@ func stateWords(s *session, full bool, e *entry, a *App) string {
 	}
 	if full {
 		switch s.state.Graphics {
-		case "vulkan":
+		case "vulkan", "gles-vulkan":
 			w += " · Vulkan"
+		case "gles-d3d11":
+			w += " · Direct3D 11"
 		case "gles":
 			w += " · OpenGL ES"
 		}

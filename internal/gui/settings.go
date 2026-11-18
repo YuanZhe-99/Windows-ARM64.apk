@@ -33,6 +33,7 @@ type settingsState struct {
 // openSettings opens the Settings sheet at a page.
 func (a *App) openSettings(pg settingsPage) {
 	a.settings = settingsState{open: true, page: pg}
+	a.refreshStorage()
 }
 
 // name is a Settings page's title.
@@ -76,10 +77,12 @@ func (a *App) settingsSheet(c *ui.Context) {
 			ui.Row(c).Grow(1).FillWidth().AlignItems(ui.Stretch).Children(func() {
 				a.settingsNav(c)
 				ui.Scroll(c.Key("set-page")).Grow(1).MinWidth(0).Padding(28, 40).Gap(22).Children(func() {
-					ui.Column(c).Gap(4).MaxWidth(720).FillWidth().Children(func() {
-						ui.Text(c, a.settings.page.name()).FontSize(fontTitle).FontWeight(600).Level(2)
-						muted(c, a.pageAbout(), fontBody).Wrap()
-					})
+					if a.settings.page != spAbout {
+						ui.Column(c).Gap(4).MaxWidth(720).FillWidth().Children(func() {
+							ui.Text(c, a.settings.page.name()).FontSize(fontTitle).FontWeight(600).Level(2)
+							muted(c, a.pageAbout(), fontBody).Wrap()
+						})
+					}
 					switch a.settings.page {
 					case spRuntime:
 						a.runtimePage(c)
@@ -156,7 +159,12 @@ func (a *App) settingsNav(c *ui.Context) {
 			if b.Hovered() {
 				b.Background(p.hover)
 			}
-			b.Children(func() { ui.Text(c, L.Diagnostics()) })
+			b.Children(func() {
+				ui.Row(c).FillWidth().AlignItems(ui.Center).Children(func() {
+					ui.Text(c, L.Diagnostics()).Grow(1)
+					ui.Icon(c, icWindow).FontSize(14).TextColor(p.muted)
+				})
+			})
 			if b.Clicked() {
 				a.settings.open = false
 				a.showTab(tabDiag, false)
@@ -239,7 +247,7 @@ func (a *App) generalPage(c *ui.Context) {
 		})
 	})
 	section(c, L.SectionStorage(), func(r *rows) {
-		r.row(c, "set-data", icFolder, L.AppData(), a.appDataDir()+"\n"+L.AppDataSettingHint(), func() {
+		r.row(c, "set-data", icFolder, L.AppData(), a.appDataDir()+"\n"+L.AppDataTotalHint(mib(a.totalDataBytes)), func() {
 			if button(c, "set-data-open", L.OpenFolder(), nil).Clicked() {
 				dir := a.appDataDir()
 				_ = os.MkdirAll(dir, 0o700)
@@ -252,6 +260,20 @@ func (a *App) generalPage(c *ui.Context) {
 			}
 			if b.Clicked() {
 				a.chooseAppData()
+			}
+		})
+		running := len(a.paneApps())+len(a.windowApps()) > 0
+		r.row(c, "set-code", icCode, L.ConvertedCode(), L.ConvertedCodeHint(mib(a.codeBytes)), func() {
+			if button(c, "set-code-clear", L.Clear(), nil).Disabled(running).Clicked() {
+				root := a.appDataDir()
+				a.async(func() {
+					_ = winapk.ClearConvertedCode(root)
+					a.later(func() {
+						a.codeBytes = 0
+						a.refreshStorage()
+						a.setToast(L.ClearDone())
+					})
+				})
 			}
 		})
 	})
@@ -298,26 +320,34 @@ func (a *App) generalPage(c *ui.Context) {
 	})
 }
 
-// chooseAppData asks for the folder apps keep their data in. Moving what
-// is there is the runtime's (doc/en-us/gui.md).
+// chooseAppData asks for the folder apps keep their data in and migrates
+// existing app data, converted code and logs there when all apps are stopped.
 func (a *App) chooseAppData() {
 	parent := a.window
+	oldDir := a.appDataDir()
 	a.async(func() {
 		paths, err := mygo.Dialog.Open(mygo.OpenDialogOptions{Parent: parent, Title: L.AppData(), Directory: true, CreateDirectories: true})
 		if err != nil || len(paths) == 0 {
 			return
 		}
+		dst := paths[0]
+		merr := winapk.MoveDataDir(oldDir, dst)
 		a.later(func() {
+			if merr != nil {
+				a.setToast(L.ToastFailed())
+				return
+			}
 			pr := a.prefs
-			pr.AppData = paths[0]
+			pr.AppData = dst
 			a.setPrefs(pr)
+			a.refreshStorage()
 		})
 	})
 }
 
 // javaDir is the folder of Windows-ARM64.apk's own Java runtime.
 func javaDir() string {
-	return filepath.Join(os.Getenv("LOCALAPPDATA"), "Windows-ARM64.apk", "Runtime")
+	return winapk.DefaultRuntimeDir()
 }
 
 // chooseJavaFolder asks for a Java runtime's folder, then checks it.
@@ -342,12 +372,17 @@ func (a *App) runtimePage(c *ui.Context) {
 	j := a.report.Java
 	section(c, L.JavaRuntime(), func(r *rows) {
 		r.row(c, "rt-use", icJava, L.JavaUse(), L.JavaUseHint(), func() {
-			cur := 0
-			if a.prefs.JavaHome != "" {
-				cur = 1
+			ownLabel := L.JavaOwn()
+			if j.Found && j.Own {
+				ownLabel = L.JavaOwnInstalled()
 			}
-			if ui.Segmented(c.Key("rt-use-seg"), &cur, L.JavaOwn(), L.JavaFolder()).Label(L.JavaUse()).Changed() {
-				if cur == 1 {
+			opts := []string{ownLabel, L.JavaFolder()}
+			cur := opts[0]
+			if a.prefs.JavaHome != "" {
+				cur = opts[1]
+			}
+			if ui.Select(c.Key("rt-use-sel"), &cur, opts).Label(L.JavaUse()).MinWidth(300).Changed() {
+				if cur == opts[1] {
 					a.chooseJavaFolder()
 				} else {
 					pr := a.prefs
@@ -359,6 +394,8 @@ func (a *App) runtimePage(c *ui.Context) {
 		})
 		hint := L.JavaNotFound()
 		switch {
+		case j.Found && j.Own && j.InstalledAt != "":
+			hint = L.JavaInstalledOn(j.InstalledAt)
 		case j.Found && j.Own:
 			hint = L.JavaOwnHint()
 		case j.Found:
@@ -368,22 +405,30 @@ func (a *App) runtimePage(c *ui.Context) {
 		if j.Found {
 			title = "OpenJDK " + j.Version + " · " + arch(j.Native)
 		}
-		r.row(c, "rt-java", icCheck, title, hint, func() {
-			if a.prefs.JavaHome != "" {
-				return
+		ui.Row(c.Key("rt-java")).FillWidth().Gap(14).Padding(12, 16).BorderWidth(1, 0, 0, 0).BorderColor(p.hover).AlignItems(ui.Center).Children(func() {
+			if j.Found {
+				tile(c, icCheck, 32, p.successBg, p.success)
+			} else {
+				tile(c, icWarn, 32, p.warnBg, p.warn)
 			}
-			label := L.GetJava()
-			if j.Found && j.Own {
-				if button(c, "rt-update", L.Update(), nil).Disabled(a.install.running).Clicked() {
+			ui.Column(c).Grow(1).MinWidth(0).Children(func() {
+				ui.Text(c, title).FontWeight(600)
+				muted(c, hint, 13).Wrap()
+			})
+			if a.prefs.JavaHome == "" {
+				label := L.GetJava()
+				if j.Found && j.Own {
+					if button(c, "rt-update", L.Update(), nil).Disabled(a.install.running).Clicked() {
+						a.installJava()
+					}
+					label = L.Reinstall()
+				}
+				if button(c, "rt-reinstall", label, nil).Disabled(a.install.running).Clicked() {
 					a.installJava()
 				}
-				label = L.Reinstall()
-			}
-			if button(c, "rt-reinstall", label, nil).Disabled(a.install.running).Clicked() {
-				a.installJava()
 			}
 		})
-		r.row(c, "rt-keep", icDownload, L.KeepUpdated(), L.KeepUpdatedHint(), func() {
+		r.row(c, "rt-keep", icRotate, L.KeepUpdated(), L.KeepUpdatedHint(), func() {
 			pr := a.prefs
 			if ui.Switch(c.Key("rt-keep-sw"), &pr.JavaUpdates).Label(L.KeepUpdated()).Disabled(a.prefs.JavaHome != "").Changed() {
 				a.setPrefs(pr)
@@ -433,23 +478,29 @@ func arch(native bool) string {
 }
 
 func (a *App) aboutPage(c *ui.Context) {
-	section(c, "Windows-ARM64.apk", func(r *rows) {
-		r.row(c, "ab-version", icInfo, L.VersionRow(version.Version), L.VersionHint(platformName()), func() {
-			chip(c, L.LevelExperimental(), toneWarn)
-			if button(c, "ab-copy", L.CopyVersion(), nil).Clicked() {
-				c.Services().WriteClipboard("Windows-ARM64.apk " + version.Version + " (" + platformName() + ", runtime " + a.report.Version + ")")
-				a.setToast(L.Copied())
-			}
+	ui.Row(c).MaxWidth(720).FillWidth().Gap(20).AlignItems(ui.Center).Children(func() {
+		mark(c, 72)
+		ui.Column(c).Grow(1).MinWidth(0).Gap(4).Children(func() {
+			ui.Text(c, "Windows-ARM64.apk").FontSize(24).FontWeight(600)
+			muted(c, L.AboutAbout(), fontBody).Wrap()
+			ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
+				muted(c, L.VersionRow(version.Version)+" · "+platformName(), 13)
+				chip(c, L.LevelExperimental(), toneWarn)
+			})
 		})
+		if button(c, "ab-copy", L.CopyVersion(), icDoc).Clicked() {
+			c.Services().WriteClipboard("Windows-ARM64.apk " + version.Version + " (" + platformName() + ", runtime " + a.report.Version + ")")
+			a.setToast(L.Copied())
+		}
 	})
 	section(c, L.WhereFrom(), func(r *rows) {
-		r.row(c, "ab-based", icCode, L.BasedOn(), L.BasedOnHint(), func() {
-			if link(c, "ab-macapk", "Mac.apk").Clicked() {
+		r.row(c, "ab-based", icInfo, L.BasedOn(), L.BasedOnHint(), func() {
+			if button(c, "ab-macapk", "Mac.apk", icWindow).Clicked() {
 				a.openURL("https://github.com/kksimp/Mac.apk")
 			}
 		})
-		r.row(c, "ab-source", icDoc, L.SourceCode(), L.SourceCodeHint(), func() {
-			if button(c, "ab-source-open", L.Open(), nil).Clicked() {
+		r.row(c, "ab-source", icCode, L.SourceCode(), L.SourceCodeHint(), func() {
+			if button(c, "ab-source-open", L.Open(), icWindow).Clicked() {
 				a.openURL(sourceURL)
 			}
 		})
@@ -457,22 +508,39 @@ func (a *App) aboutPage(c *ui.Context) {
 	section(c, L.Licenses(), func(r *rows) {
 		r.row(c, "ab-agpl", icDoc, "GNU Affero General Public License 3.0", L.LicenseHint(), func() {
 			if button(c, "ab-agpl-view", L.View(), nil).Clicked() {
-				a.openURL(sourceURL + "/blob/main/LICENSE")
+				a.openLocalDoc("GNU Affero General Public License 3.0", "LICENSE", sourceURL+"/blob/main/LICENSE")
 			}
 		})
 		r.row(c, "ab-notices", icDoc, L.Notices(), L.NoticesHint(), func() {
 			if button(c, "ab-notices-view", L.View(), nil).Clicked() {
-				a.openURL(sourceURL + "/blob/main/THIRD_PARTY_NOTICES.md")
+				a.openLocalDoc(L.Notices(), "THIRD_PARTY_NOTICES.md", sourceURL+"/blob/main/THIRD_PARTY_NOTICES.md")
 			}
 		})
 	})
 	section(c, L.Updates(), func(r *rows) {
-		r.row(c, "ab-updates", icDownload, L.NoAutoUpdates(), L.NoAutoUpdatesHint(), func() {
-			if button(c, "ab-releases", L.Releases(), nil).Clicked() {
+		r.row(c, "ab-updates", icInfo, L.NoAutoUpdates(), L.NoAutoUpdatesHint(), func() {
+			if button(c, "ab-releases", L.Releases(), icWindow).Clicked() {
 				a.openURL(sourceURL + "/releases")
 			}
 		})
 	})
+}
+
+// openLocalDoc shows filename in a local dialog if bundled on disk, else opens fallbackURL.
+func (a *App) openLocalDoc(title, filename, fallbackURL string) {
+	var candidates []string
+	if exe, err := os.Executable(); err == nil {
+		dir := filepath.Dir(exe)
+		candidates = append(candidates, filepath.Join(dir, filename), filepath.Join(filepath.Dir(dir), filename))
+	}
+	candidates = append(candidates, filename)
+	for _, p := range candidates {
+		if b, err := os.ReadFile(p); err == nil && len(b) > 0 {
+			a.docView = docViewState{open: true, title: title, body: string(b)}
+			return
+		}
+	}
+	a.openURL(fallbackURL)
 }
 
 // sourceURL is where the source code lives.

@@ -246,6 +246,8 @@ func (a *App) paneHeader(c *ui.Context, g *group, t string, top, right bool, wid
 		if !fold {
 			if id != "" && iconButton(c, "towin-"+t, icWindow, L.OpenInOwnWindow()).Clicked() {
 				a.toWindow(id)
+			} else if t == tabDiag && iconButton(c, "towin-diag", icWindow, L.OpenInOwnWindow()).Clicked() {
+				a.openDiagWindow()
 			}
 			a.splitButton(c, g, t, true, splitR && !full)
 			a.splitButton(c, g, t, false, splitD && !full)
@@ -261,20 +263,35 @@ func (a *App) paneHeader(c *ui.Context, g *group, t string, top, right bool, wid
 		}
 		if s != nil && s.live() && iconButton(c, "stop-"+t, icStop, L.Stop()).Clicked() {
 			a.stopApp(id, false)
+		} else if s != nil && s.state.Phase == winapk.Failed && e != nil && iconButton(c, "hdr-retry-"+t, icRotate, L.TryAgain()).Clicked() {
+			inWin := s.win != nil
+			delete(a.open, id)
+			a.removeTab(t)
+			a.launch(e, inWin, false)
 		}
 		if t != tabHome {
 			more := iconButton(c, "more-"+t, icMore, L.More())
 			more.Menu(func(m *ui.Menu) {
 				if fold {
-					if id != "" && m.Item(L.OpenInOwnWindow()).Chosen() {
+					if id != "" && m.Item(L.OpenInOwnWindow()).Icon(miWindow).Chosen() {
 						a.toWindow(id)
+					} else if t == tabDiag && m.Item(L.OpenInOwnWindow()).Icon(miWindow).Chosen() {
+						a.openDiagWindow()
 					}
 					a.splitMenu(m, g, t, true, L.SplitRight(), splitR && !full)
 					a.splitMenu(m, g, t, false, L.SplitDown(), splitD && !full)
-					if len(g.tabs()) > 1 && m.Item(L.MaximizePane()).Chosen() {
-						g.zoom, g.focus = t, t
+					if len(g.tabs()) > 1 {
+						if g.zoom == t {
+							if m.Item(L.RestorePane()).Icon(miMax).Chosen() {
+								g.zoom = ""
+							}
+						} else if m.Item(L.MaximizePane()).Icon(miMax).Trailing(L.MaximizeHint()).Chosen() {
+							g.zoom, g.focus = t, t
+						}
 					}
-					m.Separator()
+					if e != nil {
+						m.Separator()
+					}
 				}
 				if e != nil {
 					a.appMenuItems(m, e)
@@ -336,31 +353,54 @@ func (a *App) splitButton(c *ui.Context, g *group, t string, across, room bool) 
 
 // splitMenu is Split right or Split down as a submenu of ⋯.
 func (a *App) splitMenu(m *ui.Menu, g *group, t string, across bool, label string, room bool) {
+	icon := miSplitD
+	why := L.NoRoomBelow()
+	if across {
+		icon = miSplitR
+		why = L.NoRoomBeside()
+	}
 	if !room {
-		if across {
-			m.Item(L.SplitRight() + " — " + L.NoRoomBeside()).Disabled(true)
-		} else {
-			m.Item(L.SplitDown() + " — " + L.NoRoomBelow()).Disabled(true)
-		}
+		m.Item(label).Icon(icon).Trailing(why).Disabled(true)
 		return
 	}
-	m.Submenu(label, func(m *ui.Menu) { a.splitItems(m, g, t, across) })
+	m.Submenu(label, func(m *ui.Menu) { a.splitItems(m, g, t, across) }).Icon(icon)
 }
 
-// splitItems are what a split may show beside t: the panes of other
-// groups and Home, then Open an app… with the apps not open yet.
+// splitItems are what a split may show beside t: apps in standalone windows,
+// panes of other groups and Home, then Open an app… with apps not open yet.
 func (a *App) splitItems(m *ui.Menu, g *group, t string, across bool) {
+	head := L.BelowHeading(a.tabName(t))
+	if across {
+		head = L.BesideHeading(a.tabName(t))
+	}
+	m.Item(head).Disabled(true)
 	in := map[string]bool{}
 	for _, x := range g.tabs() {
 		in[x] = true
 	}
+	for _, id := range a.windowApps() {
+		if e := a.entry(id); e != nil {
+			if m.Item(e.APK.Label).Trailing(L.FromItsWindow()).Chosen() {
+				a.toPane(id)
+				a.splitWith(t, appTab(id), across)
+			}
+		}
+	}
 	for _, og := range a.groups {
 		for _, x := range og.tabs() {
-			if !in[x] && m.Item(a.tabName(x)).Chosen() {
+			if in[x] {
+				continue
+			}
+			it := m.Item(a.tabName(x))
+			if x == tabHome {
+				it.Icon(miHome)
+			}
+			if it.Chosen() {
 				a.splitWith(t, x, across)
 			}
 		}
 	}
+	m.Separator()
 	m.Submenu(L.OpenAnApp(), func(m *ui.Menu) {
 		for _, e := range a.library {
 			if s := a.open[e.ID]; (s != nil && s.live()) || !e.runnable() {
@@ -371,26 +411,27 @@ func (a *App) splitItems(m *ui.Menu, g *group, t string, across bool) {
 				a.splitWith(t, appTab(e.ID), across)
 			}
 		}
-	})
+	}).Icon(miPlus)
 }
 
 // appMenuItems are an app's own items, in its pane's ⋯ and on Home.
 func (a *App) appMenuItems(m *ui.Menu, e *entry) {
 	s := a.open[e.ID]
 	if s != nil && s.live() {
-		if m.Item(L.Restart()).Chosen() {
+		if m.Item(L.Restart()).Icon(miRotate).Chosen() {
 			inWin := s.win != nil
 			a.closeApp(e.ID)
 			a.launch(e, inWin, false)
 		}
-		if m.Item(L.ForceStop()).Chosen() {
+		if m.Item(L.ForceStop()).Icon(miKill).Trailing(L.EndsAtOnce()).Chosen() {
 			a.stopApp(e.ID, true)
 		}
+		m.Separator()
 	}
-	if m.Item(L.DetailsAndSettings()).Chosen() {
+	if m.Item(L.DetailsAndSettings()).Icon(miGear).Chosen() {
 		a.openDetails(e.ID)
 	}
-	if m.Item(L.ShowLog()).Chosen() {
+	if m.Item(L.ShowLog()).Icon(miDoc).Chosen() {
 		a.diag.page, a.diag.app = 1, e.ID
 		a.showTab(tabDiag, false)
 	}
@@ -422,53 +463,94 @@ func (a *App) appBody(c *ui.Context, id string, own bool) {
 	if s == nil || e == nil {
 		return
 	}
+	if s.state.Phase == winapk.Failed {
+		a.failedView(c, s, e, own)
+		return
+	}
 	ui.Column(c.Key("stage-" + id)).Fill().Background(p.stage).Children(func() {
-		area := ui.Column(c.Key("area-" + id)).Grow(1).FillWidth().MinHeight(0).Center()
+		area := ui.Row(c.Key("area-" + id)).Grow(1).FillWidth().MinHeight(0).Center().Gap(24)
 		r := area.LayoutBounds()
-		// The app is told its screen whenever it changes: rotating, a new
-		// screen size, or the room of Fit the pane and of its window.
 		if own || e.Screen == 2 {
 			a.tell(s, size{r.W, r.H})
 		} else {
 			w, h := screenSize(e, s.rotated, size{})
 			a.tell(s, size{w, h})
 		}
+		showNotice := !own && e.Screen != 2 && r.W >= 760 && s.live() &&
+			e.Native == winapk.NativeRestricted && !a.prefs.HideNativeNotice && !s.hideNotice
 		area.Children(func() {
 			if own || e.Screen == 2 {
-				ui.Column(c.Key("surface-" + id)).Fill().Background(ui.Hex("#FFFFFF")).Children(func() { a.surface(c, s, e) })
+				ui.Column(c.Key("surface-" + id)).Fill().Background(ui.Hex("#FFFFFF")).Children(func() {
+					a.surface(c, s, e, r.W, r.H)
+				})
 				return
 			}
 			w, h := screenSize(e, s.rotated, size{})
-			scale := min(1, (r.W-48)/(w+20), (r.H-32)/(h+20))
-			if scale <= 0 {
-				scale = 1
+			availW := r.W - 48
+			if showNotice {
+				availW -= 290
 			}
-			ui.Box(c.Key("frame-"+id)).Size((w+20)*scale, (h+20)*scale).Padding(10 * scale).Radius(30 * scale).Background(ui.Hex("#15171B")).Children(func() {
-				ui.Column(c.Key("surface-" + id)).Fill().Radius(22 * scale).Clip().Background(ui.Hex("#FFFFFF")).Children(func() { a.surface(c, s, e) })
+			scale := min(1, availW/(w+20), (r.H-24)/(h+20))
+			if scale <= 0 {
+				scale = 0.5
+			}
+			dispW, dispH := w*scale, h*scale
+			ui.Box(c.Key("frame-"+id)).Size(dispW+20*scale, dispH+20*scale).Padding(10*scale).Radius(30*scale).Background(ui.Hex("#0E1014")).Shadow(0, 12, 32, 0, ui.RGBA(0, 0, 0, 0.25)).Children(func() {
+				ui.Column(c.Key("surface-" + id)).Fill().Radius(22 * scale).Clip().Background(ui.Hex("#FFFFFF")).Children(func() {
+					a.surface(c, s, e, dispW, dispH)
+				})
 			})
+			if showNotice {
+				a.nativeNoticeCard(c, s, e)
+			}
 		})
 		if own {
 			return
 		}
-		ui.Row(c.Key("bar-"+id)).FillWidth().Height(40).Shrink(0).Gap(6).Padding(0, 12).AlignItems(ui.Center).Children(func() {
-			ui.Spacer(c)
-			if iconButton(c, "back-"+id, icBack, L.Back()).Disabled(!s.live()).Clicked() {
-				a.back(s)
-			}
-			if iconButton(c, "rot-"+id, icRotate, L.Rotate()).Disabled(e.Screen == 2).Clicked() {
-				a.rotate(s, e)
-			}
-			opts := []string{L.ScreenPhone(), L.ScreenTablet(), L.ScreenFit()}
-			cur := opts[min(max(e.Screen, 0), 2)]
-			if ui.Select(c.Key("scr-"+id), &cur, opts).Label(L.ScreenSize()).MinWidth(190).Changed() {
-				for i, o := range opts {
-					if o == cur {
-						e.Screen = i
-					}
+		ui.Row(c.Key("bar-"+id)).FillWidth().Padding(0, 12, 10, 12).Shrink(0).Center().Children(func() {
+			ui.Row(c).Height(34).Padding(0, 8).Gap(4).AlignItems(ui.Center).Radius(17).Background(p.pane).Border(1, p.border).Children(func() {
+				if iconButton(c, "back-"+id, icBack, L.Back()).Disabled(!s.live()).Clicked() {
+					a.back(s)
 				}
-				a.saveLibrary()
+				if iconButton(c, "rot-"+id, icRotate, L.Rotate()).Disabled(e.Screen == 2).Clicked() {
+					a.rotate(s, e)
+				}
+				ui.Box(c).Size(1, 18).Background(p.border).Margin(0, 2)
+				opts := []string{L.ScreenPhone(), L.ScreenTablet(), L.ScreenFit()}
+				cur := opts[min(max(e.Screen, 0), 2)]
+				if ui.Select(c.Key("scr-"+id), &cur, opts).Label(L.ScreenSize()).MinWidth(180).Changed() {
+					for i, o := range opts {
+						if o == cur {
+							e.Screen = i
+						}
+					}
+					a.saveLibrary()
+				}
+			})
+		})
+	})
+}
+
+// nativeNoticeCard is the dismissible experimental native-code reminder shown
+// beside the phone in a wide pane (design/LibraryDark.html).
+func (a *App) nativeNoticeCard(c *ui.Context, s *session, e *entry) {
+	p := pal(c)
+	prof := string(a.profile(e))
+	ui.Column(c.Key("nat-note-"+e.ID)).Width(260).Padding(12, 14).Gap(8).Radius(radiusCard).Background(p.warnBg).Border(1, p.warnBorder).Children(func() {
+		ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
+			ui.Icon(c, icChip).FontSize(16).TextColor(p.warn)
+			ui.Text(c, L.NativeNoticeTitle(prof)).FontSize(13).FontWeight(600).TextColor(p.warn).Grow(1).Wrap()
+		})
+		ui.Text(c, L.NativeNoticeBody(prof)).FontSize(12).TextColor(p.text).Wrap()
+		ui.Row(c).Gap(8).Children(func() {
+			if button(c, "nat-hide-"+e.ID, L.Hide(), nil).Clicked() {
+				s.hideNotice = true
 			}
-			ui.Spacer(c)
+			if link(c, "nat-dont-"+e.ID, L.DontAskAgain()).Clicked() {
+				pr := a.prefs
+				pr.HideNativeNotice = true
+				a.setPrefs(pr)
+			}
 		})
 	})
 }
@@ -507,19 +589,24 @@ func ownSize(e *entry, rotated bool) (w, h int) {
 	return int(sw), int(sh) + headerH
 }
 
-// surface is where the app draws. The runtime hands its surface over
-// through the contract (doc/en-us/gui.md); until then it shows the app's
-// state, and for sample data says nothing runs.
-func (a *App) surface(c *ui.Context, s *session, e *entry) {
+// surface draws the app's live RGBA8 bitmap (forwarding pointer, wheel, key
+// and IME events) or its non-running state.
+func (a *App) surface(c *ui.Context, s *session, e *entry, dispW, dispH float32) {
 	dark := ui.Hex("#1B1D21")
 	grey := ui.Hex("#4A5260")
+	notResp := !s.stopAt.IsZero() && time.Since(s.stopAt) > stopWait
+	if s.state.Phase == winapk.Running && !notResp && s.frame != nil {
+		img := ui.Image(c.Key("bmp-"+e.ID), s.frame).Fill().Fit(ui.Contain).Focusable()
+		img.HandleInput(func(ev ui.InputEvent) bool {
+			return a.forwardInput(s, ev, dispW, dispH)
+		})
+		return
+	}
 	ui.Column(c).Fill().Center().Gap(10).Padding(24).Children(func() {
 		switch s.state.Phase {
 		case winapk.Starting:
 			ui.Spinner(c)
 			ui.Text(c, L.Starting(e.APK.Label)).TextColor(dark)
-		case winapk.Failed:
-			a.failedView(c, e)
 		case winapk.Stopped:
 			ui.Text(c, L.AppStopped(e.APK.Label)).FontWeight(600).TextColor(dark)
 			if primary(c, "reopen-"+e.ID, L.OpenAgain(), nil).Clicked() {
@@ -535,7 +622,7 @@ func (a *App) surface(c *ui.Context, s *session, e *entry) {
 				}
 			}
 		default:
-			if !s.stopAt.IsZero() && time.Since(s.stopAt) > stopWait {
+			if notResp {
 				ui.Text(c, L.NotRespondingBody(e.APK.Label)).TextColor(dark).Wrap().MaxWidth(280)
 				if button(c, "kill-"+e.ID, L.ForceStop(), nil).Clicked() {
 					a.stopApp(e.ID, true)
@@ -551,32 +638,169 @@ func (a *App) surface(c *ui.Context, s *session, e *entry) {
 	})
 }
 
+// forwardInput translates MyGo surface events into Android DIP coordinates,
+// virtual keys and IME text on the runtime's duplex control pipe.
+func (a *App) forwardInput(s *session, ev ui.InputEvent, dispW, dispH float32) bool {
+	proc := s.proc
+	if proc == nil || !s.live() {
+		return false
+	}
+	mapPt := func(x, y float32) (float32, float32) {
+		tw, th := s.told.w, s.told.h
+		if tw <= 0 || th <= 0 || dispW <= 0 || dispH <= 0 {
+			return x, y
+		}
+		return x * tw / dispW, y * th / dispH
+	}
+	switch ev.Kind {
+	case ui.InputPointerDown:
+		if ev.Button != 0 {
+			return false
+		}
+		s.pressing = true
+		x, y := mapPt(ev.X, ev.Y)
+		proc.SendPointer(winapk.PointerDown, x, y)
+		return true
+	case ui.InputPointerMove:
+		if !s.pressing {
+			return false
+		}
+		x, y := mapPt(ev.X, ev.Y)
+		proc.SendPointer(winapk.PointerMove, x, y)
+		return true
+	case ui.InputPointerUp:
+		if !s.pressing {
+			return false
+		}
+		s.pressing = false
+		x, y := mapPt(ev.X, ev.Y)
+		act := winapk.PointerUp
+		if ev.Canceled {
+			act = winapk.PointerCancel
+		}
+		proc.SendPointer(act, x, y)
+		return true
+	case ui.InputScroll:
+		x, y := mapPt(ev.X, ev.Y)
+		// MyGo positive DY moves down content; Android wheel notch positive scrolls up.
+		proc.SendWheel(x, y, -ev.DX/40, -ev.DY/40)
+		return true
+	case ui.InputText:
+		if ev.Text != "" {
+			proc.SendText(ev.Text)
+			return true
+		}
+	case ui.InputKeyDown, ui.InputKeyUp:
+		vk, navOnly := winVK(ev.Key)
+		if vk == 0 {
+			return false
+		}
+		// Printable keys without Ctrl/Alt arrive as InputText so IME works without double insertion.
+		if !navOnly && ev.Mods&(ui.Ctrl|ui.Alt) == 0 {
+			return false
+		}
+		meta := 0
+		if ev.Mods&ui.Shift != 0 {
+			meta |= 0x1
+		}
+		if ev.Mods&ui.Ctrl != 0 {
+			meta |= 0x1000
+		}
+		proc.SendKey(ev.Kind == ui.InputKeyDown, vk, 0, meta)
+		return true
+	}
+	return false
+}
+
+// winVK maps ui.Key to a Win32 virtual-key code and reports whether the key is
+// non-printable navigation/editing rather than ordinary text.
+func winVK(k ui.Key) (vk int, navOnly bool) {
+	switch k {
+	case ui.KeyEnter:
+		return 0x0D, true
+	case ui.KeyBackspace:
+		return 0x08, true
+	case ui.KeyDelete:
+		return 0x2E, true
+	case ui.KeyTab:
+		return 0x09, true
+	case ui.KeyUp:
+		return 0x26, true
+	case ui.KeyDown:
+		return 0x28, true
+	case ui.KeyLeft:
+		return 0x25, true
+	case ui.KeyRight:
+		return 0x27, true
+	case ui.KeyHome:
+		return 0x24, true
+	case ui.KeyEnd:
+		return 0x23, true
+	case ui.KeySpace:
+		return 0x20, false
+	}
+	if k >= ui.KeyA && k <= ui.KeyZ {
+		return int('A') + int(k-ui.KeyA), false
+	}
+	if k >= ui.Key0 && k <= ui.Key9 {
+		return int('0') + int(k-ui.Key0), false
+	}
+	return 0, false
+}
+
 // failedView is an app that couldn't start, in plain words; the category
 // shows only in Diagnostics (design/StartFailed.html).
-func (a *App) failedView(c *ui.Context, e *entry) {
-	dark := ui.Hex("#1B1D21")
-	grey := ui.Hex("#4A5260")
-	ui.Column(c).MaxWidth(300).Gap(10).Children(func() {
-		ui.Text(c, L.FailedTitle(e.APK.Label)).FontSize(16).FontWeight(600).TextColor(dark).Wrap()
-		ui.Text(c, failedWords(a.open[e.ID].state.Category)).FontSize(13).TextColor(grey).Wrap()
-		ui.Text(c, L.FailedSafe()).FontSize(13).TextColor(grey).Wrap()
-		ui.Row(c).Gap(8).Children(func() {
-			if primary(c, "retry-"+e.ID, L.TryAgain(), nil).Clicked() {
-				delete(a.open, e.ID)
-				a.removeTab(appTab(e.ID))
-				a.launch(e, false, false)
-			}
-			if button(c, "faillog-"+e.ID, L.ShowDetails(), nil).Clicked() {
-				a.diag.page, a.diag.app = 1, e.ID
-				a.showTab(tabDiag, false)
-			}
+func (a *App) failedView(c *ui.Context, s *session, e *entry, own bool) {
+	p := pal(c)
+	ui.Column(c.Key("failed-"+e.ID)).Fill().Background(p.stage).AlignItems(ui.Center).Padding(64, 24, 20, 24).Children(func() {
+		ui.Column(c).MaxWidth(420).AlignItems(ui.Center).Gap(12).Children(func() {
+			ui.Box(c).Size(56, 56).Shrink(0).Radius(28).Background(p.dangerBg).Center().Children(func() {
+				ui.Icon(c, icCircleX).FontSize(22).TextColor(p.danger)
+			})
+			ui.Text(c, L.FailedTitle(e.APK.Label)).FontSize(20).FontWeight(600).TextAlign(ui.Center).Wrap()
+			muted(c, failedWords(s.state.Category)+" "+L.FailedSafe(), fontBody).TextAlign(ui.Center).Wrap()
+			ui.Row(c).Gap(8).Margin(6, 0, 0, 0).Children(func() {
+				if primary(c, "retry-"+e.ID, L.TryAgain(), nil).Clicked() {
+					delete(a.open, e.ID)
+					if own && s.win != nil {
+						w := s.win
+						s.win = nil
+						a.launch(e, true, false)
+						w.Close()
+					} else {
+						a.removeTab(appTab(e.ID))
+						a.launch(e, false, false)
+					}
+				}
+				if button(c, "faillog-"+e.ID, L.ShowDetails(), nil).Clicked() {
+					a.diag.page, a.diag.app = 1, e.ID
+					a.showTab(tabDiag, false)
+					if own {
+						a.Focus()
+					}
+				}
+			})
 		})
 		if e.Native == winapk.NativeRestricted {
-			ui.Text(c, L.TryNativeOff()).FontSize(13).FontWeight(600).TextColor(dark).Wrap().Margin(8, 0, 0, 0)
-			ui.Text(c, L.TryNativeOffHint()).FontSize(13).TextColor(grey).Wrap()
-			if button(c, "failset-"+e.ID, L.OpenItsSettings(), nil).Clicked() {
-				a.openDetails(e.ID)
-			}
+			ui.Row(c).Width(420).MaxWidthPercent(100).Margin(28, 0, 0, 0).Padding(14, 16).Gap(12).Radius(radiusCard).Background(p.pane).Border(1, p.border).Children(func() {
+				ui.Icon(c, icInfo).FontSize(18).TextColor(p.muted)
+				ui.Column(c).Grow(1).MinWidth(0).Gap(6).Children(func() {
+					ui.Text(c, L.TryNativeOff()).FontWeight(600)
+					muted(c, L.TryNativeOffHint(), 13).Wrap()
+					ui.Row(c).Children(func() {
+						if button(c, "failset-"+e.ID, L.OpenItsSettings(), nil).Clicked() {
+							a.openDetails(e.ID)
+							if own {
+								a.Focus()
+							}
+						}
+					})
+				})
+			})
+		}
+		ui.Spacer(c)
+		if !own {
+			muted(c, L.OtherAppsRunning(), fontSmall)
 		}
 	})
 }
@@ -643,7 +867,7 @@ func (a *App) appWindowView(c *ui.Context, id string) {
 			if iconButton(c, "own-rot", icRotate, L.Rotate()).Clicked() {
 				a.rotate(s, e)
 			}
-			if iconButton(c, "own-pane", icHome, L.BackToMain()).Tooltip(L.BackToMainHint()).Clicked() {
+			if iconButton(c, "own-pane", icDockIn, L.BackToMain()).Tooltip(L.BackToMainHint()).Clicked() {
 				a.toPane(id)
 			}
 			iconButton(c, "own-more", icMore, L.More()).Menu(func(m *ui.Menu) { a.appMenuItems(m, e) })

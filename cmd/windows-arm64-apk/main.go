@@ -1,8 +1,8 @@
-// windows-arm64-apk is Windows-ARM64.apk's interface: its main window,
-// apps in panes or windows of their own, Settings and Diagnostics
-// (design/, doc/en-us/gui.md). Until the runtime exists it runs against
-// winapk.Mock, which shows sample apps and says so; WINAPK_FRESH=1 starts
-// with an empty library and no Java runtime, as on a first run.
+// windows-arm64-apk is Windows-ARM64.apk's native interface: its main window,
+// apps in panes or standalone windows, Settings and Diagnostics
+// (design/, doc/en-us/gui.md). By default it connects to the native ARM64
+// `winapk.exe` runtime; setting WINAPK_DEMO=1 runs against winapk.Mock with
+// the design's sample apps (and WINAPK_FRESH=1 starts the demo empty).
 package main
 
 import (
@@ -29,14 +29,27 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	fresh := os.Getenv("WINAPK_FRESH") != ""
-	mock := winapk.NewMock(!fresh, 400*time.Millisecond)
-	// The sample library is the demo's: it stays in memory, and its
-	// settings in a folder of their own.
-	dir := filepath.Join(base, "Windows-ARM64.apk", "demo")
-	a := gui.New(mock, dir, true)
-	if !fresh {
-		a.AddSamples(mock.Samples())
+
+	demo := os.Getenv("WINAPK_DEMO") != ""
+	var client winapk.Client
+	var dir string
+	var samples []winapk.APK
+	if demo {
+		fresh := os.Getenv("WINAPK_FRESH") != ""
+		mock := winapk.NewMock(!fresh, 400*time.Millisecond)
+		client = mock
+		dir = filepath.Join(base, "Windows-ARM64.apk", "demo")
+		if !fresh {
+			samples = mock.Samples()
+		}
+	} else {
+		client = winapk.NewRuntime("")
+		dir = filepath.Join(base, "Windows-ARM64.apk")
+	}
+
+	a := gui.New(client, dir, demo)
+	if len(samples) > 0 {
+		a.AddSamples(samples)
 	}
 	gui.ApplyTheme(a.Prefs().Theme)
 	if lang := a.Prefs().Language; lang != "" {
@@ -44,10 +57,10 @@ func main() {
 	}
 	// An APK named on the command line, or given to a second launch, opens
 	// Add an app.
-	mygo.App.OnSecondInstance(func(args []string, dir string) {
+	mygo.App.OnSecondInstance(func(args []string, cwd string) {
 		a.Focus()
 		if len(args) > 1 {
-			a.OpenFiles(args[1:], dir)
+			a.OpenFiles(args[1:], cwd)
 		}
 	})
 	mygo.App.WhenReady(func() {

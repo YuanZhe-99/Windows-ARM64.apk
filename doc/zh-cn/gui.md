@@ -1,8 +1,8 @@
 # 界面
 
 MyGo 前端（`cmd/windows-arm64-apk`、`internal/gui`），按 `design/` 中的界面构建。它保存应用库和
-自己的设置；运行应用是运行时的事，只通过 `internal/winapk` 包访问。在运行时出现之前，它对接
-`winapk.Mock`：显示示例应用，并明确说明这是示例。
+自己的设置；运行应用是运行时的事，只通过 `internal/winapk` 包访问。默认连接 `winapk.Runtime`；设置
+`WINAPK_DEMO=1` 时对接 `winapk.Mock`，显示示例应用并明确说明这是示例。
 
 ## 窗口
 
@@ -61,7 +61,7 @@ MyGo 前端（`cmd/windows-arm64-apk`、`internal/gui`），按 `design/` 中的
 
 | 文件 | 内容 |
 |---|---|
-| `%APPDATA%\Windows-ARM64.apk\demo\gui.json` | 界面的设置（`Prefs`）：主题、语言、新应用的打开方式、关闭、应用数据文件夹、Java 文件夹、保持最新、默认图形和 profile、侧边栏是否隐藏 |
+| `%APPDATA%\Windows-ARM64.apk\gui.json`（`WINAPK_DEMO=1` 下为 `demo\gui.json`） | 界面的设置（`Prefs`）：主题、语言、新应用的打开方式、关闭、应用数据文件夹、Java 文件夹、保持最新、默认图形和 profile、侧边栏是否隐藏 |
 | `library.json`（同一文件夹） | 应用库（`entry`）：每个 APK 的 `Inspect` 结果和用户为它做的选择；显示示例应用库时不写入 |
 
 两者都以原子方式写入（临时文件改名覆盖旧文件）；文件缺失或损坏时使用默认值。`demo` 文件夹把示例

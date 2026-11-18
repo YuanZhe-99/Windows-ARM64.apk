@@ -1,6 +1,8 @@
 package gui
 
 import (
+	"image"
+	"image/color"
 	"image/png"
 	"os"
 	"path/filepath"
@@ -104,6 +106,12 @@ func TestScreensRender(t *testing.T) {
 		{"close-confirm", true, true, func(a *App) {
 			a.launch(a.entry("com.example.noteslite"), false, false)
 			a.confirm = confirmState{open: true, kind: confirmClose}
+		}, L.Messages.DontAskAgain},
+		{"runtime-install", false, true, func(a *App) {
+			a.install = installState{running: true, shown: true, step: winapk.StepDownload, frac: 0.4}
+		}, L.Messages.GettingJava},
+		{"native-pane", true, true, func(a *App) {
+			a.launch(a.entry("com.example.gltriangle"), false, false)
 		}, L.Messages.DontAskAgain},
 	}
 	for _, lang := range []string{"en", "zh-Hans"} {
@@ -425,5 +433,74 @@ func TestScreenSizeToldOnce(t *testing.T) {
 	tt.Frame()
 	if s.told != (size{720, 360}) {
 		t.Fatalf("told %v without a change", s.told)
+	}
+}
+
+type tapRecord struct {
+	winapk.Process
+	onFrame func(*image.RGBA)
+	actions []int
+	xs, ys  []float32
+}
+
+func (r *tapRecord) SetFrameHandler(fn func(*image.RGBA)) { r.onFrame = fn }
+func (r *tapRecord) SendPointer(act int, x, y float32) {
+	r.actions = append(r.actions, act)
+	r.xs = append(r.xs, x)
+	r.ys = append(r.ys, y)
+}
+
+type frameClient struct {
+	*winapk.Mock
+	rec *tapRecord
+}
+
+func (f *frameClient) Launch(spec winapk.LaunchSpec, report func(winapk.State)) (winapk.Process, error) {
+	p, err := f.Mock.Launch(spec, report)
+	if err != nil {
+		return nil, err
+	}
+	f.rec = &tapRecord{Process: p}
+	return f.rec, nil
+}
+
+// TestSurfaceBitmapAndPointerForwarding verifies that live RGBA8 frames update
+// the session bitmap and clicks on the scaled phone surface forward DIPs.
+func TestSurfaceBitmapAndPointerForwarding(t *testing.T) {
+	fc := &frameClient{Mock: winapk.NewMock(true, 0)}
+	h := &harness{q: make(chan func(), 256)}
+	h.a = New(fc, "", true)
+	h.a.later = func(fn func()) { h.q <- fn }
+	h.a.async = func(fn func()) { fn() }
+	h.a.AddSamples(fc.Samples())
+	h.a.Start()
+	h.settle()
+
+	e := h.a.entry("com.example.noteslite")
+	h.a.launch(e, false, false)
+	h.settle()
+
+	rgba := image.NewRGBA(image.Rect(0, 0, 360, 720))
+	rgba.SetRGBA(10, 10, color.RGBA{R: 46, G: 125, B: 79, A: 255})
+	fc.rec.onFrame(rgba)
+	h.settle()
+
+	s := h.a.open[e.ID]
+	if s.frame == nil {
+		t.Fatal("session bitmap was not created from RGBA8 frame")
+	}
+
+	tt := ui.NewTester(h.a.view, 1280, 820)
+	tt.Frame()
+	tt.Frame()
+	// Tap near the center of the main pane where the phone surface sits.
+	tt.Press(760, 410)
+	tt.Release(760, 410)
+	tt.Frame()
+	if len(fc.rec.actions) < 2 || fc.rec.actions[0] != winapk.PointerDown || fc.rec.actions[1] != winapk.PointerUp {
+		t.Fatalf("expected pointer down/up forwarded, got %v", fc.rec.actions)
+	}
+	if fc.rec.xs[0] <= 0 || fc.rec.xs[0] >= 360 || fc.rec.ys[0] <= 0 || fc.rec.ys[0] >= 720 {
+		t.Fatalf("mapped DIP (%v, %v) out of 360x720 phone bounds", fc.rec.xs[0], fc.rec.ys[0])
 	}
 }

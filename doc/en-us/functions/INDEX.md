@@ -6,7 +6,7 @@ then inputs, returns, side effects and notes where non-trivial).
 
 | Package / module | Role | Start with |
 |---|---|---|
-| `cmd/windows-arm64-apk` | The interface's entry point, against `winapk.Mock` | `main` |
+| `cmd/windows-arm64-apk` | The interface's entry point, connected to `winapk.Runtime` (`WINAPK_DEMO=1` uses `winapk.Mock`) | `main` |
 | `internal/gui` | The interface ([gui.md](../gui.md)): main window, panes and groups, app windows, sheets, Settings, Diagnostics | `App`, `New`, `view`, `launch`, `group`, `showTab` |
 | `internal/winapk` | The runtime ↔ front-end contract: real `winapk.exe` client, `--embed` shared-memory frame/IPC supervisor, private ARM64 OpenJDK 21 installer, storage helpers and `Mock` | `Client`, `Runtime`, `Process`, `Report`, `APK`, `State`, `InstallJava`, `MoveDataDir`, `Mock` |
 | `locales` | The interface's ARB catalogs (en, zh-Hans) and their generated accessors | `en.json` |

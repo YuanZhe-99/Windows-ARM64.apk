@@ -3295,3 +3295,693 @@ func LocateTitle(app string) string { return In(i18n.Locale()).LocateTitle(app) 
 func (msgs Messages) LocateTitle(app string) string {
 	return Catalog.Format(msgs.locale, "LocateTitle", map[string]any{"app": app})
 }
+
+// DiagSub says "This PC and app logs"
+// in the language the app shows.
+func DiagSub() string { return In(i18n.Locale()).DiagSub() }
+
+// DiagSub says "This PC and app logs"
+// in the language of msgs.
+func (msgs Messages) DiagSub() string {
+	return Catalog.Format(msgs.locale, "DiagSub", nil)
+}
+
+// AsksFor says "Asks for"
+// in the language the app shows.
+func AsksFor() string { return In(i18n.Locale()).AsksFor() }
+
+// AsksFor says "Asks for"
+// in the language of msgs.
+func (msgs Messages) AsksFor() string {
+	return Catalog.Format(msgs.locale, "AsksFor", nil)
+}
+
+// AsksForHint says "{perms}. Windows-ARM64.apk doesn't ask you about these; the app gets what your account can do."
+// in the language the app shows.
+func AsksForHint(perms string) string { return In(i18n.Locale()).AsksForHint(perms) }
+
+// AsksForHint says "{perms}. Windows-ARM64.apk doesn't ask you about these; the app gets what your account can do."
+// in the language of msgs.
+func (msgs Messages) AsksForHint(perms string) string {
+	return Catalog.Format(msgs.locale, "AsksForHint", map[string]any{"perms": perms})
+}
+
+// PermInternet says "Internet access"
+// in the language the app shows.
+func PermInternet() string { return In(i18n.Locale()).PermInternet() }
+
+// PermInternet says "Internet access"
+// in the language of msgs.
+func (msgs Messages) PermInternet() string {
+	return Catalog.Format(msgs.locale, "PermInternet", nil)
+}
+
+// PermNetwork says "network state"
+// in the language the app shows.
+func PermNetwork() string { return In(i18n.Locale()).PermNetwork() }
+
+// PermNetwork says "network state"
+// in the language of msgs.
+func (msgs Messages) PermNetwork() string {
+	return Catalog.Format(msgs.locale, "PermNetwork", nil)
+}
+
+// PermVibrate says "vibration"
+// in the language the app shows.
+func PermVibrate() string { return In(i18n.Locale()).PermVibrate() }
+
+// PermVibrate says "vibration"
+// in the language of msgs.
+func (msgs Messages) PermVibrate() string {
+	return Catalog.Format(msgs.locale, "PermVibrate", nil)
+}
+
+// PermStorage says "storage"
+// in the language the app shows.
+func PermStorage() string { return In(i18n.Locale()).PermStorage() }
+
+// PermStorage says "storage"
+// in the language of msgs.
+func (msgs Messages) PermStorage() string {
+	return Catalog.Format(msgs.locale, "PermStorage", nil)
+}
+
+// PermAudio says "microphone"
+// in the language the app shows.
+func PermAudio() string { return In(i18n.Locale()).PermAudio() }
+
+// PermAudio says "microphone"
+// in the language of msgs.
+func (msgs Messages) PermAudio() string {
+	return Catalog.Format(msgs.locale, "PermAudio", nil)
+}
+
+// PermCamera says "camera"
+// in the language the app shows.
+func PermCamera() string { return In(i18n.Locale()).PermCamera() }
+
+// PermCamera says "camera"
+// in the language of msgs.
+func (msgs Messages) PermCamera() string {
+	return Catalog.Format(msgs.locale, "PermCamera", nil)
+}
+
+// PermLocation says "location"
+// in the language the app shows.
+func PermLocation() string { return In(i18n.Locale()).PermLocation() }
+
+// PermLocation says "location"
+// in the language of msgs.
+func (msgs Messages) PermLocation() string {
+	return Catalog.Format(msgs.locale, "PermLocation", nil)
+}
+
+// PermNotifications says "notifications"
+// in the language the app shows.
+func PermNotifications() string { return In(i18n.Locale()).PermNotifications() }
+
+// PermNotifications says "notifications"
+// in the language of msgs.
+func (msgs Messages) PermNotifications() string {
+	return Catalog.Format(msgs.locale, "PermNotifications", nil)
+}
+
+// PermBluetooth says "Bluetooth"
+// in the language the app shows.
+func PermBluetooth() string { return In(i18n.Locale()).PermBluetooth() }
+
+// PermBluetooth says "Bluetooth"
+// in the language of msgs.
+func (msgs Messages) PermBluetooth() string {
+	return Catalog.Format(msgs.locale, "PermBluetooth", nil)
+}
+
+// PermOther says "{count, plural, one {# other permission} other {# other permissions}}"
+// in the language the app shows.
+func PermOther(count int) string { return In(i18n.Locale()).PermOther(count) }
+
+// PermOther says "{count, plural, one {# other permission} other {# other permissions}}"
+// in the language of msgs.
+func (msgs Messages) PermOther(count int) string {
+	return Catalog.Format(msgs.locale, "PermOther", map[string]any{"count": count})
+}
+
+// OpenLogFolder says "Open log folder"
+// in the language the app shows.
+func OpenLogFolder() string { return In(i18n.Locale()).OpenLogFolder() }
+
+// OpenLogFolder says "Open log folder"
+// in the language of msgs.
+func (msgs Messages) OpenLogFolder() string {
+	return Catalog.Format(msgs.locale, "OpenLogFolder", nil)
+}
+
+// AppLabel says "App"
+// in the language the app shows.
+func AppLabel() string { return In(i18n.Locale()).AppLabel() }
+
+// AppLabel says "App"
+// in the language of msgs.
+func (msgs Messages) AppLabel() string {
+	return Catalog.Format(msgs.locale, "AppLabel", nil)
+}
+
+// RunLabel says "Run"
+// in the language the app shows.
+func RunLabel() string { return In(i18n.Locale()).RunLabel() }
+
+// RunLabel says "Run"
+// in the language of msgs.
+func (msgs Messages) RunLabel() string {
+	return Catalog.Format(msgs.locale, "RunLabel", nil)
+}
+
+// ColTime says "Time"
+// in the language the app shows.
+func ColTime() string { return In(i18n.Locale()).ColTime() }
+
+// ColTime says "Time"
+// in the language of msgs.
+func (msgs Messages) ColTime() string {
+	return Catalog.Format(msgs.locale, "ColTime", nil)
+}
+
+// ColPID says "pid/tid"
+// in the language the app shows.
+func ColPID() string { return In(i18n.Locale()).ColPID() }
+
+// ColPID says "pid/tid"
+// in the language of msgs.
+func (msgs Messages) ColPID() string {
+	return Catalog.Format(msgs.locale, "ColPID", nil)
+}
+
+// ColLevel says "Level"
+// in the language the app shows.
+func ColLevel() string { return In(i18n.Locale()).ColLevel() }
+
+// ColLevel says "Level"
+// in the language of msgs.
+func (msgs Messages) ColLevel() string {
+	return Catalog.Format(msgs.locale, "ColLevel", nil)
+}
+
+// ColStage says "Stage"
+// in the language the app shows.
+func ColStage() string { return In(i18n.Locale()).ColStage() }
+
+// ColStage says "Stage"
+// in the language of msgs.
+func (msgs Messages) ColStage() string {
+	return Catalog.Format(msgs.locale, "ColStage", nil)
+}
+
+// ColMessage says "Message"
+// in the language the app shows.
+func ColMessage() string { return In(i18n.Locale()).ColMessage() }
+
+// ColMessage says "Message"
+// in the language of msgs.
+func (msgs Messages) ColMessage() string {
+	return Catalog.Format(msgs.locale, "ColMessage", nil)
+}
+
+// FailStage says "Stage"
+// in the language the app shows.
+func FailStage() string { return In(i18n.Locale()).FailStage() }
+
+// FailStage says "Stage"
+// in the language of msgs.
+func (msgs Messages) FailStage() string {
+	return Catalog.Format(msgs.locale, "FailStage", nil)
+}
+
+// FailModule says "Module"
+// in the language the app shows.
+func FailModule() string { return In(i18n.Locale()).FailModule() }
+
+// FailModule says "Module"
+// in the language of msgs.
+func (msgs Messages) FailModule() string {
+	return Catalog.Format(msgs.locale, "FailModule", nil)
+}
+
+// FailSymbol says "Symbol"
+// in the language the app shows.
+func FailSymbol() string { return In(i18n.Locale()).FailSymbol() }
+
+// FailSymbol says "Symbol"
+// in the language of msgs.
+func (msgs Messages) FailSymbol() string {
+	return Catalog.Format(msgs.locale, "FailSymbol", nil)
+}
+
+// FailNeededAt says "Needed at"
+// in the language the app shows.
+func FailNeededAt() string { return In(i18n.Locale()).FailNeededAt() }
+
+// FailNeededAt says "Needed at"
+// in the language of msgs.
+func (msgs Messages) FailNeededAt() string {
+	return Catalog.Format(msgs.locale, "FailNeededAt", nil)
+}
+
+// FailProfile says "Native profile"
+// in the language the app shows.
+func FailProfile() string { return In(i18n.Locale()).FailProfile() }
+
+// FailProfile says "Native profile"
+// in the language of msgs.
+func (msgs Messages) FailProfile() string {
+	return Catalog.Format(msgs.locale, "FailProfile", nil)
+}
+
+// FailGraphics says "Graphics"
+// in the language the app shows.
+func FailGraphics() string { return In(i18n.Locale()).FailGraphics() }
+
+// FailGraphics says "Graphics"
+// in the language of msgs.
+func (msgs Messages) FailGraphics() string {
+	return Catalog.Format(msgs.locale, "FailGraphics", nil)
+}
+
+// FailProcess says "Process"
+// in the language the app shows.
+func FailProcess() string { return In(i18n.Locale()).FailProcess() }
+
+// FailProcess says "Process"
+// in the language of msgs.
+func (msgs Messages) FailProcess() string {
+	return Catalog.Format(msgs.locale, "FailProcess", nil)
+}
+
+// FailAPK says "APK"
+// in the language the app shows.
+func FailAPK() string { return In(i18n.Locale()).FailAPK() }
+
+// FailAPK says "APK"
+// in the language of msgs.
+func (msgs Messages) FailAPK() string {
+	return Catalog.Format(msgs.locale, "FailAPK", nil)
+}
+
+// StoppedLoadingNative says "Stopped while loading native code"
+// in the language the app shows.
+func StoppedLoadingNative() string { return In(i18n.Locale()).StoppedLoadingNative() }
+
+// StoppedLoadingNative says "Stopped while loading native code"
+// in the language of msgs.
+func (msgs Messages) StoppedLoadingNative() string {
+	return Catalog.Format(msgs.locale, "StoppedLoadingNative", nil)
+}
+
+// OSArch says "OS architecture"
+// in the language the app shows.
+func OSArch() string { return In(i18n.Locale()).OSArch() }
+
+// OSArch says "OS architecture"
+// in the language of msgs.
+func (msgs Messages) OSArch() string {
+	return Catalog.Format(msgs.locale, "OSArch", nil)
+}
+
+// RuntimeProcess says "Runtime process"
+// in the language the app shows.
+func RuntimeProcess() string { return In(i18n.Locale()).RuntimeProcess() }
+
+// RuntimeProcess says "Runtime process"
+// in the language of msgs.
+func (msgs Messages) RuntimeProcess() string {
+	return Catalog.Format(msgs.locale, "RuntimeProcess", nil)
+}
+
+// NotEmulated says "arm64 · not emulated"
+// in the language the app shows.
+func NotEmulated() string { return In(i18n.Locale()).NotEmulated() }
+
+// NotEmulated says "arm64 · not emulated"
+// in the language of msgs.
+func (msgs Messages) NotEmulated() string {
+	return Catalog.Format(msgs.locale, "NotEmulated", nil)
+}
+
+// OnePerApp says "arm64 · one per app"
+// in the language the app shows.
+func OnePerApp() string { return In(i18n.Locale()).OnePerApp() }
+
+// OnePerApp says "arm64 · one per app"
+// in the language of msgs.
+func (msgs Messages) OnePerApp() string {
+	return Catalog.Format(msgs.locale, "OnePerApp", nil)
+}
+
+// ProfilesLabel says "Profiles"
+// in the language the app shows.
+func ProfilesLabel() string { return In(i18n.Locale()).ProfilesLabel() }
+
+// ProfilesLabel says "Profiles"
+// in the language of msgs.
+func (msgs Messages) ProfilesLabel() string {
+	return Catalog.Format(msgs.locale, "ProfilesLabel", nil)
+}
+
+// DefaultLabel says "Default"
+// in the language the app shows.
+func DefaultLabel() string { return In(i18n.Locale()).DefaultLabel() }
+
+// DefaultLabel says "Default"
+// in the language of msgs.
+func (msgs Messages) DefaultLabel() string {
+	return Catalog.Format(msgs.locale, "DefaultLabel", nil)
+}
+
+// OffEveryApp says "Off for every app"
+// in the language the app shows.
+func OffEveryApp() string { return In(i18n.Locale()).OffEveryApp() }
+
+// OffEveryApp says "Off for every app"
+// in the language of msgs.
+func (msgs Messages) OffEveryApp() string {
+	return Catalog.Format(msgs.locale, "OffEveryApp", nil)
+}
+
+// UnsupportedABIs says "32-bit ARM, x86"
+// in the language the app shows.
+func UnsupportedABIs() string { return In(i18n.Locale()).UnsupportedABIs() }
+
+// UnsupportedABIs says "32-bit ARM, x86"
+// in the language of msgs.
+func (msgs Messages) UnsupportedABIs() string {
+	return Catalog.Format(msgs.locale, "UnsupportedABIs", nil)
+}
+
+// FrameworkLabel says "Framework"
+// in the language the app shows.
+func FrameworkLabel() string { return In(i18n.Locale()).FrameworkLabel() }
+
+// FrameworkLabel says "Framework"
+// in the language of msgs.
+func (msgs Messages) FrameworkLabel() string {
+	return Catalog.Format(msgs.locale, "FrameworkLabel", nil)
+}
+
+// Win32Surface says "Win32 surface"
+// in the language the app shows.
+func Win32Surface() string { return In(i18n.Locale()).Win32Surface() }
+
+// Win32Surface says "Win32 surface"
+// in the language of msgs.
+func (msgs Messages) Win32Surface() string {
+	return Catalog.Format(msgs.locale, "Win32Surface", nil)
+}
+
+// AutoUses says "Automatic uses"
+// in the language the app shows.
+func AutoUses() string { return In(i18n.Locale()).AutoUses() }
+
+// AutoUses says "Automatic uses"
+// in the language of msgs.
+func (msgs Messages) AutoUses() string {
+	return Catalog.Format(msgs.locale, "AutoUses", nil)
+}
+
+// DriverWorks says "Driver works"
+// in the language the app shows.
+func DriverWorks() string { return In(i18n.Locale()).DriverWorks() }
+
+// DriverWorks says "Driver works"
+// in the language of msgs.
+func (msgs Messages) DriverWorks() string {
+	return Catalog.Format(msgs.locale, "DriverWorks", nil)
+}
+
+// DriverTranslated says "Translated (Dozen)"
+// in the language the app shows.
+func DriverTranslated() string { return In(i18n.Locale()).DriverTranslated() }
+
+// DriverTranslated says "Translated (Dozen)"
+// in the language of msgs.
+func (msgs Messages) DriverTranslated() string {
+	return Catalog.Format(msgs.locale, "DriverTranslated", nil)
+}
+
+// AppsNotYet says "Apps: not yet"
+// in the language the app shows.
+func AppsNotYet() string { return In(i18n.Locale()).AppsNotYet() }
+
+// AppsNotYet says "Apps: not yet"
+// in the language of msgs.
+func (msgs Messages) AppsNotYet() string {
+	return Catalog.Format(msgs.locale, "AppsNotYet", nil)
+}
+
+// DiagGLESTitle says "OpenGL ES (ANGLE)"
+// in the language the app shows.
+func DiagGLESTitle() string { return In(i18n.Locale()).DiagGLESTitle() }
+
+// DiagGLESTitle says "OpenGL ES (ANGLE)"
+// in the language of msgs.
+func (msgs Messages) DiagGLESTitle() string {
+	return Catalog.Format(msgs.locale, "DiagGLESTitle", nil)
+}
+
+// DiagHeadSub says "Native code: a restricted set is available, experimental and off by default. Vulkan for apps: not available yet."
+// in the language the app shows.
+func DiagHeadSub() string { return In(i18n.Locale()).DiagHeadSub() }
+
+// DiagHeadSub says "Native code: a restricted set is available, experimental and off by default. Vulkan for apps: not available yet."
+// in the language of msgs.
+func (msgs Messages) DiagHeadSub() string {
+	return Catalog.Format(msgs.locale, "DiagHeadSub", nil)
+}
+
+// BackToApps says "Back to the apps"
+// in the language the app shows.
+func BackToApps() string { return In(i18n.Locale()).BackToApps() }
+
+// BackToApps says "Back to the apps"
+// in the language of msgs.
+func (msgs Messages) BackToApps() string {
+	return Catalog.Format(msgs.locale, "BackToApps", nil)
+}
+
+// AddedToday says "Added today"
+// in the language the app shows.
+func AddedToday() string { return In(i18n.Locale()).AddedToday() }
+
+// AddedToday says "Added today"
+// in the language of msgs.
+func (msgs Messages) AddedToday() string {
+	return Catalog.Format(msgs.locale, "AddedToday", nil)
+}
+
+// AddedOn says "Added {date}"
+// in the language the app shows.
+func AddedOn(date string) string { return In(i18n.Locale()).AddedOn(date) }
+
+// AddedOn says "Added {date}"
+// in the language of msgs.
+func (msgs Messages) AddedOn(date string) string {
+	return Catalog.Format(msgs.locale, "AddedOn", map[string]any{"date": date})
+}
+
+// AppDataSize says "App data · {size}"
+// in the language the app shows.
+func AppDataSize(size string) string { return In(i18n.Locale()).AppDataSize(size) }
+
+// AppDataSize says "App data · {size}"
+// in the language of msgs.
+func (msgs Messages) AppDataSize(size string) string {
+	return Catalog.Format(msgs.locale, "AppDataSize", map[string]any{"size": size})
+}
+
+// Clear says "Clear…"
+// in the language the app shows.
+func Clear() string { return In(i18n.Locale()).Clear() }
+
+// Clear says "Clear…"
+// in the language of msgs.
+func (msgs Messages) Clear() string {
+	return Catalog.Format(msgs.locale, "Clear", nil)
+}
+
+// ClearDone says "Cleared."
+// in the language the app shows.
+func ClearDone() string { return In(i18n.Locale()).ClearDone() }
+
+// ClearDone says "Cleared."
+// in the language of msgs.
+func (msgs Messages) ClearDone() string {
+	return Catalog.Format(msgs.locale, "ClearDone", nil)
+}
+
+// ConvertedCode says "Converted app code"
+// in the language the app shows.
+func ConvertedCode() string { return In(i18n.Locale()).ConvertedCode() }
+
+// ConvertedCode says "Converted app code"
+// in the language of msgs.
+func (msgs Messages) ConvertedCode() string {
+	return Catalog.Format(msgs.locale, "ConvertedCode", nil)
+}
+
+// ConvertedCodeHint says "Made the first time each app opens, so later starts are quicker. {size}. Anything cleared is made again when needed."
+// in the language the app shows.
+func ConvertedCodeHint(size string) string { return In(i18n.Locale()).ConvertedCodeHint(size) }
+
+// ConvertedCodeHint says "Made the first time each app opens, so later starts are quicker. {size}. Anything cleared is made again when needed."
+// in the language of msgs.
+func (msgs Messages) ConvertedCodeHint(size string) string {
+	return Catalog.Format(msgs.locale, "ConvertedCodeHint", map[string]any{"size": size})
+}
+
+// AppDataTotalHint says "Each app keeps what it saves in a folder of its own here. {size} in all. Moving it needs every app stopped."
+// in the language the app shows.
+func AppDataTotalHint(size string) string { return In(i18n.Locale()).AppDataTotalHint(size) }
+
+// AppDataTotalHint says "Each app keeps what it saves in a folder of its own here. {size} in all. Moving it needs every app stopped."
+// in the language of msgs.
+func (msgs Messages) AppDataTotalHint(size string) string {
+	return Catalog.Format(msgs.locale, "AppDataTotalHint", map[string]any{"size": size})
+}
+
+// JavaOwnInstalled says "Windows-ARM64.apk's own (installed by it)"
+// in the language the app shows.
+func JavaOwnInstalled() string { return In(i18n.Locale()).JavaOwnInstalled() }
+
+// JavaOwnInstalled says "Windows-ARM64.apk's own (installed by it)"
+// in the language of msgs.
+func (msgs Messages) JavaOwnInstalled() string {
+	return Catalog.Format(msgs.locale, "JavaOwnInstalled", nil)
+}
+
+// JavaInstalledOn says "Installed by Windows-ARM64.apk on {date}, in its own folder. Only it uses this runtime: Java elsewhere on your PC, th…"
+// in the language the app shows.
+func JavaInstalledOn(date string) string { return In(i18n.Locale()).JavaInstalledOn(date) }
+
+// JavaInstalledOn says "Installed by Windows-ARM64.apk on {date}, in its own folder. Only it uses this runtime: Java elsewhere on your PC, th…"
+// in the language of msgs.
+func (msgs Messages) JavaInstalledOn(date string) string {
+	return Catalog.Format(msgs.locale, "JavaInstalledOn", map[string]any{"date": date})
+}
+
+// DownloadMB says "{done} MB of {total} MB"
+// in the language the app shows.
+func DownloadMB(done string, total string) string { return In(i18n.Locale()).DownloadMB(done, total) }
+
+// DownloadMB says "{done} MB of {total} MB"
+// in the language of msgs.
+func (msgs Messages) DownloadMB(done string, total string) string {
+	return Catalog.Format(msgs.locale, "DownloadMB", map[string]any{"done": done, "total": total})
+}
+
+// NativeNoticeTitle says "Running with restricted native code ({profile})"
+// in the language the app shows.
+func NativeNoticeTitle(profile string) string { return In(i18n.Locale()).NativeNoticeTitle(profile) }
+
+// NativeNoticeTitle says "Running with restricted native code ({profile})"
+// in the language of msgs.
+func (msgs Messages) NativeNoticeTitle(profile string) string {
+	return Catalog.Format(msgs.locale, "NativeNoticeTitle", map[string]any{"profile": profile})
+}
+
+// NativeNoticeBody says "Experimental. If the app needs anything outside {profile}, it stops with a clear message."
+// in the language the app shows.
+func NativeNoticeBody(profile string) string { return In(i18n.Locale()).NativeNoticeBody(profile) }
+
+// NativeNoticeBody says "Experimental. If the app needs anything outside {profile}, it stops with a clear message."
+// in the language of msgs.
+func (msgs Messages) NativeNoticeBody(profile string) string {
+	return Catalog.Format(msgs.locale, "NativeNoticeBody", map[string]any{"profile": profile})
+}
+
+// OtherAppsRunning says "Your other apps kept running. Close this pane with ×."
+// in the language the app shows.
+func OtherAppsRunning() string { return In(i18n.Locale()).OtherAppsRunning() }
+
+// OtherAppsRunning says "Your other apps kept running. Close this pane with ×."
+// in the language of msgs.
+func (msgs Messages) OtherAppsRunning() string {
+	return Catalog.Format(msgs.locale, "OtherAppsRunning", nil)
+}
+
+// FromItsWindow says "From its window"
+// in the language the app shows.
+func FromItsWindow() string { return In(i18n.Locale()).FromItsWindow() }
+
+// FromItsWindow says "From its window"
+// in the language of msgs.
+func (msgs Messages) FromItsWindow() string {
+	return Catalog.Format(msgs.locale, "FromItsWindow", nil)
+}
+
+// BesideHeading says "Beside {pane}"
+// in the language the app shows.
+func BesideHeading(pane string) string { return In(i18n.Locale()).BesideHeading(pane) }
+
+// BesideHeading says "Beside {pane}"
+// in the language of msgs.
+func (msgs Messages) BesideHeading(pane string) string {
+	return Catalog.Format(msgs.locale, "BesideHeading", map[string]any{"pane": pane})
+}
+
+// BelowHeading says "Below {pane}"
+// in the language the app shows.
+func BelowHeading(pane string) string { return In(i18n.Locale()).BelowHeading(pane) }
+
+// BelowHeading says "Below {pane}"
+// in the language of msgs.
+func (msgs Messages) BelowHeading(pane string) string {
+	return Catalog.Format(msgs.locale, "BelowHeading", map[string]any{"pane": pane})
+}
+
+// EndsAtOnce says "Ends it at once"
+// in the language the app shows.
+func EndsAtOnce() string { return In(i18n.Locale()).EndsAtOnce() }
+
+// EndsAtOnce says "Ends it at once"
+// in the language of msgs.
+func (msgs Messages) EndsAtOnce() string {
+	return Catalog.Format(msgs.locale, "EndsAtOnce", nil)
+}
+
+// OpenAsPaneSub says "In the main window"
+// in the language the app shows.
+func OpenAsPaneSub() string { return In(i18n.Locale()).OpenAsPaneSub() }
+
+// OpenAsPaneSub says "In the main window"
+// in the language of msgs.
+func (msgs Messages) OpenAsPaneSub() string {
+	return Catalog.Format(msgs.locale, "OpenAsPaneSub", nil)
+}
+
+// OpenBesideSub says "Split the current pane"
+// in the language the app shows.
+func OpenBesideSub() string { return In(i18n.Locale()).OpenBesideSub() }
+
+// OpenBesideSub says "Split the current pane"
+// in the language of msgs.
+func (msgs Messages) OpenBesideSub() string {
+	return Catalog.Format(msgs.locale, "OpenBesideSub", nil)
+}
+
+// OpenInWindowSub says "Separate window on the taskbar"
+// in the language the app shows.
+func OpenInWindowSub() string { return In(i18n.Locale()).OpenInWindowSub() }
+
+// OpenInWindowSub says "Separate window on the taskbar"
+// in the language of msgs.
+func (msgs Messages) OpenInWindowSub() string {
+	return Catalog.Format(msgs.locale, "OpenInWindowSub", nil)
+}
+
+// CloseDoc says "Close"
+// in the language the app shows.
+func CloseDoc() string { return In(i18n.Locale()).CloseDoc() }
+
+// CloseDoc says "Close"
+// in the language of msgs.
+func (msgs Messages) CloseDoc() string {
+	return Catalog.Format(msgs.locale, "CloseDoc", nil)
+}

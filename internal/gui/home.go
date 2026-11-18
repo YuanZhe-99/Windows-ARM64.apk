@@ -2,8 +2,10 @@ package gui
 
 import (
 	"context"
+	"fmt"
 	"strings"
 
+	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
 
 	"github.com/YuanZhe-99/Windows-ARM64.apk/internal/winapk"
@@ -14,6 +16,10 @@ import (
 // Open, then one row per app; empty, a place to drop an APK and what runs
 // on this PC today. A dropped APK opens Add an app.
 func (a *App) homeView(c *ui.Context) {
+	if a.details.open {
+		a.detailsView(c)
+		return
+	}
 	p := pal(c)
 	body := ui.Column(c.Key("home")).Fill()
 	if apk := firstAPK(body.DroppedFiles()); apk != "" {
@@ -185,7 +191,16 @@ func (a *App) appRow(c *ui.Context, e *entry, border bool) {
 		if s != nil {
 			state = stateWords(s, false, e, a)
 		}
-		muted(c, state, 13).NoWrap().MinWidth(90)
+		ui.Row(c).Gap(6).AlignItems(ui.Center).MinWidth(100).Shrink(0).Children(func() {
+			if live {
+				dot(c, p.success)
+				ui.Text(c, state).FontSize(13).TextColor(p.success).NoWrap()
+			} else if s != nil && s.state.Phase == winapk.Failed {
+				ui.Text(c, state).FontSize(13).TextColor(p.danger).NoWrap()
+			} else {
+				muted(c, state, 13).NoWrap()
+			}
+		})
 		switch {
 		case a.missing[e.APK.Path] && !live:
 			if button(c, "locate-"+e.ID, L.Locate(), nil).Clicked() {
@@ -196,12 +211,31 @@ func (a *App) appRow(c *ui.Context, e *entry, border bool) {
 				a.openDetails(e.ID)
 			}
 		case live:
-			if button(c, "show-"+e.ID, L.Show(), nil).Clicked() {
-				a.reveal(e.ID)
-			}
+			a.showButton(c, e)
 		default:
 			a.openButton(c, e)
 		}
+	})
+}
+
+// showButton is the split button for an already-open app: Show and ▾.
+func (a *App) showButton(c *ui.Context, e *entry) {
+	p := pal(c)
+	ui.Row(c).Shrink(0).Children(func() {
+		b := ui.ButtonBase(c.Key("show-"+e.ID)).Height(32).Padding(0, 12).Radius(radiusCtl).Border(1, p.border).Background(p.pane).Label(L.Show())
+		if b.Hovered() {
+			b.Background(p.hover)
+		}
+		b.Children(func() { ui.Text(c, L.Show()).TextColor(p.text).NoWrap() })
+		if b.Clicked() {
+			a.reveal(e.ID)
+		}
+		m := ui.ButtonBase(c.Key("show-more-"+e.ID)).Size(28, 32).Radius(radiusCtl).Margin(0, 0, 0, 1).Border(1, p.border).Background(p.pane).Center().Label(L.More())
+		if m.Hovered() {
+			m.Background(p.hover)
+		}
+		m.Children(func() { ui.Icon(c, icChevron).FontSize(14).TextColor(p.text) })
+		m.Menu(func(m *ui.Menu) { a.rowMenu(m, e) })
 	})
 }
 
@@ -219,7 +253,12 @@ func (a *App) openButton(c *ui.Context, e *entry) {
 		if !ready {
 			b.Opacity(0.45).Tooltip(L.OpenNeedsJava())
 		}
-		b.Children(func() { ui.Text(c, L.Open()).FontWeight(600).TextColor(p.onAccent).NoWrap() })
+		b.Children(func() {
+			ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
+				ui.Icon(c, icPlay).FontSize(12).TextColor(p.onAccent)
+				ui.Text(c, L.Open()).FontWeight(600).TextColor(p.onAccent).NoWrap()
+			})
+		})
 		if b.Clicked() {
 			a.launch(e, e.InWindow, false)
 		}
@@ -233,26 +272,27 @@ func (a *App) openButton(c *ui.Context, e *entry) {
 }
 
 // openItems are the ways to open an app just this once, then Change how
-// it opens….
+// it opens… (design/OpenMenu.html).
 func (a *App) openItems(m *ui.Menu, e *entry) {
-	pane := L.OpenAsPane()
-	win := L.OpenInWindow()
+	p1 := m.Item(L.OpenAsPane()).Icon(miPane).Subtitle(L.OpenAsPaneSub())
 	if !e.InWindow {
-		pane += " · " + L.Default()
-	} else {
-		win += " · " + L.Default()
+		p1.Trailing(L.Default())
 	}
-	if m.Item(pane).Chosen() {
+	if p1.Chosen() {
 		a.launch(e, false, false)
 	}
-	if m.Item(L.OpenBeside()).Chosen() {
+	if m.Item(L.OpenBeside()).Icon(miSplitR).Subtitle(L.OpenBesideSub()).Chosen() {
 		a.launch(e, false, true)
 	}
-	if m.Item(win).Chosen() {
+	p2 := m.Item(L.OpenInWindow()).Icon(miWindow).Subtitle(L.OpenInWindowSub())
+	if e.InWindow {
+		p2.Trailing(L.Default())
+	}
+	if p2.Chosen() {
 		a.launch(e, true, false)
 	}
 	m.Separator()
-	if m.Item(L.ChangeHowOpens(e.APK.Label)).Chosen() {
+	if m.Item(L.ChangeHowOpens(e.APK.Label)).Icon(miGear).Chosen() {
 		a.openDetails(e.ID)
 	}
 }
@@ -262,41 +302,52 @@ func (a *App) rowMenu(m *ui.Menu, e *entry) {
 	s := a.open[e.ID]
 	switch {
 	case s != nil && s.live() && s.win != nil:
-		if m.Item(L.ShowWindow()).Chosen() {
+		if m.Item(L.ShowWindow()).Icon(miWindow).Trailing("Enter").Chosen() {
 			a.reveal(e.ID)
 		}
-		if m.Item(L.BackToMain()).Chosen() {
+		if m.Item(L.BackToMain()).Icon(miDockIn).Trailing(L.AsPane()).Chosen() {
 			a.toPane(e.ID)
 		}
+		if m.Item(L.OpenBeside()).Icon(miSplitR).Chosen() {
+			a.toPane(e.ID)
+			if a.cur != nil {
+				a.splitWith(a.cur.focus, appTab(e.ID), true)
+			}
+		}
 	case s != nil && s.live():
-		if m.Item(L.Show()).Chosen() {
+		if m.Item(L.Show()).Icon(miPane).Trailing("Enter").Chosen() {
 			a.reveal(e.ID)
 		}
-		if m.Item(L.OpenInOwnWindow()).Chosen() {
+		if m.Item(L.OpenInOwnWindow()).Icon(miWindow).Chosen() {
 			a.toWindow(e.ID)
 		}
 	case e.runnable():
 		ready := a.report.Ready()
-		if m.Item(L.OpenAsPane()).Disabled(!ready).Chosen() {
+		if m.Item(L.OpenAsPane()).Icon(miPane).Disabled(!ready).Chosen() {
 			a.launch(e, false, false)
 		}
-		if m.Item(L.OpenBeside()).Disabled(!ready).Chosen() {
+		if m.Item(L.OpenBeside()).Icon(miSplitR).Disabled(!ready).Chosen() {
 			a.launch(e, false, true)
 		}
-		if m.Item(L.OpenInWindow()).Disabled(!ready).Chosen() {
+		if m.Item(L.OpenInWindow()).Icon(miWindow).Disabled(!ready).Chosen() {
 			a.launch(e, true, false)
 		}
 	}
 	if s != nil && s.live() {
 		m.Separator()
-		if m.Item(L.Stop()).Chosen() {
+		if m.Item(L.Stop()).Icon(miStop).Chosen() {
 			a.stopApp(e.ID, false)
 		}
 	}
 	m.Separator()
 	a.appMenuItems(m, e)
+	if !strings.HasPrefix(e.APK.Path, "sample:") && !a.missing[e.APK.Path] {
+		if m.Item(L.OpenFolder()).Icon(miFolder).Chosen() {
+			a.async(func() { mygo.Shell.ShowItemInFolder(e.APK.Path) })
+		}
+	}
 	m.Separator()
-	if m.Item(L.RemoveFromLibrary()).Chosen() {
+	if m.Item(L.RemoveFromLibrary()).Icon(miTrash).Danger().Chosen() {
 		a.confirm = confirmState{open: true, kind: confirmRemove, id: e.ID}
 	}
 }
@@ -356,11 +407,11 @@ func (a *App) javaCard(c *ui.Context) {
 		return
 	}
 	p := pal(c)
-	ui.Column(c.Key("java-card")).FillWidth().Shrink(0).Padding(margin / 2).Children(func() {
-		ui.Row(c).FillWidth().Gap(14).Padding(14, 18).Radius(radiusCard).Background(p.pane).Border(1, p.warnBorder).Children(func() {
-			tile(c, icJava, 36, p.warnBg, p.warn)
+	ui.Column(c.Key("java-card")).FillWidth().Shrink(0).Padding(0, 0, margin, 0).Children(func() {
+		ui.Row(c).FillWidth().Gap(14).Padding(14, 18).Radius(radiusCard).Background(p.tint).Border(1, p.tintBorder).AlignItems(ui.Center).Children(func() {
+			tile(c, icJava, 36, p.pane, p.accentText)
 			ui.Column(c).Grow(1).MinWidth(0).Gap(4).Children(func() {
-				ui.Text(c, L.JavaCardTitle()).FontWeight(600)
+				ui.Text(c, L.JavaCardTitle()).FontWeight(600).TextColor(p.accentText)
 				if a.install.running {
 					muted(c, installWords(a.install.step), 13)
 					ui.Progress(c, a.installFrac()).FillWidth().MaxWidth(420)
@@ -453,41 +504,55 @@ func (a *App) installDialog(c *ui.Context) {
 	p := pal(c)
 	ui.DialogBase(c.Key("install"), &a.install.shown, func(backdrop, panel ui.Element) {
 		backdrop.Background(p.scrim)
-		panel.Width(520).Radius(radiusDlg).Background(p.pane).Padding(24).Gap(14).Label(L.GettingJava()).Children(func() {
-			ui.Text(c, L.GettingJava()).FontSize(18).FontWeight(600).Level(1)
-			muted(c, installWords(a.install.step), 13)
-			ui.Progress(c, a.installFrac()).FillWidth()
-			steps := []struct {
-				s           winapk.InstallStep
-				title, hint string
-			}{
-				{winapk.StepDownload, L.StepDownloadTitle(), L.StepDownloadHint()},
-				{winapk.StepCheck, L.StepCheckTitle(), L.StepCheckHint()},
-				{winapk.StepInstall, L.StepInstallTitle(), javaDir()},
-				{winapk.StepTest, L.StepTestTitle(), ""},
-			}
-			ui.Column(c).FillWidth().Border(1, p.border).Radius(radiusCard).Clip().Children(func() {
-				for i, st := range steps {
-					ui.Row(c).FillWidth().Gap(12).Padding(10, 14).BorderWidth(min(float32(i), 1), 0, 0, 0).BorderColor(p.hover).Children(func() {
-						ui.Column(c).Grow(1).MinWidth(0).Children(func() {
-							ui.Text(c, st.title).FontWeight(600)
-							if st.hint != "" {
-								muted(c, st.hint, fontSmall).Wrap()
-							}
-						})
-						switch {
-						case st.s < a.install.step:
-							chip(c, L.StepDoneChip(), toneGood)
-						case st.s == a.install.step:
-							chip(c, L.StepNow(), toneAccent)
-						default:
-							chip(c, L.StepNext(), toneNeutral)
-						}
-					})
+		panel.Width(520).Radius(radiusDlg).Background(p.pane).Clip().Label(L.GettingJava()).Children(func() {
+			ui.Row(c).FillWidth().Height(52).Padding(0, 12, 0, 20).AlignItems(ui.Center).BorderWidth(0, 0, 1, 0).BorderColor(p.border).Children(func() {
+				ui.Text(c, L.GettingJava()).FontSize(16).FontWeight(600).Grow(1).Level(1)
+				if iconButton(c, "install-x", icClose, L.Hide()).Clicked() {
+					a.install.shown = false
 				}
 			})
-			muted(c, L.JavaPrivate(), 13).Wrap()
-			ui.Row(c).FillWidth().Gap(8).Children(func() {
+			ui.Column(c).FillWidth().Padding(20, 24).Gap(14).Children(func() {
+				ui.Row(c).FillWidth().AlignItems(ui.Center).Children(func() {
+					ui.Text(c, installWords(a.install.step)).FontWeight(600).Grow(1)
+					if a.install.step == winapk.StepDownload {
+						const estMB = 198
+						done := int(a.install.frac * estMB)
+						muted(c, L.DownloadMB(fmt.Sprintf("%d", done), fmt.Sprintf("%d", estMB)), fontSmall)
+					}
+				})
+				ui.Progress(c, a.installFrac()).FillWidth()
+				steps := []struct {
+					s           winapk.InstallStep
+					title, hint string
+				}{
+					{winapk.StepDownload, L.StepDownloadTitle(), L.StepDownloadHint()},
+					{winapk.StepCheck, L.StepCheckTitle(), L.StepCheckHint()},
+					{winapk.StepInstall, L.StepInstallTitle(), javaDir()},
+					{winapk.StepTest, L.StepTestTitle(), ""},
+				}
+				ui.Column(c).FillWidth().Border(1, p.border).Radius(radiusCard).Clip().Children(func() {
+					for i, st := range steps {
+						ui.Row(c).FillWidth().Gap(12).Padding(10, 14).BorderWidth(min(float32(i), 1), 0, 0, 0).BorderColor(p.hover).Children(func() {
+							ui.Column(c).Grow(1).MinWidth(0).Children(func() {
+								ui.Text(c, st.title).FontWeight(600)
+								if st.hint != "" {
+									muted(c, st.hint, fontSmall).Wrap()
+								}
+							})
+							switch {
+							case st.s < a.install.step:
+								chip(c, L.StepDoneChip(), toneGood)
+							case st.s == a.install.step:
+								chip(c, L.StepNow(), toneAccent)
+							default:
+								chip(c, L.StepNext(), toneNeutral)
+							}
+						})
+					}
+				})
+				muted(c, L.JavaPrivate(), 13).Wrap()
+			})
+			ui.Row(c).FillWidth().Padding(12, 24).Gap(8).Background(p.subtle).BorderWidth(1, 0, 0, 0).BorderColor(p.border).Children(func() {
 				ui.Spacer(c)
 				if button(c, "install-cancel", L.Cancel(), nil).Clicked() && a.install.cancel != nil {
 					a.install.cancel()

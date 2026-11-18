@@ -11,6 +11,7 @@ package gui
 import (
 	"context"
 	"encoding/json"
+	"image"
 	"os"
 	"path/filepath"
 	"slices"
@@ -51,10 +52,11 @@ type App struct {
 	checking bool
 	install  installState
 
-	window *mygo.Window
-	groups []*group
-	cur    *group
-	sizes  map[string]size // each pane's room in the last frame
+	window  *mygo.Window
+	diagWin *mygo.Window
+	groups  []*group
+	cur     *group
+	sizes   map[string]size // each pane's room in the last frame
 	// dragging is the tab dragged over the panes, "" for none; pending is
 	// what runs once the frame is built (afterFrame).
 	dragging, zonesFor string
@@ -68,8 +70,20 @@ type App struct {
 	add        addState
 	details    detailsState
 	confirm    confirmState
+	docView    docViewState
 	toast      string
 	toastAt    time.Time
+
+	totalDataBytes int64
+	codeBytes      int64
+	appDataBytes   map[string]int64
+	checkedUpdate  bool
+}
+
+// docViewState displays a local license or third-party notice file in a sheet.
+type docViewState struct {
+	open        bool
+	title, body string
 }
 
 // Prefs are the interface's own settings (gui.json).
@@ -89,8 +103,9 @@ type Prefs struct {
 	Graphics    string `json:"graphics"`    // "auto", "vulkan" or "d3d11"
 	// Profile is the default native profile of apps whose native code runs
 	// Restricted.
-	Profile       winapk.Profile `json:"profile"`
-	SidebarHidden bool           `json:"sidebarHidden"`
+	Profile          winapk.Profile `json:"profile"`
+	SidebarHidden    bool           `json:"sidebarHidden"`
+	HideNativeNotice bool           `json:"hideNativeNotice"`
 }
 
 func defaultPrefs() Prefs {
@@ -132,15 +147,33 @@ type session struct {
 	id    string
 	proc  winapk.Process
 	state winapk.State
+	frame *ui.Bitmap
 	// win is its window of its own, nil while it is a pane.
-	win     *mygo.Window
-	rotated bool
+	win        *mygo.Window
+	rotated    bool
+	pressing   bool
+	hideNotice bool
+	native     winapk.Native
+	profile    winapk.Profile
+	reqGfx     string
 	// stopAt is when Stop was asked, to offer Force stop when it gets no
 	// answer.
 	stopAt  time.Time
 	started time.Time
 	// told is the screen size the app was last told, in DIPs.
 	told size
+}
+
+// updateFrame uploads a newly published RGBA8 frame into the session's GPU bitmap.
+func (s *session) updateFrame(rgba *image.RGBA) {
+	if rgba == nil {
+		return
+	}
+	if s.frame == nil {
+		s.frame = ui.NewBitmap(rgba)
+	} else {
+		s.frame.Update(rgba)
+	}
 }
 
 // live tells whether the app's process runs.
@@ -158,7 +191,11 @@ func (s *session) live() bool {
 // New makes the interface for a runtime client; dir holds its files.
 func New(rt winapk.Client, dir string, demo bool) *App {
 	ctx, cancel := context.WithCancel(context.Background())
-	a := &App{rt: rt, dir: dir, demo: demo, ctx: ctx, cancel: cancel, open: map[string]*session{}, runs: map[string][]*session{}, sizes: map[string]size{}}
+	a := &App{
+		rt: rt, dir: dir, demo: demo, ctx: ctx, cancel: cancel,
+		open: map[string]*session{}, runs: map[string][]*session{},
+		sizes: map[string]size{}, appDataBytes: map[string]int64{},
+	}
 	a.later = a.onMain
 	a.async = func(fn func()) { go fn() }
 	a.prefs = loadJSON(dir, "gui.json", defaultPrefs())
@@ -264,11 +301,45 @@ func (a *App) onMain(fn func()) {
 		if a.window != nil {
 			a.window.Invalidate()
 		}
+		if a.diagWin != nil {
+			a.diagWin.Invalidate()
+		}
 		for _, s := range a.open {
 			if s.win != nil {
 				s.win.Invalidate()
 			}
 		}
+	})
+}
+
+// refreshStorage updates cached disk usage figures off the UI thread.
+func (a *App) refreshStorage() {
+	if a.demo {
+		a.totalDataBytes = 46_000_000
+		a.codeBytes = 182_000_000
+		for _, e := range a.library {
+			a.appDataBytes[e.ID] = 2_100_000
+		}
+		return
+	}
+	root := a.appDataDir()
+	var pkgs []string
+	for _, e := range a.library {
+		pkgs = append(pkgs, e.APK.Package)
+	}
+	a.async(func() {
+		tot := winapk.TotalAppDataSize(root)
+		code := winapk.ConvertedCodeSize(root)
+		per := make(map[string]int64, len(pkgs))
+		for _, p := range pkgs {
+			per[p] = winapk.AppDataSize(root, p)
+		}
+		a.later(func() {
+			a.totalDataBytes, a.codeBytes = tot, code
+			for k, v := range per {
+				a.appDataBytes[k] = v
+			}
+		})
 	})
 }
 
@@ -301,6 +372,21 @@ func (a *App) check() {
 				return
 			}
 			a.report, a.checked = r, time.Now()
+			a.refreshStorage()
+			if !a.demo && a.prefs.JavaUpdates && r.Java.Own && len(a.open) == 0 && !a.checkedUpdate {
+				a.checkedUpdate = true
+				if rt, ok := a.rt.(*winapk.Runtime); ok {
+					a.async(func() {
+						if upd, _, err := rt.CheckJavaUpdate(a.ctx, r.Java.Path); err == nil && upd {
+							a.later(func() {
+								if len(a.open) == 0 && !a.install.running {
+									a.installJava()
+								}
+							})
+						}
+					})
+				}
+			}
 		})
 	})
 }
@@ -364,13 +450,31 @@ func (a *App) launch(e *entry, inWindow, beside bool) {
 		a.openDetails(e.ID)
 		return
 	}
-	s := &session{id: e.ID, state: winapk.State{Phase: winapk.Starting}, started: time.Now()}
+	gfx := e.Graphics
+	if gfx == "" {
+		gfx = a.prefs.Graphics
+	}
+	if gfx == "" {
+		gfx = "auto"
+	}
+	sw, sh := screenSize(e, false, size{360, 720})
+	s := &session{
+		id: e.ID, state: winapk.State{Phase: winapk.Starting}, started: time.Now(),
+		native: e.Native, profile: a.profile(e), reqGfx: gfx,
+	}
 	a.open[e.ID] = s
 	a.runs[e.ID] = append([]*session{s}, a.runs[e.ID]...)
 	if len(a.runs[e.ID]) > maxRuns {
 		a.runs[e.ID] = a.runs[e.ID][:maxRuns]
 	}
-	spec := winapk.LaunchSpec{Path: e.APK.Path, JavaHome: a.prefs.JavaHome, Native: e.Native, Window: inWindow}
+	var dataDir string
+	if !a.demo {
+		dataDir = a.appDataDir()
+	}
+	spec := winapk.LaunchSpec{
+		Path: e.APK.Path, JavaHome: a.prefs.JavaHome, DataDir: dataDir,
+		Native: e.Native, Graphics: gfx, Width: int(sw), Height: int(sh), Window: inWindow,
+	}
 	if e.Native == winapk.NativeRestricted {
 		spec.Profile = a.profile(e)
 	}
@@ -380,8 +484,17 @@ func (a *App) launch(e *entry, inWindow, beside bool) {
 	})
 	if err != nil {
 		s.state = winapk.State{Phase: winapk.Failed, Category: "DEPENDENCY_MISSING", Log: []string{err.Error()}}
+	} else if proc != nil {
+		proc.SetFrameHandler(func(rgba *image.RGBA) {
+			a.later(func() {
+				if a.open[id] == s {
+					s.updateFrame(rgba)
+				}
+			})
+		})
 	}
 	s.proc = proc
+	a.details.open = false
 	if inWindow {
 		a.newAppWindow(s)
 		return
