@@ -220,7 +220,11 @@ APK/独立探测的组合证据记录于 platform-notes.md。
 
 ### APK 集成
 
-P4 集成使用 `winapk run --native=restricted`，默认仍为 `off`。
+P4 集成使用 `winapk run --native=restricted [--profile=N0|N1|N2]`，默认仍为 `off`（CLI 未传
+`--profile` 时默认为 `N2`；`N0` 不开放 Bionic/系统库与 JNI 回调，`N1` 开放 Bionic/JNI 但拒绝
+`libandroid.so`/EGL/GLES/Vulkan，`N2` 额外开放受限窗口与图形提供方）。静态 `winapk inspect --json`
+仅读取清单、`resources.arsc` 及 `arm64-v8a` ELF 的 `DT_NEEDED` 即判定最低所需 profile（`""`、`N0`、
+`N1`、`N2`）与结论，不执行任何代码。
 准入每个 APK 内容标识对应的一个 ARM64 库提取目录，仅允许可移植 `.so` 基名，
 限制 ZIP 读取大小并校验 CRC，不在该目录以外搜索。
 `System.load` 仅接受该目录内已准入文件的绝对路径；此子集不准入应用生成的库及额外 ClassLoader。

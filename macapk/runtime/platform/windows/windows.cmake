@@ -25,6 +25,13 @@ string(REGEX REPLACE "^const Version = \"([^\"]+)\".*" "\\1" WINAPK_VERSION "${_
 if(NOT WINAPK_VERSION)
   message(FATAL_ERROR "no Version in internal/version/version.go")
 endif()
+file(STRINGS "${CMAKE_CURRENT_LIST_DIR}/../../../../build-lock.json" _macapk REGEX "\"macapk\":.*\"commit\":")
+string(REGEX REPLACE ".*\"commit\": \"([0-9a-f]+)\".*" "\\1" _macapk_commit "${_macapk}")
+if(_macapk_commit)
+  string(SUBSTRING "${_macapk_commit}" 0 7 WINAPK_MACAPK_COMMIT)
+else()
+  set(WINAPK_MACAPK_COMMIT "unknown")
+endif()
 
 set(_win "${CMAKE_CURRENT_LIST_DIR}")
 add_executable(winapk
@@ -37,7 +44,7 @@ add_executable(winapk
   # the UTF-8 active code page, for Unicode paths in JVM options (embedded by the linker)
   ${_win}/winapk.manifest)
 target_include_directories(winapk PRIVATE "${JAVA_HOME}/include" "${JAVA_HOME}/include/win32")
-target_compile_definitions(winapk PRIVATE WINAPK_VERSION="${WINAPK_VERSION}" UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX)
+target_compile_definitions(winapk PRIVATE WINAPK_VERSION="${WINAPK_VERSION}" WINAPK_MACAPK_COMMIT="${WINAPK_MACAPK_COMMIT}" UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX)
 # Win32 and Vulkan structs are zero-filled from their first field ({sizeof v}, {sType}).
 target_compile_options(winapk PRIVATE /W4 /EHsc -Wno-missing-field-initializers)
 # vulkan-1.dll and jvm.dll load at run time: no import library for either.

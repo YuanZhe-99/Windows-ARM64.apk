@@ -271,7 +271,12 @@ never establish G3. The combined APK/standalone evidence is recorded in platform
 
 ### APK integration
 
-The P4 integration uses `winapk run --native=restricted`, with `off` still the default.
+The P4 integration uses `winapk run --native=restricted [--profile=N0|N1|N2]`, with `off` still
+the default (`--profile` defaults to `N2` on the CLI; `N0` withholds Bionic/system libraries and
+JNI callbacks, `N1` admits Bionic/JNI while withholding `libandroid.so`/EGL/GLES/Vulkan, and `N2`
+adds the restricted window/graphics providers). Static `winapk inspect --json` classifies each
+APK's minimum required profile (`""`, `N0`, `N1`, `N2`) and verdict from its manifest,
+`resources.arsc` and `arm64-v8a` ELF `DT_NEEDED` entries without executing code.
 Admission is one extracted ARM64 library directory per APK content identity,
 portable `.so` basenames only, bounded ZIP reads/CRC validation and no search outside that
 directory. `System.load` accepts only an absolute path to an admitted file in that directory;

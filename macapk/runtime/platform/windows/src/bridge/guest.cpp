@@ -16,9 +16,10 @@
 namespace winapk::bridge {
 namespace {
 
-/// Retains the host-selected directories without accepting app-supplied host paths.
+/// Retains the host-selected directories and profile without accepting app-supplied host paths.
 struct GuestConfig {
     std::wstring libraries, helpers, android;
+    std::string profile = "N2";
     std::set<std::string> admitted;
 };
 GuestConfig config;
@@ -62,18 +63,26 @@ void Open(JNIEnv* env, jclass, jobject loader, jstring name) {
             if (!runtime) {
                 auto value = std::make_unique<GuestRuntime>();
                 guest::LoadError error;
-                value->support = guest::BionicLibraries::Load(config.helpers + L"\\libwinapk-bionic.so", &error);
-                if (!value->support) { Reject(env, error); return; }
-                const auto baseLibraries = value->support->Libraries();
-                std::vector<guest::BuiltinLibrary> libraries(baseLibraries.begin(), baseLibraries.end());
-                libraries.push_back(NativeWindowLibrary());
-                AddGuestGraphicsLibraries(libraries);
-                AddGuestVulkanLibrary(libraries);
-                value->modules = std::make_unique<guest::ModuleSet>(config.libraries,
-                    value->support->Imports(), libraries);
+                const bool n0 = config.profile == "N0";
+                const bool n2 = config.profile == "N2";
+                std::span<const guest::HostSymbol> imports{};
+                std::vector<guest::BuiltinLibrary> libraries;
+                if (!n0) {
+                    value->support = guest::BionicLibraries::Load(config.helpers + L"\\libwinapk-bionic.so", &error);
+                    if (!value->support) { Reject(env, error); return; }
+                    imports = value->support->Imports();
+                    const auto baseLibraries = value->support->Libraries();
+                    libraries.assign(baseLibraries.begin(), baseLibraries.end());
+                    if (n2) {
+                        libraries.push_back(NativeWindowLibrary());
+                        AddGuestGraphicsLibraries(libraries);
+                        AddGuestVulkanLibrary(libraries);
+                    }
+                }
+                value->modules = std::make_unique<guest::ModuleSet>(config.libraries, imports, libraries);
                 value->threads = std::make_unique<guest::ThreadRuntime>(value->modules.get(), config.android);
                 value->jni = guest::JniBridge::Load(env, loader, *value->threads, *value->modules,
-                    config.helpers + L"\\libwinapk-jni.so", &error);
+                    config.helpers + L"\\libwinapk-jni.so", &error, !n0);
                 if (!value->jni) { Reject(env, error); return; }
                 value->loader = env->NewGlobalRef(loader);
                 if (!value->loader) return;
@@ -114,8 +123,9 @@ bool RegisterGuest(JNIEnv* env) {
 
 /// Configures the one APK namespace before its JVM starts, without running guest code.
 extern "C" __declspec(dllexport) void winapk_bridge_configure_guest(
-        const wchar_t* libraries, const wchar_t* helpers, const wchar_t* android, const char* admitted) {
-    winapk::bridge::config = {libraries, helpers, android};
+        const wchar_t* libraries, const wchar_t* helpers, const wchar_t* android,
+        const char* admitted, const char* profile) {
+    winapk::bridge::config = {libraries, helpers, android, profile && *profile ? profile : "N2"};
     std::istringstream names(admitted);
     for (std::string name; std::getline(names, name);) winapk::bridge::config.admitted.insert(name);
 }

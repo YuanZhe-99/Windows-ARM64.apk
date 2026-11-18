@@ -21,15 +21,24 @@ struct ZipEntry {
     uint64_t localHeader = 0;    ///< offset of the local file header
 };
 
-/// What `inspect` and `run` learn from an APK's manifest and entries.
+/// What `inspect` and `run` learn from an APK's manifest, resource table and entries.
 struct ApkInfo {
     std::string packageName;
+    std::string label;                      ///< application or launcher label; falls back to package name
     std::string versionName;
     int64_t versionCode = 0;
+    uint64_t fileSize = 0;                  ///< total APK file size in bytes
     int minSdk = 0, targetSdk = 0;
     int dexCount = 0;                       ///< classes.dex, classes2.dex, ...
+    std::string glesVersion;                ///< requested or linked OpenGL ES version ("2.0", "3.0", ...)
+    bool vulkan = false;                    ///< uses-feature vulkan or libvulkan.so DT_NEEDED
+    bool vulkanRequired = false;            ///< required vulkan feature or libvulkan.so DT_NEEDED
+    std::string profile;                    ///< least guest profile needed: "", "N0", "N1", "N2"
+    std::string verdict;                    ///< "can-run", "needs-native", "not-yet", "unsupported"
+    std::vector<std::string> permissions;   ///< <uses-permission> android:name values
     std::vector<std::string> nativeAbis;    ///< lib/<abi>/ folders holding .so files
     std::vector<std::string> nativeLibs;    ///< lib/<abi>/<name>.so entries
+    std::vector<uint8_t> iconPng;           ///< launcher PNG icon bytes when present in the APK
     /// Entry names that would be unsafe as Windows paths (absolute, "..", drive letters,
     /// reserved device names, characters Windows forbids) or that collide when case is
     /// ignored. The runtime never maps entries to files by name, so they are reported only.

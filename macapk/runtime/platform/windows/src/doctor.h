@@ -77,12 +77,14 @@ struct VulkanInfo {
 
 /// Everything doctor reports.
 struct Report {
-    std::string version;  ///< winapk's own version (internal/version)
+    std::string version;          ///< winapk's own version (internal/version)
+    std::string frameworkCommit;  ///< merged Mac.apk commit recorded in build-lock.json
     HostInfo host;
     std::vector<Adapter> adapters;
     JvmInfo jvm;
     VulkanInfo vulkan;
     bool angleFilesArm64 = false; ///< private EGL/GLES PE files found; no rendering was probed
+    std::vector<std::string> guestNativeProfiles; ///< restricted profiles whose helpers are present
     /// Stable identifiers of what this build cannot do yet (PLAN.md §14.2 style), each with
     /// a reason; doctor reports them rather than letting a missing capability look present.
     std::vector<std::pair<std::string, std::string>> limitations;

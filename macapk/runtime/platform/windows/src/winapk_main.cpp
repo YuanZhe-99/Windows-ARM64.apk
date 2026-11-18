@@ -109,7 +109,10 @@ void PrintJson(const Report& r) {
     o += std::string(v.devices.empty() ? "" : "\n    ") + "],\n";
     o += "    \"win32Present\": " + Json(v.win32Present) + ",\n    \"angleFilesArm64\": " + Bool(r.angleFilesArm64) +
          ",\n    \"angleBackends\": []\n  },\n";
-    o += "  \"runtime\": { \"guestNativeProfiles\": [], \"guestVulkan\": false },\n  \"limitations\": [";
+    o += "  \"runtime\": { \"guestNativeProfiles\": [";
+    for (size_t i = 0; i < r.guestNativeProfiles.size(); ++i)
+        o += (i ? ", " : "") + Json(r.guestNativeProfiles[i]);
+    o += "], \"guestVulkan\": false, \"frameworkCommit\": " + Json(r.frameworkCommit) + " },\n  \"limitations\": [";
     for (size_t i = 0; i < r.limitations.size(); ++i) {
         o += std::string(i ? "," : "") + "\n    { \"id\": " + Json(r.limitations[i].first) + ", \"reason\": " + Json(r.limitations[i].second) + " }";
     }
@@ -147,7 +150,7 @@ void PrintText(const Report& r) {
 int Usage() {
     fputs("usage: winapk doctor [--json] [--present] [--no-jvm] [--java-home <dir>]\n"
           "       winapk inspect <apk> [--json]\n"
-          "       winapk run <apk> [--native=off|restricted] [--graphics=off|auto|vulkan|d3d11]\n"
+          "       winapk run <apk> [--native=off|restricted] [--profile=N0|N1|N2] [--graphics=off|auto|vulkan|d3d11]\n"
           "                        [--data-dir <dir>] [--java-home <dir>] [--size <w>x<h>]\n"
           "       winapk dex <apk> <out.jar> [--java-home <dir>]\n"
           "       winapk --version\n", stderr);
@@ -182,6 +185,7 @@ int wmain(int argc, wchar_t** argv) {
         for (int i = 3; i < argc; ++i) {
             std::wstring a = argv[i];
             if (a.rfind(L"--native=", 0) == 0) ra.native = a.substr(9);
+            else if (a.rfind(L"--profile=", 0) == 0) ra.profile = a.substr(10);
             else if (a.rfind(L"--graphics=", 0) == 0) ra.graphics = a.substr(11);
             else if (a == L"--data-dir" && i + 1 < argc) ra.dataDir = full(argv[++i]);
             else if (a == L"--java-home" && i + 1 < argc) ra.javaHome = argv[++i];
@@ -212,11 +216,21 @@ int wmain(int argc, wchar_t** argv) {
 
     Report r;
     r.version = WINAPK_VERSION;
+    r.frameworkCommit = WINAPK_MACAPK_COMMIT;
     ProbeHost(r);
     ProbeJvm(r, javaHome, dir + L"\\winapk-probe.jar", noJvm);
     ProbeVulkan(r, present);
     r.angleFilesArm64 = PeArch(dir + L"\\angle\\libEGL.dll") == "arm64" &&
                         PeArch(dir + L"\\angle\\libGLESv2.dll") == "arm64";
+    if (r.host.processArch == "arm64" && PeArch(dir + L"\\winapk-bridge.dll") == "arm64") {
+        r.guestNativeProfiles.push_back("N0");
+        if (GetFileAttributesW((dir + L"\\guest\\libwinapk-bionic.so").c_str()) != INVALID_FILE_ATTRIBUTES &&
+            GetFileAttributesW((dir + L"\\guest\\libwinapk-jni.so").c_str()) != INVALID_FILE_ATTRIBUTES) {
+            r.guestNativeProfiles.push_back("N1");
+            if (r.angleFilesArm64 || r.vulkan.loader == "available")
+                r.guestNativeProfiles.push_back("N2");
+        }
+    }
     Limitations(r);
     if (json) PrintJson(r);
     else PrintText(r);

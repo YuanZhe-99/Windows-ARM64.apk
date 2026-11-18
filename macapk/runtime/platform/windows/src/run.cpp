@@ -326,17 +326,36 @@ int Inspect(const std::wstring& path, bool json) {
         for (size_t k = 0; k < v.size(); ++k) o += (k ? ", " : "") + q(v[k]);
         return o + "]";
     };
+    auto b64 = [](const std::vector<uint8_t>& b) {
+        static constexpr char kTab[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+        std::string o;
+        o.reserve(((b.size() + 2) / 3) * 4);
+        for (size_t k = 0; k < b.size(); k += 3) {
+            const uint32_t v = (uint32_t(b[k]) << 16) |
+                               (k + 1 < b.size() ? uint32_t(b[k + 1]) << 8 : 0) |
+                               (k + 2 < b.size() ? uint32_t(b[k + 2]) : 0);
+            o += kTab[(v >> 18) & 63];
+            o += kTab[(v >> 12) & 63];
+            o += k + 1 < b.size() ? kTab[(v >> 6) & 63] : '=';
+            o += k + 2 < b.size() ? kTab[v & 63] : '=';
+        }
+        return o;
+    };
     if (json) {
-        std::printf("{\n  \"schemaVersion\": 1,\n  \"ok\": %s,\n  \"error\": %s,\n  \"package\": %s,\n  \"versionName\": %s,\n"
-                    "  \"versionCode\": %lld,\n  \"minSdk\": %d,\n  \"targetSdk\": %d,\n  \"dexCount\": %d,\n"
-                    "  \"nativeAbis\": %s,\n  \"nativeLibs\": %s,\n  \"unsafeEntryNames\": %s\n}\n",
-                    err.empty() ? "true" : "false", q(err).c_str(), q(i.packageName).c_str(), q(i.versionName).c_str(),
-                    static_cast<long long>(i.versionCode), i.minSdk, i.targetSdk, i.dexCount, list(i.nativeAbis).c_str(),
-                    list(i.nativeLibs).c_str(), list(i.unsafeNames).c_str());
+        std::printf("{\n  \"schemaVersion\": 1,\n  \"ok\": %s,\n  \"error\": %s,\n  \"package\": %s,\n  \"label\": %s,\n"
+                    "  \"versionName\": %s,\n  \"versionCode\": %lld,\n  \"size\": %llu,\n  \"minSdk\": %d,\n  \"targetSdk\": %d,\n"
+                    "  \"dexCount\": %d,\n  \"glesVersion\": %s,\n  \"vulkan\": %s,\n  \"profile\": %s,\n  \"verdict\": %s,\n"
+                    "  \"permissions\": %s,\n  \"nativeAbis\": %s,\n  \"nativeLibs\": %s,\n  \"iconPng\": %s,\n  \"unsafeEntryNames\": %s\n}\n",
+                    err.empty() ? "true" : "false", q(err).c_str(), q(i.packageName).c_str(), q(i.label).c_str(),
+                    q(i.versionName).c_str(), static_cast<long long>(i.versionCode), static_cast<unsigned long long>(i.fileSize),
+                    i.minSdk, i.targetSdk, i.dexCount, q(i.glesVersion).c_str(), i.vulkan ? "true" : "false",
+                    q(i.profile).c_str(), q(i.verdict).c_str(), list(i.permissions).c_str(), list(i.nativeAbis).c_str(),
+                    list(i.nativeLibs).c_str(), q(b64(i.iconPng)).c_str(), list(i.unsafeNames).c_str());
     } else if (err.empty()) {
-        std::printf("%s %s (%lld), minSdk %d, targetSdk %d, %d DEX, %zu native libraries%s\n", i.packageName.c_str(),
-                    i.versionName.c_str(), static_cast<long long>(i.versionCode), i.minSdk, i.targetSdk, i.dexCount,
-                    i.nativeLibs.size(), i.unsafeNames.empty() ? "" : ", entry names unsafe on Windows");
+        std::printf("%s (%s) %s (%lld), %llu bytes, minSdk %d, targetSdk %d, %d DEX, %zu native libraries, verdict %s%s\n",
+                    i.label.c_str(), i.packageName.c_str(), i.versionName.c_str(), static_cast<long long>(i.versionCode),
+                    static_cast<unsigned long long>(i.fileSize), i.minSdk, i.targetSdk, i.dexCount,
+                    i.nativeLibs.size(), i.verdict.c_str(), i.unsafeNames.empty() ? "" : ", entry names unsafe on Windows");
     } else {
         std::fprintf(stderr, "not a readable APK: %s\n", err.c_str());
     }
@@ -377,6 +396,14 @@ int ConvertDex(const std::wstring& apk, const std::wstring& out, const std::wstr
 int Run(const RunArgs& a) {
     if (a.native != L"off" && a.native != L"restricted") {
         Log("GUEST_ABI_UNSUPPORTED: --native must be off or restricted");
+        return 64;
+    }
+    std::wstring profile = a.profile;
+    if (profile == L"n0") profile = L"N0";
+    else if (profile == L"n1") profile = L"N1";
+    else if (profile == L"n2") profile = L"N2";
+    if (profile != L"N0" && profile != L"N1" && profile != L"N2") {
+        Log("GUEST_ABI_UNSUPPORTED: --profile must be N0, N1 or N2");
         return 64;
     }
     if (a.graphics != L"off" && a.graphics != L"auto" && a.graphics != L"vulkan" && a.graphics != L"d3d11") {
@@ -431,10 +458,12 @@ int Run(const RunArgs& a) {
     std::wstring guestLibraries;
     std::string admitted;
     if (a.native == L"restricted") {
-        for (const auto& name : {L"libwinapk-bionic.so", L"libwinapk-jni.so"}) {
-            if (!Exists(bin + L"\\guest\\" + name)) {
-                Log("DEPENDENCY_MISSING: guest JNI/Bionic helper");
-                return 69;
+        if (profile != L"N0") {
+            for (const auto& name : {L"libwinapk-bionic.so", L"libwinapk-jni.so"}) {
+                if (!Exists(bin + L"\\guest\\" + name)) {
+                    Log("DEPENDENCY_MISSING: guest JNI/Bionic helper");
+                    return 69;
+                }
             }
         }
         if (auto error = StageLibraries(a, apk, appDir, guestLibraries, admitted); !error.empty()) {
@@ -450,10 +479,10 @@ int Run(const RunArgs& a) {
     auto setSize = bridge ? reinterpret_cast<void (*)(int, int)>(GetProcAddress(bridge, "winapk_bridge_set_phone_size")) : nullptr;
     if (!reg || !setSize) { Log("DEPENDENCY_MISSING: winapk-bridge.dll is missing its entry points"); return 69; }
     if (a.native == L"restricted") {
-        auto configure = reinterpret_cast<void (*)(const wchar_t*, const wchar_t*, const wchar_t*, const char*)>(
+        auto configure = reinterpret_cast<void (*)(const wchar_t*, const wchar_t*, const wchar_t*, const char*, const char*)>(
             GetProcAddress(bridge, "winapk_bridge_configure_guest"));
         if (!configure) { Log("DEPENDENCY_MISSING: guest configuration entry"); return 69; }
-        configure(guestLibraries.c_str(), (bin + L"\\guest").c_str(), android.c_str(), admitted.c_str());
+        configure(guestLibraries.c_str(), (bin + L"\\guest").c_str(), android.c_str(), admitted.c_str(), Utf8(profile).c_str());
     }
     int w = 0, h = 0;
     PhoneSize(a, w, h);

@@ -112,6 +112,16 @@ function Test-Host {
     $privateAngle = (Test-Path (Join-Path $out 'bin\angle\libEGL.dll')) -and (Test-Path (Join-Path $out 'bin\angle\libGLESv2.dll'))
     Check 'T01.angle.inventory' ($r.graphics.angleFilesArm64 -eq $privateAngle -and @($r.graphics.angleBackends).Count -eq 0) 'inventory only; no claimed rendering'
     Check 'T01.guestVulkan.off' ($r.runtime.guestVulkan -eq $false) 'guest Vulkan is not reported as available'
+    Check 'T01.runtime.inventory' ($r.runtime.frameworkCommit -match '^[0-9a-f]{7}$' -and @($r.runtime.guestNativeProfiles) -contains 'N0') "macapk=$($r.runtime.frameworkCommit) profiles=$(@($r.runtime.guestNativeProfiles) -join ',')"
+
+    # Static APK inspection (ARSC label, feature/profile/verdict) and invalid --profile refusal.
+    $helloApk = Join-Path $repo 'tests\fixtures\hello-java.apk'
+    if (Test-Path $helloApk) {
+        $ins = (& $winapk inspect $helloApk --json | Out-String) | ConvertFrom-Json
+        Check 'T01.inspect.java' ($ins.ok -and $ins.label -eq 'Hello Java' -and $ins.verdict -eq 'can-run' -and $ins.profile -eq '' -and $ins.size -gt 0) "label=$($ins.label) verdict=$($ins.verdict)"
+        $badProf = & $winapk run $helloApk --native=restricted --profile=N9 2>&1
+        Check 'T01.neg.profile-invalid' ($LASTEXITCODE -eq 64 -and ($badProf -join "`n") -match 'GUEST_ABI_UNSUPPORTED: --profile') "exit=$LASTEXITCODE"
+    }
 
     # T01: upstream's patch modules load on this JVM (built by -Component Java).
     $lib = Join-Path $out 'lib'
@@ -196,8 +206,10 @@ public static class WinApkTestWin {
 "@
 
 <# Starts winapk run on an APK at $script:appSize (points) with its log in $Log; returns the process. #>
-function Start-App([string]$Apk, [string]$Data, [string]$Log, [string]$Native = 'off', [string]$Graphics = 'off') {
-    Start-Process -FilePath $winapk -ArgumentList @('run', "`"$Apk`"", '--data-dir', "`"$Data`"", '--size', $script:appSize, "--native=$Native", "--graphics=$Graphics") `
+function Start-App([string]$Apk, [string]$Data, [string]$Log, [string]$Native = 'off', [string]$Graphics = 'off', [string]$Profile = '') {
+    $args = @('run', "`"$Apk`"", '--data-dir', "`"$Data`"", '--size', $script:appSize, "--native=$Native", "--graphics=$Graphics")
+    if ($Profile) { $args += "--profile=$Profile" }
+    Start-Process -FilePath $winapk -ArgumentList $args `
         -RedirectStandardError $Log -RedirectStandardOutput "$Log.out" -PassThru -NoNewWindow
 }
 
@@ -779,17 +791,20 @@ function Test-ApkJni {
     $apk = Join-Path $repo 'tests\fixtures\hello-jni.apk'
     $record = Get-Content (Join-Path $repo 'tests\fixtures\hello-jni.json') -Raw | ConvertFrom-Json
     Check 'T09.apk.hash' ($record.apkSha256 -eq (Get-FileHash $apk -Algorithm SHA256).Hash.ToLower()) 'APK source/build record'
+    $insJni = (& $winapk inspect $apk --json | Out-String) | ConvertFrom-Json
+    Check 'T09.apk.inspect' ($insJni.ok -and $insJni.label -eq 'Hello JNI' -and $insJni.profile -eq 'N1' -and $insJni.verdict -eq 'needs-native') "label=$($insJni.label) profile=$($insJni.profile) verdict=$($insJni.verdict)"
     foreach ($variant in @(
-        @{ Name = 'off'; Mode = 'off' },
-        @{ Name = 'restricted'; Mode = 'restricted' },
-        @{ Name = 'unsupported'; Mode = 'restricted' }
+        @{ Name = 'off'; Mode = 'off'; Profile = '' },
+        @{ Name = 'n0-refused'; Mode = 'restricted'; Profile = 'N0' },
+        @{ Name = 'restricted'; Mode = 'restricted'; Profile = 'N1' },
+        @{ Name = 'unsupported'; Mode = 'restricted'; Profile = 'N1' }
     )) {
         $mode = $variant.Mode
         $log = Join-Path $logs "T09-apk-$($variant.Name).log"
         $oldOptions = $env:JAVA_TOOL_OPTIONS
         try {
             if ($variant.Name -eq 'restricted') { $env:JAVA_TOOL_OPTIONS = "$oldOptions -Xcheck:jni" }
-            $p = Start-App $apk $data $log $mode
+            $p = Start-App $apk $data $log $mode 'off' $variant.Profile
         } finally { $env:JAVA_TOOL_OPTIONS = $oldOptions }
         $h = Find-AppWindow $p.Id 'Hello JNI' 15
         $cfg = [uint32]0
@@ -799,6 +814,8 @@ function Test-ApkJni {
         $ready = Wait-Log $log 'ViewCanvasDriver: macapkDrawFrame fire #1 present \d+x\d+ nonzero=[1-9]\d*/'
         $ok = $result -and $(if ($mode -eq 'off') {
             $result.Groups[1].Value -eq 'error' -and $result.Groups[2].Value.StartsWith('GUEST_NATIVE_DISABLED:')
+        } elseif ($variant.Name -eq 'n0-refused') {
+            $result.Groups[1].Value -eq 'error' -and ($result.Groups[2].Value -match '^GUEST_(SYMBOL_UNRESOLVED|ABI_UNSUPPORTED):')
         } else { $result.Groups[1].Value -eq 'value' -and $result.Groups[2].Value.Trim() -eq '43 checks=PASS matrix=PASS' })
         $ok = $ok -and $policy -and $h -ne [IntPtr]::Zero -and $null -ne $ready -and
               (Read-Log $log) -notmatch 'WARNING in native method|FATAL ERROR in native method'

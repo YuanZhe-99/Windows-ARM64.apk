@@ -16,10 +16,11 @@ JNIEnv* HostEnvironment(void* guestEnv);
 /// Notes: host-only API; thread runtime/namespace/mappings outlive it; destroy after workers, before the JVM.
 class JniBridge {
 public:
-    /// Loads the screened helper and retains loader as a global reference.
+    /// Loads the screened helper (unless allowCallbacks is false for N0) and retains loader as a global reference.
     /// Returns: nullptr with loader error or a pending JVM exception on failure.
     static std::unique_ptr<JniBridge> Load(JNIEnv* env, jobject loader, ThreadRuntime& threads,
-                                         ModuleSet& modules, const std::wstring& helper, LoadError* error);
+                                         ModuleSet& modules, const std::wstring& helper, LoadError* error,
+                                         bool allowCallbacks = true);
     /// Releases this thread's proxy and the loader; active proxies on other threads are fatal.
     ~JniBridge();
 

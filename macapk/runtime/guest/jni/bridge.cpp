@@ -228,6 +228,7 @@ struct JniState {
     std::vector<size_t> nativeSlots;
     std::vector<jclass> nativeClasses;
     std::atomic<size_t> nativeCalls = 0;
+    bool allowCallbacks = true;
     bool nativeClosing = false;
     DWORD closingThread = 0;
 };
@@ -581,7 +582,10 @@ void* InitializeLibrary(void* argument) {
             state.libraries.at(call.name).handle = handle;
         }
         auto onLoad = reinterpret_cast<jint (*)(void*, void*)>(state.modules->FindOwn(handle, "JNI_OnLoad"));
-        if (onLoad && !state.modules->Executable(reinterpret_cast<uintptr_t>(onLoad))) {
+        if (onLoad && !state.allowCallbacks) {
+            ok = false;
+            error = {Category::AbiUnsupported, call.name, "JNI_OnLoad requires profile N1 or higher"};
+        } else if (onLoad && !state.modules->Executable(reinterpret_cast<uintptr_t>(onLoad))) {
             ok = false;
             error = {Category::AbiUnsupported, call.name, "JNI_OnLoad is not a guest executable entry"};
         } else if (onLoad) {
@@ -767,27 +771,31 @@ void Install(JniState& state) {
 JniBridge::JniBridge() : state_(std::make_unique<JniState>()) {}
 
 std::unique_ptr<JniBridge> JniBridge::Load(JNIEnv* env, jobject loader, ThreadRuntime& threads,
-                                           ModuleSet& modules, const std::wstring& helper, LoadError* error) {
+                                           ModuleSet& modules, const std::wstring& helper, LoadError* error,
+                                           bool allowCallbacks) {
     try {
         auto bridge = std::unique_ptr<JniBridge>(new JniBridge);
         auto& state = *bridge->state_;
         state.threads = &threads;
         state.modules = &modules;
+        state.allowCallbacks = allowCallbacks;
         if (env->GetJavaVM(&state.vm) != JNI_OK) return nullptr;
         state.loader = loader ? env->NewGlobalRef(loader) : nullptr;
         if (loader && !state.loader) return nullptr;
-        Install(state);
-        auto fixed = ThreadRuntime::Imports();
-        std::vector<HostSymbol> imports(fixed.begin(), fixed.end());
-        imports.push_back({"winapk_jni_signature", reinterpret_cast<void*>(&Signature)});
-        state.helper = guest::Load(helper, imports, error);
-        if (!state.helper) return nullptr;
-        auto install = reinterpret_cast<void (*)(void**)>(state.helper->Find("winapk_jni_install"));
-        if (!install) {
-            *error = {Category::SymbolUnresolved, "JNI helper", "missing winapk_jni_install"};
-            return nullptr;
+        if (allowCallbacks) {
+            Install(state);
+            auto fixed = ThreadRuntime::Imports();
+            std::vector<HostSymbol> imports(fixed.begin(), fixed.end());
+            imports.push_back({"winapk_jni_signature", reinterpret_cast<void*>(&Signature)});
+            state.helper = guest::Load(helper, imports, error);
+            if (!state.helper) return nullptr;
+            auto install = reinterpret_cast<void (*)(void**)>(state.helper->Find("winapk_jni_install"));
+            if (!install) {
+                *error = {Category::SymbolUnresolved, "JNI helper", "missing winapk_jni_install"};
+                return nullptr;
+            }
+            install(state.table.data());
         }
-        install(state.table.data());
         std::lock_guard lock(vmsMutex);
         vms.emplace(&state.proxy, &state);
         return bridge;
