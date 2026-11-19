@@ -1,8 +1,8 @@
 # 版本历史
 
-## 0.1.0（进行中）
+## 0.1.0（2026-11-18）
 
-- 2026-11-18：完成前后端一体化 ARM64 实验包与 NSIS 运行时打包、ANGLE 链接 GN 依赖许可证审核、完整 30 分钟 T14 稳定性基线（20 次冷/热启动、100 次 resize/最小化恢复、1800 秒连续运行）、`NativeOs`（含 `liblzma` 5.8.4 `.xz` 解压）+ Win32/测试隔离剪贴板 + DirectWrite 中日韩字体 + `/proc` 合成 + 动态 `WM_DPICHANGED`、支持默认设备切换重绑的 43 方法 WASAPI `NativeAudio`、硬件 Direct3D 12 Skia `0.150.2` AGSL/RenderEffect（`T15`，11/11 像素契约）、客体 JNI DirectByteBuffer/Critical/反射与 LP64 Bionic 扩展，以及 GitHub Actions `windows-11-arm` 持续集成与 Ed25519 签名发布工作流。Go 1.27.4、MyGo v0.10.0 和已合并的 Mac.apk `3f35611` 经检查未变；版本 0.1.0 仍未发布。
+- 2026-11-18：完成前后端一体化 ARM64 实验包与 NSIS 运行时打包、ANGLE 链接 GN 依赖许可证审核、完整 30 分钟 T14 稳定性基线（20 次冷/热启动、100 次 resize/最小化恢复、1800 秒连续运行）、`NativeOs`（含 `liblzma` 5.8.4 `.xz` 解压）+ Win32/测试隔离剪贴板 + DirectWrite 中日韩字体 + `/proc` 合成 + 动态 `WM_DPICHANGED`、支持默认设备切换重绑的 43 方法 WASAPI `NativeAudio`、硬件 Direct3D 12 Skia `0.150.2` AGSL/RenderEffect（`T15`，11/11 像素契约）、客体 JNI DirectByteBuffer/Critical/反射与 LP64 Bionic 扩展，以及 GitHub Actions `windows-11-arm` 持续集成与 Ed25519 签名发布工作流（`v0.1.0`）。Go 1.27.4、MyGo v0.10.0 和已合并的 Mac.apk `3f35611` 经检查未变。
 - 2026-11-18：按 `design/` 全部 17 张设计稿完成 MyGo 前端（中英双语、亮暗外观、Mica 材质）并将 `cmd/windows-arm64-apk` 接入真实 `winapk.Runtime`（`--embed` 共享内存 RGBA8 帧与重叠双工管道 IPC、零重启 `Reattach`、静态 ARSC/ELF `inspect` 与 `--profile=N0|N1|N2` 准入、经校验的私有 ARM64 OpenJDK 21 安装器与存储管理）；查明 Adreno 8cx Gen 3 SM 6.2 在 Dozen 下的计算管线限制，并在 Dozen 上验证客体 Vulkan SPIR-V 图形管线、离屏 `VkImage` 回读（`0xFFCC8822`）、`VkAllocationCallbacks` 与 `VK_EXT_debug_report` 回调。Go 1.27.4、MyGo v0.10.0 和已合并的 Mac.apk `3f35611` 经检查未变；版本 0.1.0 仍未发布。
 - 2026-11-17：为已开放的 Vulkan 桥表增加编译期签名检查，保留已验证的传输 profile。Dozen 上计算实验和原生对照均在 pipeline 创建阶段失败，不交付计算入口。Go 1.27.4、MyGo v0.10.0 和已合并的 Mac.apk `3f35611` 经检查未变。
 - 2026-11-17：在现有 T13 启动中验证 Vulkan GPU 传输填充和一致内存精确回读，以及归属和同步拒绝。Go 1.27.4、MyGo v0.10.0 和已合并的 Mac.apk `3f35611` 经检查未变。

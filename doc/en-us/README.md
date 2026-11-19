@@ -29,7 +29,7 @@ per APK.
 
 ## Project status
 
-Version 0.1.0 is unreleased. On the Windows 11 ARM64 machine recorded in
+Version 0.1.0 is the initial experimental Windows 11 ARM64 build. On the Windows 11 ARM64 machine recorded in
 [platform-notes.md](platform-notes.md), G0–G3 pass for Java/Kotlin APKs, N0 ELF/ABI, the declared
 C/Bionic subset and the `hello-jni` Activity matrix (including an independent CFG-enabled build),
 T14 passes 20 cold/warm launches, 100 resize/minimize-restore cycles and a full 30-minute

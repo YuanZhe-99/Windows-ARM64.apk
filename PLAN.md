@@ -6,7 +6,7 @@
 >
 > 图形方向：Android Vulkan → ABI/WSI 适配 → Windows 原生 Vulkan；Android OpenGL ES/EGL → ANGLE → Vulkan。ANGLE/D3D11 是独立、可配置的备选后端。
 
-> **状态（2026-11-18）：开发进行中（版本 0.1.0，尚未发布）。** G0–G3 已通过所声明的 profile；MyGo 前端已按 `design/` 全部 17 张设计稿完成并接入真实 `winapk.Runtime`（`--embed` 共享内存 RGBA8 帧与双工管道控制、零重启窗格/独立窗口切换、私有 OpenJDK 21 安装校验与存储管理）；T13 客体 Vulkan 图形管线（SPIR-V 顶点/片元 + 离屏 `VkImage` 回读）与客体分配器/调试回调已在本机 Adreno 8cx Gen 3 + Dozen 上通过；厂商原生 Vulkan 驱动仍缺失（`BLOCKED`），验证层与长期压测为 `NOT_RUN`。
+> **状态（2026-11-18）：首个实验版构建 `v0.1.0` 已打标。** G0–G3 已通过所声明的 profile；MyGo 前端已按 `design/` 全部 17 张设计稿完成并接入真实 `winapk.Runtime`（`--embed` 共享内存 RGBA8 帧与双工管道控制、零重启窗格/独立窗口切换、私有 OpenJDK 21 安装校验与存储管理）；T13 客体 Vulkan 图形管线（SPIR-V 顶点/片元 + 离屏 `VkImage` 回读）与客体分配器/调试回调已在本机 Adreno 8cx Gen 3 + Dozen 上通过；T14 完整 30 分钟连续压测及 P8（宿主服务、WASAPI 音频、Skia D3D12 `T15`）已通过；厂商原生 Vulkan 驱动仍缺失（`BLOCKED`），验证层与 macOS 回归为 `NOT_RUN`。
 > 当前进度、上游版本与已验证项见 `doc/zh-cn/README.md` 与 `doc/zh-cn/platform-notes.md`。
 
 - 编写日期：2026-11-03。
