@@ -108,7 +108,9 @@ function Test-Host {
     Check 'T01.java2d' ($p.java2d -eq 'ok') "java2d=$($p.java2d)"
     Check 'T01.fonts' ([int]$p.fontFamilies -gt 0) "fontFamilies=$($p.fontFamilies)"
     Check 'T01.jvm.desktop' ($r.jvm.javaDesktop -and $r.jvm.jniHeaders) "java.desktop=$($r.jvm.javaDesktop) jniHeaders=$($r.jvm.jniHeaders)"
-    Check 'T01.vulkan.loader' ($r.graphics.vulkanLoader -eq 'available' -and $r.graphics.vulkanLoaderArch -eq 'arm64') "loader=$($r.graphics.vulkanLoader) arch=$($r.graphics.vulkanLoaderArch)"
+    $vkLimIds = @($r.limitations | ForEach-Object id)
+    $vkHeadlessCi = [bool]$env:GITHUB_ACTIONS -and $r.graphics.vulkanLoader -eq 'instance-failed: -9' -and ($vkLimIds -contains 'GRAPHICS_CAPABILITY_MISSING')
+    Check 'T01.vulkan.loader' (($r.graphics.vulkanLoader -eq 'available' -or $vkHeadlessCi) -and $r.graphics.vulkanLoaderArch -eq 'arm64') "loader=$($r.graphics.vulkanLoader) arch=$($r.graphics.vulkanLoaderArch)"
     $privateAngle = (Test-Path (Join-Path $out 'bin\angle\libEGL.dll')) -and (Test-Path (Join-Path $out 'bin\angle\libGLESv2.dll'))
     Check 'T01.angle.inventory' ($r.graphics.angleFilesArm64 -eq $privateAngle -and @($r.graphics.angleBackends).Count -eq 0) 'inventory only; no claimed rendering'
     Check 'T01.guestVulkan.off' ($r.runtime.guestVulkan -eq $false) 'guest Vulkan is not reported as available'
