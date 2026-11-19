@@ -482,6 +482,7 @@ void SyncChildSurfaceViews(Window* w, JNIEnv* env, jmethodID changed) {
 /// Runs one frame of `w`'s view: reports a new size, then asks the renderer to draw.
 /// Notes: a minimised window has no client area; it keeps its last size and draws at 2 Hz.
 void Tick(Window* w) {
+    CompositorFlushEmbed(w->hwnd);
     View* v = w->content;
     if (w->inGraphicsFrame || w->closingGraphics || g_guestGraphicsCommand) return;
     if (w->graphics && (v != w->graphicsView || v->rendererRevision != w->graphicsRevision)) {
@@ -530,6 +531,7 @@ void Tick(Window* w) {
     env->CallVoidMethod(v->renderer, draw);
     CheckCallback(env, "macapkDrawFrame");
     SyncChildSurfaceViews(w, env, changed);
+    CompositorFlushEmbed(w->hwnd);
 }
 
 /// Paints the view's last frame, scaled to the client area.

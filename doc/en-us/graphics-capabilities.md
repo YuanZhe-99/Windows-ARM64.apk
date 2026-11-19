@@ -15,7 +15,7 @@ independent; enabling guest native does not enable GLES or guest Vulkan.
 | Guest Vulkan instance/WSI | PASS for T13.wsi on Dozen | real APK, Android→Win32 surface, actual support/capabilities, resize, replacement and refusal; no drawing |
 | Guest Vulkan transfer-clear | PASS for the bounded T13 profile on Dozen | real guest device/queue, command buffer and swapchain; three presents across resize |
 | Guest Vulkan transfer buffer | PASS for the bounded T13 profile on Dozen | coherent allocation and GPU fill, exact 16-word readback and lifecycle refusals |
-| Guest Vulkan graphics pipeline, image and callbacks | PASS for the bounded T13 profile on Dozen | SPIR-V vertex/fragment `VkGraphicsPipelineCreateInfo`, `4x4` `VkImage` render-pass draw and image-to-buffer readback (`0xFFCC8822`), plus guest `VkAllocationCallbacks` and `VK_EXT_debug_report` thunks |
+| Guest Vulkan graphics pipeline, image and callbacks | PASS on Dozen (`libvulkan.so` 1.0–1.3, 290+ commands) | SPIR-V `VkGraphicsPipelineCreateInfo`, `VkPipelineCache`, descriptors/sampler/push-constants, `4x4` `VkImage` render-pass draw & readback (`0xFFCC8822`), `--embed` WSI readback, and CFG-exempt `VkAllocationCallbacks` + `VK_EXT_debug_report`/`debug_utils` thunks |
 | Guest Vulkan compute experiment | FAIL on this Dozen stack; not shipped | `vkCreateComputePipelines` returned `VK_ERROR_OUT_OF_HOST_MEMORY` on Adreno SM 6.2 (`WaveLaneMin=64, Max=128`) while WARP SM 6.6+ succeeded |
 | Guest Vulkan validation layer and G4 | NOT_RUN / BLOCKED | `VK_LAYER_KHRONOS_validation` not installed (`NOT_RUN`); vendor ICD absent (`BLOCKED`) |
 | Vendor ARM64 Vulkan ICD | BLOCKED | a machine with that driver; Dozen results cannot fill this row |
@@ -140,68 +140,56 @@ D3D11 and honest ES 3.0 `EGL_BAD_MATCH` refusal on Dozen's ES 2.0 backend, blend
 readback, minimize/restore, resize (`360x720` → `424x752`), surface replacement, and explicit
 unavailable refusal (`EGL_NOT_INITIALIZED`).
 
-## Guest Vulkan instance and WSI increment
+## Guest Vulkan 1.0–1.3 and WSI (`guest_vulkan.cpp`)
 
-The restricted `libvulkan.so` profile uses only the System32 Vulkan loader when
-`--native=restricted --graphics=vulkan` is selected. It filters the instance extensions,
-translates Android surface creation to Win32, keeps instance, physical-device and surface
-handles private, and checks actual presentation support and capabilities. The message
-thread owns surface creation, queries and teardown. ANGLE does not participate.
+`guest_vulkan.cpp` and `guest_vulkan_autogen.inc` (generated from locked `Vulkan-Headers` 1.4.363)
+expose 290+ Vulkan 1.0–1.3 core, promoted and KHR/EXT instance, physical-device, device, queue and
+command-buffer entry points across multiple `VkInstance`s, `VkDevice`s and `VkQueue`s via System32's
+`vulkan-1.dll`. Under ADR-0005, guest Vulkan is enabled when `--graphics=vulkan`, when
+`--graphics=auto` runs on a native GPU-vendor Vulkan ICD (`HasNativeVendorVulkan() == true`), or
+when `--graphics=auto` runs an APK whose manifest requires `android.hardware.vulkan.*`.
 
-The WSI checks alone do not count as presenting a frame or passing G4.
+Host-only Win32 surface/interop extensions (`VK_KHR_win32_surface`, `VK_KHR_external_*_win32`,
+`VK_KHR_win32_keyed_mutex`), Android `AHardwareBuffer` extensions (`VK_ANDROID_*`), and POSIX `fd`
+external memory/sync extensions (`VK_KHR_external_*_fd`) are filtered out and refused with
+`VK_ERROR_EXTENSION_NOT_PRESENT` (both in `ppEnabledExtensionNames` and `pNext`). Standard Vulkan
+1.1–1.3 `pNext` chains (`VkPhysicalDeviceProperties2`, `VkPhysicalDeviceDriverProperties`,
+`VkPhysicalDeviceFeatures2`, dynamic rendering, synchronization2, timeline semaphores, descriptor
+update templates) pass directly.
 
-`test.ps1 -Suite VulkanWsi` launches one normal NDK API-30 APK twice: once with the system
-ICD available and once with the child unable to discover it. It verifies extension/proc
-scopes and rejects AHardwareBuffer, allocation callbacks, nonempty `pNext` and stale handles.
-The window changes from `360x720` to `424x752`; replacing the view makes the old surface
-report `VK_ERROR_SURFACE_LOST_KHR`. No driver is installed or copied.
+### Swapchain WSI and `--embed` compositing
 
-### Swapchain transfer-clear profile
+`vkCreateAndroidSurfaceKHR` translates managed `ANativeWindow*` tokens to `VkSurfaceKHR`, ordering
+non-CPU physical devices ahead of software adapters. On `--embed` panes, swapchain presents
+composite through `WinApkCompositor` — preferring zero-copy `VK_KHR_external_memory_win32` DXGI
+shared textures when supported by a native vendor ICD and falling back automatically to a
+host-coherent `VkBuffer` `vkCmdCopyImageToBuffer` transfer readback on translated ICDs (Mesa Dozen).
+Minimized (`0x0`) and resized surfaces latch `VK_ERROR_OUT_OF_DATE_KHR` until swapchain recreation;
+retired surfaces return `VK_ERROR_SURFACE_LOST_KHR`. This single-machine Dozen verification does not
+stand in for native vendor Vulkan ICD acceptance.
 
-One logical device and present queue, one FIFO swapchain and one primary command buffer
-form a separate, bounded profile. The guest records image transitions and a color clear
-against a token for the acquired image, submits on the owned queue and presents. The
-driver’s device, queue, swapchain and image handles stay private. The profile does not
-implement shader pipelines, general images, custom allocators or debug callbacks.
+### Transfer buffer readback and compute note
 
-The `VulkanWsi` suite checks three transfer clears/presents in one positive process:
-at launch, after restoring the minimized window, and after resizing it. Acquire on a
-minimized zero-size surface returns `VK_ERROR_OUT_OF_DATE_KHR`; the old swapchain stays
-stale after restore at the original extent. The guest destroys and recreates it on
-restore and on resize. The fixture checks actual present return values, not swapchain
-pixel readback. This is not vendor Vulkan or G4 acceptance.
+`hello-vulkan-wsi.apk` verifies coherent host-visible buffer mapping, GPU `vkCmdFillBuffer` +
+transfer-to-host barrier readback, and explicit refusal of `VK_ANDROID_*` and `VK_KHR_external_*_fd`
+`pNext` chains. On Adreno 8cx Gen 3 (`HighestShaderModel=0x62`, `WaveLaneMin=64..128`), Mesa Dozen's
+compute shader compiler emits Shader Model 6.6+ subgroup ops; compute pipelines remain bound by the
+host driver's shader model.
 
-### Transfer buffer readback
+### Graphics pipeline, descriptors, pipeline cache and guest callbacks
 
-The same APK process also exercises one bounded transfer-destination buffer and one
-host-visible, coherent device-memory allocation. The bridge translates both tokens, records
-an actual fill and transfer-to-host barrier, and admits mapping only after the queue
-completes. The APK checks every word against a known pattern. This is a transfer test,
-not shader execution, general resource support or swapchain pixel readback.
+Within `hello-vulkan-wsi.apk` (`test.ps1 -Suite VulkanWsi` + `TestRealRuntimeEmbed`), `libvulkan.so`
+verifies:
 
-The compute experiment did not advance past pipeline creation because Qualcomm's D3D12 driver on
-Adreno 8cx Gen 3 reports `HighestShaderModel=0x62` with `WaveLaneMin=64, WaveLaneMax=128`, whereas
-Mesa Dozen's compute compilation emits subgroup requirements targeting Shader Model 6.6+. The
-tested bridge does not export compute commands.
-
-### Graphics pipeline, offscreen image and guest callbacks
-
-Within the same single-launch `hello-vulkan-wsi.apk` fixture on Adreno 8cx Gen 3 + Dozen, the
-restricted `libvulkan.so` provider also verifies:
-
-- **Offscreen `VkImage` and render pass:** one `4x4` `VK_FORMAT_R8G8B8A8_UNORM` optimal image
-  (`COLOR_ATTACHMENT_BIT | TRANSFER_SRC_BIT`), dedicated `VkDeviceMemory` binding, `VkImageView`,
-  single-subpass `VkRenderPass` (`CLEAR` to `STORE`, `UNDEFINED` to `TRANSFER_SRC_OPTIMAL`), and
-  `VkFramebuffer`.
-- **SPIR-V graphics pipeline:** NDK `glslc`-compiled vertex and fragment `VkShaderModule`s, empty
-  `VkPipelineLayout`, `vkCreateGraphicsPipelines`, `vkCmdBeginRenderPass`, `vkCmdBindPipeline`,
-  `vkCmdDraw`, `vkCmdEndRenderPass` and `vkCmdCopyImageToBuffer` into the coherent readback buffer,
-  asserting all 16 words equal the fragment shader's `0xFFCC8822` output.
-- **Guest callbacks:** screened `VkAllocationCallbacks` on shader module creation/destruction
-  (invoked on the calling guest thread with host ICD heap isolation, verifying `NULL` refusal as
-  `VK_ERROR_OUT_OF_HOST_MEMORY` and balanced `allocs == frees`), plus `VK_EXT_debug_report`
-  (`vkCreateDebugReportCallbackEXT`, non-executable callback refusal, `vkDebugReportMessageEXT`
-  and `vkDestroyDebugReportCallbackEXT`).
+- **Offscreen `VkImage`, descriptors, sampler, push constants and `VkPipelineCache`:** `4x4`
+  `VK_FORMAT_R8G8B8A8_UNORM` optimal image, `VkSampler`, `VkDescriptorSetLayout` + `VkDescriptorPool`
+  + `VkDescriptorSet` (`vkUpdateDescriptorSets` UBO), `VkPushConstantRange` (`vkCmdPushConstants`),
+  `VkPipelineCache` (`vkGetPipelineCacheData`), SPIR-V graphics pipeline draw and image-to-buffer
+  readback asserting all 16 words equal `0xFFCC8822`, plus `--embed` pane WSI pixel readback.
+- **CFG-exempt guest callbacks (`__declspec(guard(nocf))`):** heap-interned `VkAllocationCallbacks`
+  thunks (verifying `NULL` refusal as `VK_ERROR_OUT_OF_HOST_MEMORY` and balanced `allocs == frees`),
+  dual host/bridge `VK_EXT_debug_report` and `VK_EXT_debug_utils` messengers (with non-executable
+  callback pointer refusal), and `VK_EXT_device_memory_report` `pNext` callback screening.
 
 ## P8 Skia / AGSL / RenderEffect over Direct3D 12 (`T15`)
 

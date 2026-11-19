@@ -728,9 +728,9 @@ P0 审计/锁定、Java MVP（G1）、N0 ELF/ABI（G2）及已声明 C/Bionic/JN
 - [x] 提供 `libEGL.so`、`libGLESv1_CM.so`、`libGLESv2.so`、`libGLESv3.so` 完整导出表与 `eglGetProcAddress` 动态表（含 `glDebugMessageCallback*` 安全客体 thunk）；支持多线程多 `EGLContext`、`share_context`、`eglCreatePbufferSurface`、`EGL_KHR_surfaceless_context`、`EGLImageKHR` / `glEGLImageTargetTexture2DOES`、`eglSwapInterval` 及 `EGL_RECORDABLE_ANDROID` 兼容过滤，按实际后端诚实报告 ES 版本与扩展。
 
 ### GPU-P4：Guest Vulkan 1.0–1.3 全集（`vk.xml` 代码生成 + 离屏/共享纹理 WSI）
-- [ ] 基于锁定版 `Vulkan-Headers` `vk.xml` 自动生成结构体编译期 ABI 断言、250+ 数据面/录制面命令零开销直通绑定及多 `VkInstance`/`VkDevice`/`VkQueue` 控制面包装器。
-- [ ] 支持标准 Vulkan 1.1–1.3 `pNext` 特性链、Dynamic Rendering、Descriptor Update Template、`VkPipelineCache` 及全套客体回调安全 thunk（`VkAllocationCallbacks`、`VK_EXT_debug_utils`、`VK_EXT_debug_report`、`VK_EXT_device_memory_report`）；未支持的外部 fd 扩展明确返回 `VK_ERROR_EXTENSION_NOT_PRESENT`。
-- [ ] 实现独立于窗口可见性的 Vulkan WSI 合成（优先 `VK_KHR_external_memory_win32` DXGI 共享纹理，回退交换链异步 Transfer 拷贝环），并按 `auto` / `vulkan` 策略诚实向客体暴露 `libvulkan.so`。
+- [x] 基于锁定版 `Vulkan-Headers` `vk.xml` 自动生成结构体编译期 ABI 断言、250+ 数据面/录制面命令零开销直通绑定及多 `VkInstance`/`VkDevice`/`VkQueue` 控制面包装器。
+- [x] 支持标准 Vulkan 1.1–1.3 `pNext` 特性链、Dynamic Rendering、Descriptor Update Template、`VkPipelineCache` 及全套客体回调安全 thunk（`VkAllocationCallbacks`、`VK_EXT_debug_utils`、`VK_EXT_debug_report`、`VK_EXT_device_memory_report`）；未支持的外部 fd 扩展明确返回 `VK_ERROR_EXTENSION_NOT_PRESENT`。
+- [x] 实现独立于窗口可见性的 Vulkan WSI 合成（优先 `VK_KHR_external_memory_win32` DXGI 共享纹理，回退交换链异步 Transfer 拷贝环），并按 `auto` / `vulkan` 策略诚实向客体暴露 `libvulkan.so`。
 
 ### GPU-P5：GPU 引擎配套 NDK / Bionic 运行库与真实重度 GPU APK 端到端验收
 - [ ] 修复原生库装载链路：`ApplicationInfo.nativeLibraryDir`（`app_lib`）暴露已准入 `.so`、导出 `MACAPK_APK_PATH`、兼容 `ReLinker` 在 Windows 下的 ZIP 条目查找、`GuestNativeLoader` 详细诊断日志、主 Activity 原生初始化致命异常透传（消除空白假运行），以及前端添加 `needs-native` APK 时的清晰受限原生引导。

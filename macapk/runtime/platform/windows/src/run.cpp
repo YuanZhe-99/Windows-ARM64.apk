@@ -501,7 +501,10 @@ int Run(const RunArgs& a) {
     // This process only. MACAPK_BUILD_JAVA_ID keys the app's own dynamic-DEX cache
     // (dalvik.system.MacApkDexConverter), as upstream's main.cpp exports it from build-id.txt.
     SetEnvironmentVariableW(L"MACAPK_FW_RES_APK", fwres.c_str());
+    SetEnvironmentVariableW(L"MACAPK_APK_PATH", a.apk.c_str());
     SetEnvironmentVariableW(L"MACAPK_BUILD_JAVA_ID", Wide(id.JavaId()).c_str());
+    SetEnvironmentVariableW(L"WINAPK_GRAPHICS_MODE", a.graphics.c_str());
+    SetEnvironmentVariableW(L"WINAPK_APK_REQUIRES_VULKAN", apk.vulkanRequired ? L"1" : L"0");
     const std::string L = Utf8(lib);
     std::vector<std::string> opts = {
         "-Djava.class.path=" + L + "\\android-framework.jar;" + L + "\\macapk-loader.jar;" + L + "\\bcprov-jdk18on-1.79.jar",

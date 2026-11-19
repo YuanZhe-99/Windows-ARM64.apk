@@ -64,8 +64,11 @@ bool CompositorSubmitSurfaceSharedTexture(HWND hwnd, int layerKey, HANDLE dxgiSh
 /// Updates placement/visibility of an existing `SurfaceView` layer, or removes it when `drop`.
 void CompositorUpdateSurfacePlacement(HWND hwnd, int layerKey, const SurfaceLayerPlacement& placement, bool drop);
 
-/// Removes all `SurfaceView` producer layers for `hwnd` (e.g. when switching Activities/views).
+/// Removes all `SurfaceView` producer layers and stale UI content for `hwnd` when switching root views.
 void CompositorClearSurfaceLayers(HWND hwnd);
+
+/// Publishes any in-flight asynchronous `--embed` staging frame that completed since the last submit.
+void CompositorFlushEmbed(HWND hwnd);
 
 /// Repaints `hwnd`'s composited frame (used on `WM_PAINT` / `WM_SIZE` when hardware layers exist).
 /// Returns: true if `WinApkCompositor` owns presentation for `hwnd`.

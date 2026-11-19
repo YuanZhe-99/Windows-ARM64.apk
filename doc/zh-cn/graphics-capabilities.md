@@ -15,7 +15,7 @@ G3 之后 P5/P6 进行中，尚无图形关卡通过。Java 位图路径保持�
 | 客体 Vulkan 实例/WSI | T13.wsi 在 Dozen 上 PASS | 真实 APK、Android→Win32 surface、实际支持与 capabilities、resize、换挂载及拒绝；不绘制 |
 | 客体 Vulkan 交换链清屏 | Dozen 上受限 T13 profile PASS | 真实客体设备/队列、命令缓冲区及交换链，resize 前后共三次呈现 |
 | 客体 Vulkan 传输缓冲区 | Dozen 上受限 T13 profile PASS | 一致内存分配及 GPU 填充，16 个字精确回读及生命周期拒绝 |
-| 客体 Vulkan 图形管线、图像与回调 | Dozen 上受限 T13 profile PASS | SPIR-V 顶点/片元 `VkGraphicsPipelineCreateInfo`、`4x4` `VkImage` 渲染通道绘制与图像到缓冲区回读（`0xFFCC8822`），以及客体 `VkAllocationCallbacks` 与 `VK_EXT_debug_report` 回调桥 |
+| 客体 Vulkan 图形管线、图像与回调 | Dozen 上 PASS（`libvulkan.so` 1.0–1.3，290+ 命令） | SPIR-V `VkGraphicsPipelineCreateInfo`、`VkPipelineCache`、描述符/采样器/Push Constants、`4x4` `VkImage` 渲染通道绘制与回读（`0xFFCC8822`）、`--embed` WSI 回读，以及豁免 CFG 的 `VkAllocationCallbacks` + `VK_EXT_debug_report`/`debug_utils` 回调桥 |
 | 客体 Vulkan 计算实验 | 本机 Dozen 上 FAIL，未纳入交付 | Adreno SM 6.2（`WaveLaneMin=64, Max=128`）上 `vkCreateComputePipelines` 返回 `VK_ERROR_OUT_OF_HOST_MEMORY`，而 WARP SM 6.6+ 成功 |
 | 客体 Vulkan 验证层与 G4 | NOT_RUN / BLOCKED | 未安装 `VK_LAYER_KHRONOS_validation`（`NOT_RUN`）；缺少厂商原生 ICD（`BLOCKED`） |
 | 厂商 ARM64 Vulkan ICD | BLOCKED | 具有该驱动的机器；Dozen 结果不能填入此行 |
@@ -127,54 +127,44 @@ Vulkan ICD 的拒绝用例。验证后台 `pthread_create` IO 线程经 `share_c
 （`#version 300 es` / VAO）与 Dozen ES 2.0 后端下对 ES 3.0 的诚实拒绝（`EGL_BAD_MATCH`）、混合三角形回读、
 最小化/恢复、窗口缩放（`360x720` → `424x752`）、表面替换及显式不可用拒绝（`EGL_NOT_INITIALIZED`）。
 
-## 客体 Vulkan 实例与 WSI 增量
+## 客体 Vulkan 1.0–1.3 与 WSI（`guest_vulkan.cpp`）
 
-选择 `--native=restricted --graphics=vulkan` 时，受限 `libvulkan.so` 仅使用 System32
-Vulkan loader。桥筛选实例扩展，把 Android surface 创建翻译为 Win32，私有保存实例、
-物理设备和 surface 句柄，并查询实际呈现支持和 capabilities。消息线程负责 surface
-创建、查询及销毁；ANGLE 不参与。
+`guest_vulkan.cpp` 与基于锁定版 `Vulkan-Headers` 1.4.363 生成的 `guest_vulkan_autogen.inc` 经
+System32 `vulkan-1.dll` 暴露 290+ 个 Vulkan 1.0–1.3 核心、晋升及 KHR/EXT 实例、物理设备、逻辑设备、
+队列与命令缓冲入口，支持多 `VkInstance`、多 `VkDevice` 与多 `VkQueue`。依据 ADR-0005，客体 Vulkan 在
+`--graphics=vulkan`、`--graphics=auto` 且存在原生 GPU 厂商 Vulkan ICD（`HasNativeVendorVulkan() == true`），
+或 `--graphics=auto` 且 APK 清单要求 `android.hardware.vulkan.*` 时启用。
 
-仅通过 WSI 测试不等于呈现一帧，也不等于通过 G4。
+宿主专属 Win32 表面/互操作扩展（`VK_KHR_win32_surface`、`VK_KHR_external_*_win32`、
+`VK_KHR_win32_keyed_mutex`）、Android `AHardwareBuffer` 扩展（`VK_ANDROID_*`）与 POSIX `fd` 外部内存/同步
+扩展（`VK_KHR_external_*_fd`）在扩展枚举、`ppEnabledExtensionNames` 与 `pNext` 中均被过滤并以
+`VK_ERROR_EXTENSION_NOT_PRESENT` 拒绝。标准 Vulkan 1.1–1.3 `pNext` 链（`VkPhysicalDeviceProperties2`、
+`VkPhysicalDeviceDriverProperties`、`VkPhysicalDeviceFeatures2`、动态渲染、synchronization2、时间线信号量、
+描述符更新模板）直接透传。
 
-`test.ps1 -Suite VulkanWsi` 启动同一个普通 NDK API-30 APK 两次：一次系统 ICD 可用，
-一次仅对子进程屏蔽 ICD。验证扩展和 proc 作用域，拒绝 AHardwareBuffer、分配回调、
-非空 `pNext` 及过期句柄。窗口从 `360x720` 改到 `424x752`；替换视图后旧 surface
-返回 `VK_ERROR_SURFACE_LOST_KHR`。不安装或复制驱动。
+### 交换链 WSI 与 `--embed` 合成
 
-### 交换链清屏 profile
+`vkCreateAndroidSurfaceKHR` 将受管理的 `ANativeWindow*` 令牌翻译为 `VkSurfaceKHR`，并将非 CPU 物理设备排在
+软件适配器之前。在 `--embed` 窗格模式下，交换链呈现接入 `WinApkCompositor`——在原生厂商 ICD 支持时优先走
+`VK_KHR_external_memory_win32` DXGI 零拷贝共享纹理，在转换层 ICD（Mesa Dozen）上自动回退为宿主一致
+`VkBuffer` `vkCmdCopyImageToBuffer` 传输回读。最小化（`0x0`）与窗口缩放会锁存 `VK_ERROR_OUT_OF_DATE_KHR`
+直至重建交换链；已失效表面返回 `VK_ERROR_SURFACE_LOST_KHR`。本机 Dozen 验证不替代原生厂商 Vulkan ICD 验收。
 
-一个逻辑设备及呈现队列、一个 FIFO 交换链和一个主命令缓冲区构成独立受限 profile。
-客体对已获取图像的令牌记录布局转换与清屏，向所属队列提交并呈现。驱动设备、队列、
-交换链和图像句柄保持私有。本 profile 不实现 shader pipeline、通用图像、
-自定义分配器或调试回调。
+### 传输缓冲区回读与计算说明
 
-`VulkanWsi` 套件在同一个正例进程中验证三次清屏呈现：启动时、从最小化恢复后及 resize 后。
-最小化至零尺寸时 acquire 返回 `VK_ERROR_OUT_OF_DATE_KHR`，恢复到原尺寸后旧交换链仍过期。
-客体在恢复及 resize 后分别销毁并重建。测试断言真实 present 返回值，不进行交换链像素回读；
-不代表厂商 Vulkan 或 G4 验收。
+`hello-vulkan-wsi.apk` 验证一致宿主可见缓冲区映射、GPU `vkCmdFillBuffer` + transfer→host 屏障回读，以及对
+`VK_ANDROID_*` 和 `VK_KHR_external_*_fd` `pNext` 链的显式拒绝。在 Adreno 8cx Gen 3（`HighestShaderModel=0x62`、
+`WaveLaneMin=64..128`）上，Mesa Dozen 编译计算着色器会生成针对 Shader Model 6.6+ 的 subgroup 指令，计算管线受宿主驱动着色器模型限制。
 
-### 传输缓冲区回读
+### 图形管线、描述符、管线缓存与客体回调
 
-同一 APK 进程还验证一个受限传输目标缓冲区和一份宿主可见且一致的设备内存分配。
-桥翻译两个令牌，记录真实填充与 transfer→host barrier，仅在队列完成后允许映射。
-APK 逐字核对已知值。这是传输测试，不是 shader 执行、通用资源支持或交换链像素回读。
+在 `hello-vulkan-wsi.apk`（`test.ps1 -Suite VulkanWsi` 与 `TestRealRuntimeEmbed`）中，`libvulkan.so` 验证了：
 
-计算实验未通过 pipeline 创建阶段：本机 Adreno 8cx Gen 3 的 D3D12 驱动仅报告
-`HighestShaderModel=0x62` 且 `WaveLaneMin=64, WaveLaneMax=128`，而 Mesa Dozen 编译计算着色器时生成针对
-Shader Model 6.6+ 的 subgroup 要求。已验证的桥不导出计算命令。
-
-### 图形管线、离屏图像与客体回调
-
-在同一单次启动的 `hello-vulkan-wsi.apk` 夹具（Adreno 8cx Gen 3 + Dozen）中，受限 `libvulkan.so`
-提供方还验证了：
-
-- **离屏 `VkImage` 与渲染通道：** 一个 `4x4` `VK_FORMAT_R8G8B8A8_UNORM` 最优平铺图像
-  （`COLOR_ATTACHMENT_BIT | TRANSFER_SRC_BIT`）、独立 `VkDeviceMemory` 绑定、`VkImageView`、
-  单子通道 `VkRenderPass`（`CLEAR` 到 `STORE`，`UNDEFINED` 到 `TRANSFER_SRC_OPTIMAL`）及 `VkFramebuffer`。
-- **SPIR-V 图形管线：** 由 NDK `glslc` 编译的顶点与片元 `VkShaderModule`、空 `VkPipelineLayout`、
-  `vkCreateGraphicsPipelines`、`vkCmdBeginRenderPass`、`vkCmdBindPipeline`、`vkCmdDraw`、
-  `vkCmdEndRenderPass` 及 `vkCmdCopyImageToBuffer` 拷入一致回读缓冲区，逐字断言全部 16 个像素等于片元着色器输出 `0xFFCC8822`。
-- **客体回调：** 着色器模块创建/销毁上的筛查后 `VkAllocationCallbacks`（在调用方客体线程执行并与宿主 ICD 堆隔离，验证返回 `NULL` 时转为 `VK_ERROR_OUT_OF_HOST_MEMORY` 且分配与释放次数平衡），以及 `VK_EXT_debug_report`（`vkCreateDebugReportCallbackEXT`、非可执行回调地址拒绝、`vkDebugReportMessageEXT` 与 `vkDestroyDebugReportCallbackEXT`）。
+- **离屏 `VkImage`、描述符、采样器、Push Constants 与 `VkPipelineCache`：** `4x4`
+  `VK_FORMAT_R8G8B8A8_UNORM` 最优平铺图像、`VkSampler`、`VkDescriptorSetLayout` + `VkDescriptorPool` +
+  `VkDescriptorSet`（`vkUpdateDescriptorSets` UBO）、`VkPushConstantRange`（`vkCmdPushConstants`）、
+  `VkPipelineCache`（`vkGetPipelineCacheData`）、SPIR-V 图形管线绘制与图像到缓冲区回读（逐字断言全部 16 个字等于 `0xFFCC8822`），以及 `--embed` 窗格 WSI 像素回读。
+- **豁免 CFG 的客体回调（`__declspec(guard(nocf))`）：** 堆驻留 `VkAllocationCallbacks` 跳板（验证返回 `NULL` 时转为 `VK_ERROR_OUT_OF_HOST_MEMORY` 且 `allocs == frees`）、宿主/桥双通路 `VK_EXT_debug_report` 与 `VK_EXT_debug_utils` 消息回调（含非可执行回调地址拒绝），以及 `VK_EXT_device_memory_report` `pNext` 回调筛查。
 
 ## P8 基于 Direct3D 12 的 Skia / AGSL / RenderEffect（`T15`）
 

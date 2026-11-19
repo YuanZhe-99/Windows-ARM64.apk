@@ -136,7 +136,7 @@ func TestRealRuntimeEmbed(t *testing.T) {
 	if rt.Executable() == "" {
 		t.Skip("winapk.exe not built")
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 	defer cancel()
 
 	rep, err := rt.Doctor(ctx, "")
@@ -219,6 +219,13 @@ func TestRealRuntimeEmbed(t *testing.T) {
 		t.Fatal("timed out waiting for graceful Stop")
 	}
 
+	absDiff := func(a, b int) int {
+		if a < b {
+			return b - a
+		}
+		return a - b
+	}
+
 	glesApk := filepath.Join("..", "..", "tests", "fixtures", "hello-guest-gles.apk")
 	if _, err := os.Stat(glesApk); err == nil && rep.Machine.AngleArm64 {
 		glesFirst := make(chan *image.RGBA, 1)
@@ -243,23 +250,17 @@ func TestRealRuntimeEmbed(t *testing.T) {
 			t.Fatalf("Launch GLES: %v", err)
 		}
 		gp.SetFrameHandler(func(img *image.RGBA) {
-			select {
-			case glesFirst <- img:
-			default:
+			c := img.RGBAAt(img.Rect.Dx()/2, img.Rect.Dy()/2)
+			// `gles.c` blends 50%-alpha red over opaque blue -> RGBA ~(128, 0, 128, 255).
+			if absDiff(int(c.R), 128) <= 8 && c.G <= 4 && absDiff(int(c.B), 128) <= 8 {
+				select {
+				case glesFirst <- img:
+				default:
+				}
 			}
 		})
 		select {
-		case img := <-glesFirst:
-			nonBlack := false
-			for i := 0; i+3 < len(img.Pix); i += 4 {
-				if img.Pix[i] != 0 || img.Pix[i+1] != 0 || img.Pix[i+2] != 0 {
-					nonBlack = true
-					break
-				}
-			}
-			if !nonBlack {
-				t.Fatal("embedded GLES frame was completely black")
-			}
+		case <-glesFirst:
 		case st := <-glesDone:
 			t.Fatalf("GLES ended before frame: %s (%s): %v", st.Phase, st.Category, st.Log)
 		case <-ctx.Done():
@@ -268,5 +269,56 @@ func TestRealRuntimeEmbed(t *testing.T) {
 		}
 		_ = gp.Stop()
 		<-glesDone
+	}
+
+	vkApk := filepath.Join("..", "..", "tests", "fixtures", "hello-vulkan-wsi.apk")
+	if _, err := os.Stat(vkApk); err == nil && rep.Machine.VulkanLoader == "available" && rep.Machine.Win32Surface {
+		vkMatched := make(chan *image.RGBA, 1)
+		vkDone := make(chan State, 1)
+		var lastColor atomic.Uint32
+		var lastLog atomic.Value
+		vp, err := rt.Launch(LaunchSpec{
+			Path:     vkApk,
+			DataDir:  t.TempDir(),
+			Native:   NativeRestricted,
+			Profile:  N2,
+			Graphics: "vulkan",
+			Width:    360,
+			Height:   720,
+		}, func(s State) {
+			lastLog.Store(s.Log)
+			if s.Phase == Stopped || s.Phase == Failed {
+				select {
+				case vkDone <- s:
+				default:
+				}
+			}
+		})
+		if err != nil {
+			t.Fatalf("Launch Vulkan: %v", err)
+		}
+		vp.SetFrameHandler(func(img *image.RGBA) {
+			c := img.RGBAAt(img.Rect.Dx()/2, img.Rect.Dy()/2)
+			lastColor.Store(uint32(c.R)<<24 | uint32(c.G)<<16 | uint32(c.B)<<8 | uint32(c.A))
+			// `show_frame(0.75f, 0.125f)` clears swapchain to RGBA ~(191, 64, 32, 255) (distinct from starting window #EFEDF1).
+			if absDiff(int(c.R), 191) <= 8 && absDiff(int(c.G), 64) <= 8 && absDiff(int(c.B), 32) <= 8 {
+				select {
+				case vkMatched <- img:
+				default:
+				}
+			}
+		})
+		vkTimer := time.NewTimer(15 * time.Second)
+		defer vkTimer.Stop()
+		select {
+		case <-vkMatched:
+		case st := <-vkDone:
+			t.Fatalf("Vulkan ended before matching WSI frame: %s (%s): %v", st.Phase, st.Category, st.Log)
+		case <-vkTimer.C:
+			_ = vp.Kill()
+			t.Fatalf("timed out waiting for embedded Vulkan WSI frame: lastRGBA=0x%08x log=%v", lastColor.Load(), lastLog.Load())
+		}
+		_ = vp.Stop()
+		<-vkDone
 	}
 }

@@ -218,6 +218,8 @@ struct WindowCompositor {
     ComPtr<ID3D11RenderTargetView> rtView;
     ComPtr<ID3D11Texture2D> staging[3];
     bool stagingValid[3]{false, false, false};
+    uint64_t stagingSeq[3]{0, 0, 0};
+    uint64_t publishedSeq = 0;
     uint64_t frameIndex = 0;
 
     // Standalone DXGI flip swapchain (allocated only when surface layers are active)
@@ -259,7 +261,9 @@ bool EnsureEmbedTargets(WindowCompositor& wc, int w, int h) {
     for (int i = 0; i < 3; ++i) {
         wc.staging[i].Reset();
         wc.stagingValid[i] = false;
+        wc.stagingSeq[i] = 0;
     }
+    wc.publishedSeq = 0;
     wc.frameIndex = 0;
 
     D3D11_TEXTURE2D_DESC rtd{};
@@ -418,34 +422,45 @@ bool RenderAndPublishLocked(WindowCompositor& wc) {
         if (!EnsureEmbedTargets(wc, targetW, targetH)) return false;
         CompositeToRtv(wc, wc.rtView.Get(), targetW, targetH);
 
-        const int writeSlot = static_cast<int>(wc.frameIndex % 3);
+        const uint64_t seq = ++wc.frameIndex;
+        const int writeSlot = static_cast<int>(seq % 3);
         g_d3d.ctx->CopyResource(wc.staging[writeSlot].Get(), wc.rtTex.Get());
+        g_d3d.ctx->Flush();
         wc.stagingValid[writeSlot] = true;
+        wc.stagingSeq[writeSlot] = seq;
 
-        // Asynchronous 3-buffer readback: try the oldest in-flight slot without blocking the GPU;
-        // fall back to immediate map on the first 2 frames (or if GPU lags >2 frames) so first-frame
-        // latency is zero.
-        int readSlot = writeSlot;
-        UINT mapFlags = 0;
-        const int oldestSlot = static_cast<int>((wc.frameIndex + 1) % 3);
-        if (wc.frameIndex >= 2 && wc.stagingValid[oldestSlot]) {
+        // Try newest-to-oldest ready slot without blocking (`DO_NOT_WAIT`) so 60fps rendering never
+        // stalls while fast/idle frames publish immediately; `CompositorFlushEmbed` drains any
+        // remaining in-flight frame on the next UI timer tick if `writeSlot` was still drawing.
+        const int order[3] = {
+            writeSlot,
+            static_cast<int>((seq + 2) % 3),
+            static_cast<int>((seq + 1) % 3),
+        };
+        for (int slot : order) {
+            if (!wc.stagingValid[slot] || wc.stagingSeq[slot] <= wc.publishedSeq) continue;
             D3D11_MAPPED_SUBRESOURCE asyncMap{};
-            if (SUCCEEDED(g_d3d.ctx->Map(wc.staging[oldestSlot].Get(), 0, D3D11_MAP_READ,
+            if (SUCCEEDED(g_d3d.ctx->Map(wc.staging[slot].Get(), 0, D3D11_MAP_READ,
                                          D3D11_MAP_FLAG_DO_NOT_WAIT, &asyncMap))) {
                 PublishEmbedRgbaRows(static_cast<const uint8_t*>(asyncMap.pData), asyncMap.RowPitch, targetW, targetH);
-                g_d3d.ctx->Unmap(wc.staging[oldestSlot].Get(), 0);
-                ++wc.frameIndex;
+                g_d3d.ctx->Unmap(wc.staging[slot].Get(), 0);
+                wc.publishedSeq = wc.stagingSeq[slot];
                 return true;
             }
         }
-        D3D11_MAPPED_SUBRESOURCE syncMap{};
-        if (SUCCEEDED(g_d3d.ctx->Map(wc.staging[readSlot].Get(), 0, D3D11_MAP_READ, mapFlags, &syncMap))) {
-            PublishEmbedRgbaRows(static_cast<const uint8_t*>(syncMap.pData), syncMap.RowPitch, targetW, targetH);
-            g_d3d.ctx->Unmap(wc.staging[readSlot].Get(), 0);
-            ++wc.frameIndex;
-            return true;
+        // Only block when all 3 ring slots are still in flight on the GPU (backpressure cap = 2 frames).
+        if (seq >= 3) {
+            const int oldest = static_cast<int>((seq + 1) % 3);
+            if (wc.stagingValid[oldest] && wc.stagingSeq[oldest] > wc.publishedSeq) {
+                D3D11_MAPPED_SUBRESOURCE syncMap{};
+                if (SUCCEEDED(g_d3d.ctx->Map(wc.staging[oldest].Get(), 0, D3D11_MAP_READ, 0, &syncMap))) {
+                    PublishEmbedRgbaRows(static_cast<const uint8_t*>(syncMap.pData), syncMap.RowPitch, targetW, targetH);
+                    g_d3d.ctx->Unmap(wc.staging[oldest].Get(), 0);
+                    wc.publishedSeq = wc.stagingSeq[oldest];
+                }
+            }
         }
-        return false;
+        return true;
     }
 
     // Standalone window: only bind DXGI swapchain when at least one surface layer is active, so
@@ -572,7 +587,32 @@ void CompositorClearSurfaceLayers(HWND hwnd) {
     std::lock_guard lock(g_d3d.mu);
     auto winIt = g_windows.find(hwnd);
     if (winIt == g_windows.end()) return;
+    winIt->second->ui.hasContent = false;
     winIt->second->surfaces.clear();
+}
+
+void CompositorFlushEmbed(HWND hwnd) {
+    if (!IsEmbedded() || !hwnd) return;
+    std::lock_guard lock(g_d3d.mu);
+    auto winIt = g_windows.find(hwnd);
+    if (winIt == g_windows.end()) return;
+    WindowCompositor& wc = *winIt->second;
+    if (wc.rtW <= 0 || wc.rtH <= 0 || wc.publishedSeq >= wc.frameIndex) return;
+
+    int bestSlot = -1;
+    uint64_t bestSeq = wc.publishedSeq;
+    for (int i = 0; i < 3; ++i) {
+        if (wc.stagingValid[i] && wc.stagingSeq[i] > bestSeq) {
+            D3D11_MAPPED_SUBRESOURCE mapped{};
+            if (SUCCEEDED(g_d3d.ctx->Map(wc.staging[i].Get(), 0, D3D11_MAP_READ, D3D11_MAP_FLAG_DO_NOT_WAIT, &mapped))) {
+                PublishEmbedRgbaRows(static_cast<const uint8_t*>(mapped.pData), mapped.RowPitch, wc.rtW, wc.rtH);
+                g_d3d.ctx->Unmap(wc.staging[i].Get(), 0);
+                bestSeq = wc.stagingSeq[i];
+                bestSlot = i;
+            }
+        }
+    }
+    if (bestSlot >= 0) wc.publishedSeq = bestSeq;
 }
 
 bool CompositorPresentWindow(HWND hwnd, int clientW, int clientH) {
