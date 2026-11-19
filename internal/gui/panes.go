@@ -841,6 +841,9 @@ func (a *App) newAppWindow(s *session) {
 			delete(a.open, id)
 		}
 	})
+	if len(e.APK.Icon) == 0 || w.SetIcon(e.APK.Icon) != nil {
+		_ = w.SetIcon(logoPNG)
+	}
 	s.win = w
 	w.Show()
 	w.Focus()

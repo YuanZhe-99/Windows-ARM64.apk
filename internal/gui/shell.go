@@ -28,6 +28,7 @@ func (a *App) mainWindow() *mygo.Window {
 		Content: ui.View(a.view),
 	})
 	w.OnClose(a.handleClose)
+	_ = w.SetIcon(logoPNG)
 	a.window = w
 	return w
 }

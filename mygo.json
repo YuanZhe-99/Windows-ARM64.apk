@@ -4,6 +4,10 @@
   "version": "0.1.0",
   "copyright": "Copyright (C) 2026 YuanZhe",
   "license": "AGPL-3.0-or-later",
+  "icon": "resources/icon.png",
+  "resourcesExclude": [
+    "icon.png"
+  ],
   "main": "./cmd/windows-arm64-apk",
   "out": "build/app",
   "i18n": {

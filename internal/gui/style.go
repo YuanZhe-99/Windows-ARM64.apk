@@ -1,12 +1,18 @@
 package gui
 
 import (
+	_ "embed"
 	"fmt"
 	"hash/fnv"
 
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
 )
+
+// logoPNG is Windows-ARM64.apk's 256x256 RGBA brand icon (tools/genicon).
+//
+//go:embed logo.png
+var logoPNG []byte
 
 // palette is the design's colours (design/README.md, "Tokens") for one
 // appearance. Views take it from pal, never from literals of their own.
@@ -150,9 +156,12 @@ var (
 	miPlus   = menuSVG(icPlus)
 	miHome   = menuSVG(icHome)
 
-	// The mark, a placeholder of Windows-ARM64.apk's own icon
-	// (design/README.md): a window holding a phone, drawn in white on the
-	// accent. Never the Mac.apk logo or the Android robot.
+	// The mark: Windows-ARM64.apk's own Fluent icon (logo.png), with a vector
+	// fallback if image decoding fails. Never the Mac.apk logo or the Android robot.
+	brandLogo = func() ui.ImageSource {
+		img, _ := ui.DecodeImage(logoPNG)
+		return img
+	}()
 	icMark = ui.MustParseSVG([]byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M2 8h20"/><rect x="9" y="10" width="6" height="8" rx="1.2"/></svg>`))
 
 	// Windows 11's caption glyphs, 10 points with lines of one.
@@ -162,8 +171,12 @@ var (
 	winClose = ui.MustParseSVG([]byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><path d="M0 0l10 10M10 0L0 10" stroke="currentColor"/></svg>`))
 )
 
-// mark is the app's mark on its accent tile, size points square.
+// mark draws Windows-ARM64.apk's brand icon at size points square.
 func mark(c *ui.Context, size float32) {
+	if brandLogo != nil {
+		ui.Image(c, brandLogo).Size(size, size).Shrink(0)
+		return
+	}
 	p := pal(c)
 	ui.Box(c).Size(size, size).Shrink(0).Radius(size * 0.22).Background(p.accent).Center().Children(func() {
 		ui.Icon(c, icMark).FontSize(size * 0.6).TextColor(p.onAccent)

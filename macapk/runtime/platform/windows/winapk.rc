@@ -1,0 +1,2 @@
+// winapk.rc -- Windows-ARM64.apk runtime executable icon resource.
+1 ICON "winapk.ico"

@@ -60,6 +60,7 @@ func (a *App) openDiagWindow() {
 			a.diagWin = nil
 		}
 	})
+	_ = w.SetIcon(logoPNG)
 	a.diagWin = w
 	w.Show()
 	w.Focus()
