@@ -179,3 +179,13 @@ Shader Model 6.6+ 的 subgroup 要求。已验证的桥不导出计算命令。
   `vkCreateGraphicsPipelines`、`vkCmdBeginRenderPass`、`vkCmdBindPipeline`、`vkCmdDraw`、
   `vkCmdEndRenderPass` 及 `vkCmdCopyImageToBuffer` 拷入一致回读缓冲区，逐字断言全部 16 个像素等于片元着色器输出 `0xFFCC8822`。
 - **客体回调：** 着色器模块创建/销毁上的筛查后 `VkAllocationCallbacks`（在调用方客体线程执行并与宿主 ICD 堆隔离，验证返回 `NULL` 时转为 `VK_ERROR_OUT_OF_HOST_MEMORY` 且分配与释放次数平衡），以及 `VK_EXT_debug_report`（`vkCreateDebugReportCallbackEXT`、非可执行回调地址拒绝、`vkDebugReportMessageEXT` 与 `vkDestroyDebugReportCallbackEXT`）。
+
+## P8 基于 Direct3D 12 的 Skia / AGSL / RenderEffect（`T15`）
+
+`NativeSkiaD3D12`（`macapk/runtime/platform/windows/src/bridge/skia_d3d12.cpp`）创建独立的硬件
+`IDXGIAdapter1`、`ID3D12Device` 与直接 `ID3D12CommandQueue`（默认拒绝软件 WARP 适配器），并通过
+`DirectContextKt._nMakeDirect3D` 接入 Skiko `0.150.2`（`skiko-windows-arm64.dll`，`ARM64` PE）。
+`MacApkSkia` 保持 Java2D Canvas + GPU 着色器/滤镜 + 显式直通 alpha 回读的分工（`PLAN.md` §15），在本机报告
+`Direct3D12: Qualcomm(R) Adreno(TM) 8cx Gen 3`，并通过 `AgslSmokeWindows`（`T15`，`test.ps1 -Suite Agsl`）
+的全部 11 项像素契约。当 `skiko-windows-arm64.dll` 或 Direct3D 12 不可用（`WINAPK_DISABLE_SKIA=1`）时，
+`MacApkSkia.ensureLoaded()` 显式抛出 `GRAPHICS_CAPABILITY_MISSING`，绝不静默回退为无效果的 CPU 渲染。

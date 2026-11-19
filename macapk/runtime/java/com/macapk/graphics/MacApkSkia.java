@@ -14,6 +14,8 @@ public final class MacApkSkia {
     private static volatile boolean sLoadFailed = false;
     private static final Object sLoadLock = new Object();
     private static Unsafe sUnsafe;
+    private static final boolean IS_WINDOWS =
+            System.getProperty("os.name", "").startsWith("Windows");
 
     // Skia ColorType: 6 = BGRA_8888 (matches little-endian Java TYPE_INT_ARGB memory layout)
     public static final int COLOR_TYPE_BGRA_8888 = 6;
@@ -42,6 +44,51 @@ public final class MacApkSkia {
         if (sLoaded) return;
         synchronized (sLoadLock) {
             if (sLoaded || sLoadFailed) return;
+
+            if (IS_WINDOWS) {
+                String dis = System.getenv("WINAPK_DISABLE_SKIA");
+                if (dis != null && !dis.isEmpty() && !"0".equals(dis)) {
+                    sLoadFailed = true;
+                    throw new IllegalStateException("GRAPHICS_CAPABILITY_MISSING: Skia Direct3D12 disabled");
+                }
+                java.util.ArrayList<String> winCandidates = new java.util.ArrayList<>();
+                String customDll = System.getenv("WINAPK_SKIA_DLL");
+                if (customDll != null && !customDll.isEmpty()) winCandidates.add(customDll);
+                String binProp = System.getProperty("macapk.binary.dir", "");
+                if (!binProp.isEmpty()) {
+                    winCandidates.add(binProp + "/skia/skiko-windows-arm64.dll");
+                    winCandidates.add(binProp + "/skiko-windows-arm64.dll");
+                }
+                try {
+                    java.net.URL codeSource = MacApkSkia.class.getProtectionDomain().getCodeSource().getLocation();
+                    File jar = new File(codeSource.toURI());
+                    File libDir = jar.isDirectory() ? jar : jar.getParentFile();
+                    if (libDir != null) addWindowsCandidatesBesideClassPath(winCandidates, libDir);
+                } catch (Throwable ignored) {}
+                String cp = System.getProperty("java.class.path", "");
+                for (String entry : cp.split(java.util.regex.Pattern.quote(File.pathSeparator))) {
+                    if (entry.isEmpty()) continue;
+                    File cpEntry = new File(entry).getAbsoluteFile();
+                    File libDir = cpEntry.isDirectory() ? cpEntry : cpEntry.getParentFile();
+                    if (libDir != null) addWindowsCandidatesBesideClassPath(winCandidates, libDir);
+                }
+                for (String path : winCandidates) {
+                    if (path == null || path.isEmpty()) continue;
+                    File f = new File(path);
+                    if (f.exists() && f.isFile()) {
+                        try {
+                            System.load(f.getAbsolutePath());
+                            sLoaded = true;
+                            System.err.println("[winapk] Skia/Skiko Direct3D12 library loaded from " + f.getAbsolutePath());
+                            return;
+                        } catch (Throwable t) {
+                            System.err.println("[winapk] Failed loading Skia from " + f.getAbsolutePath() + ": " + t);
+                        }
+                    }
+                }
+                sLoadFailed = true;
+                throw new IllegalStateException("GRAPHICS_CAPABILITY_MISSING: Skia Windows ARM64 Direct3D12 backend unavailable; no CPU shader fallback");
+            }
 
             java.util.ArrayList<String> candidates = new java.util.ArrayList<>();
             String binaryDir = System.getProperty("macapk.binary.dir", "");
@@ -103,6 +150,14 @@ public final class MacApkSkia {
         candidates.add(new File(root, "bin/libskiko-macos-arm64.dylib").getPath());
     }
 
+    private static void addWindowsCandidatesBesideClassPath(java.util.List<String> candidates, File libDir) {
+        candidates.add(new File(libDir, "skiko-windows-arm64.dll").getPath());
+        File root = libDir.getParentFile();
+        if (root == null) return;
+        candidates.add(new File(root, "bin/skia/skiko-windows-arm64.dll").getPath());
+        candidates.add(new File(root, "bin/skiko-windows-arm64.dll").getPath());
+    }
+
 
     private static final Object sGpuLock = new Object();
     private static GpuEngine sGpu;
@@ -136,6 +191,7 @@ public final class MacApkSkia {
         final java.util.LinkedHashMap<Long, GpuTarget> targets =
                 new java.util.LinkedHashMap<>(8, 0.75f, true);
         long targetBytes;
+        long adapter;
         long device;
         long queue;
         long context;
@@ -143,6 +199,28 @@ public final class MacApkSkia {
         GpuTarget current;
 
         GpuEngine() {
+            if (IS_WINDOWS) {
+                try {
+                    long[] triple = NativeSkiaD3D12.createAdapterDeviceQueue();
+                    if (triple == null || triple.length != 3 || triple[0] == 0 || triple[1] == 0 || triple[2] == 0) {
+                        throw new IllegalStateException("No Direct3D 12 adapter/device/queue available");
+                    }
+                    adapter = triple[0];
+                    device = triple[1];
+                    queue = triple[2];
+                    context = DirectContextKt._nMakeDirect3D(adapter, device, queue);
+                    if (context == 0) throw new IllegalStateException("Skia could not create a Direct3D 12 DirectContext");
+                    DirectContextKt.DirectContext_nSetResourceCacheLimit(context, TARGET_CACHE_BYTES);
+                    paint = PaintKt.Paint_nMake();
+                    if (paint == 0) throw new IllegalStateException("Skia could not create GPU paint");
+                    sBackendName = "Direct3D12: " + NativeSkiaD3D12.adapterName(adapter);
+                    System.err.println("[winapk] Skia backend=" + sBackendName);
+                    return;
+                } catch (Throwable t) {
+                    close();
+                    throw t;
+                }
+            }
             long pool = NativeSkiaMetal.openPool();
             try {
                 long[] pair = NativeSkiaMetal.createDeviceQueue();
@@ -202,7 +280,12 @@ public final class MacApkSkia {
             targetBytes = 0;
             if (paint != 0) { PaintKt.delete(paint); paint = 0; }
             if (context != 0) { RefCnt.unref(context); context = 0; }
-            if (device != 0 || queue != 0) {
+            if (IS_WINDOWS) {
+                if (adapter != 0 || device != 0 || queue != 0) {
+                    NativeSkiaD3D12.releaseAdapterDeviceQueue(adapter, device, queue);
+                    adapter = device = queue = 0;
+                }
+            } else if (device != 0 || queue != 0) {
                 NativeSkiaMetal.releaseDeviceQueue(device, queue);
                 device = queue = 0;
             }
@@ -275,7 +358,7 @@ public final class MacApkSkia {
                 || (long) width * height > outPixels.length) return false;
         synchronized (sGpuLock) {
             GpuEngine engine = gpu();
-            long pool = NativeSkiaMetal.openPool();
+            long pool = IS_WINDOWS ? 0L : NativeSkiaMetal.openPool();
             try {
                 engine.target(width, height);
                 GpuTarget target = engine.current;
@@ -293,18 +376,18 @@ public final class MacApkSkia {
             } finally {
                 PaintKt._nSetShader(engine.paint, 0);
                 engine.finish();
-                NativeSkiaMetal.closePool(pool);
+                if (!IS_WINDOWS) NativeSkiaMetal.closePool(pool);
             }
         }
     }
 
-    /** Executes the complete ImageFilter DAG on Metal, then reads back only its final result. */
+    /** Executes the complete ImageFilter DAG on GPU, then reads back only its final result. */
     public static boolean applyFilter(long filterPtr, int[] inPixels, int width, int height, int[] outPixels) {
         if (filterPtr == 0 || width <= 0 || height <= 0 || inPixels == null || outPixels == null
                 || (long) width * height > inPixels.length || (long) width * height > outPixels.length) return false;
         synchronized (sGpuLock) {
             GpuEngine engine = gpu();
-            long pool = NativeSkiaMetal.openPool();
+            long pool = IS_WINDOWS ? 0L : NativeSkiaMetal.openPool();
             long data = 0;
             long image = 0;
             try {
@@ -328,7 +411,7 @@ public final class MacApkSkia {
                 if (image != 0) RefCnt.unref(image);
                 DataKt.unref(data);
                 engine.finish();
-                NativeSkiaMetal.closePool(pool);
+                if (!IS_WINDOWS) NativeSkiaMetal.closePool(pool);
             }
         }
     }

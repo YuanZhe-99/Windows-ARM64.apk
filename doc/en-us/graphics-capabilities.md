@@ -215,3 +215,15 @@ restricted `libvulkan.so` provider also verifies:
   `VK_ERROR_OUT_OF_HOST_MEMORY` and balanced `allocs == frees`), plus `VK_EXT_debug_report`
   (`vkCreateDebugReportCallbackEXT`, non-executable callback refusal, `vkDebugReportMessageEXT`
   and `vkDestroyDebugReportCallbackEXT`).
+
+## P8 Skia / AGSL / RenderEffect over Direct3D 12 (`T15`)
+
+`NativeSkiaD3D12` (`macapk/runtime/platform/windows/src/bridge/skia_d3d12.cpp`) creates an
+independent hardware `IDXGIAdapter1`, `ID3D12Device` and direct `ID3D12CommandQueue` (refusing
+software WARP adapters by default) and binds Skiko `0.150.2` (`skiko-windows-arm64.dll`, `ARM64`
+PE) via `DirectContextKt._nMakeDirect3D`. `MacApkSkia` retains the Java2D Canvas + GPU shader /
+filter + explicit straight-alpha readback architecture (`PLAN.md` §15), reporting
+`Direct3D12: Qualcomm(R) Adreno(TM) 8cx Gen 3` and passing all 11 pixel contracts of
+`AgslSmokeWindows` (`T15`, `test.ps1 -Suite Agsl`). When `skiko-windows-arm64.dll` or Direct3D 12
+is unavailable (`WINAPK_DISABLE_SKIA=1`), `MacApkSkia.ensureLoaded()` fails explicitly with
+`GRAPHICS_CAPABILITY_MISSING` and never falls back silently to unfiltered CPU rendering.

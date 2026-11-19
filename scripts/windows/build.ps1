@@ -26,7 +26,7 @@ Debug or Release (Host only).
 #>
 [CmdletBinding()]
 param(
-    [ValidateSet('Java', 'FrameworkRes', 'Fixtures', 'Host', 'NativeProbe', 'JniProbe', 'Angle', 'AngleProbe', 'All')]
+    [ValidateSet('Java', 'FrameworkRes', 'Fixtures', 'Host', 'NativeProbe', 'JniProbe', 'Angle', 'AngleProbe', 'Skia', 'All')]
     [string]$Component = 'All',
     [ValidateSet('Debug', 'Release')]
     [string]$Configuration = 'Debug'
@@ -737,6 +737,41 @@ function Build-Host([string]$Target = '') {
     }
 }
 
+<# Stages the locked Windows ARM64 Skiko/Skia Direct3D 12 runtime DLL with SHA-256 and 0xAA64 PE verification. #>
+function Build-Skia {
+    $lock = Get-Content (Join-Path $repo 'build-lock.json') -Raw | ConvertFrom-Json
+    $skia = $lock.host.skia
+    $destDir = Join-Path $out 'bin\skia'
+    $dllDest = Join-Path $destDir 'skiko-windows-arm64.dll'
+    $cacheDir = Join-Path $out 'deps\skia'
+    New-Item -ItemType Directory -Force $destDir, $cacheDir | Out-Null
+    $jarPath = Join-Path $cacheDir "skiko-awt-runtime-windows-arm64-$($skia.version).jar"
+    if (-not (Test-Path $jarPath) -or (Get-FileHash $jarPath -Algorithm SHA256).Hash.ToLower() -ne $skia.sha256) {
+        Write-Step "Fetching locked Skiko Windows ARM64 $($skia.version)"
+        Invoke-WebRequest -Uri $skia.url -OutFile "$jarPath.tmp" -TimeoutSec 60
+        $got = (Get-FileHash "$jarPath.tmp" -Algorithm SHA256).Hash.ToLower()
+        if ($got -ne $skia.sha256) {
+            Remove-Item "$jarPath.tmp" -Force -ErrorAction SilentlyContinue
+            throw "Skiko JAR SHA-256 mismatch: expected $($skia.sha256), got $got"
+        }
+        Move-Item "$jarPath.tmp" $jarPath -Force
+    }
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    $zip = [IO.Compression.ZipFile]::OpenRead($jarPath)
+    try {
+        foreach ($entry in $zip.Entries) {
+            if ($entry.FullName -in @('skiko-windows-arm64.dll', 'icudtl.dat')) {
+                [IO.Compression.ZipFileExtensions]::ExtractToFile($entry, (Join-Path $destDir $entry.FullName), $true)
+            }
+        }
+    } finally { $zip.Dispose() }
+    if ((Get-PeMachine $dllDest) -ne 'ARM64') {
+        Remove-Item $dllDest -Force -ErrorAction SilentlyContinue
+        throw "skiko-windows-arm64.dll is not an ARM64 PE"
+    }
+    Write-Step "skiko-windows-arm64.dll ($($skia.version)): ARM64 staged at $destDir"
+}
+
 switch ($Component) {
     'Java' { Build-Java }
     'FrameworkRes' { Build-FrameworkRes }
@@ -746,5 +781,6 @@ switch ($Component) {
     'JniProbe' { Build-Host 'jni-probe'; Build-GuestBionic; Build-GuestJni; Build-ElfFixtures }
     'Angle' { Build-Angle }
     'AngleProbe' { Build-Host 'angle-probe' }
-    'All' { Build-Java; Build-FrameworkRes; Build-Fixtures; Build-Host; Build-GuestBionic; Build-GuestJni; Build-ElfFixtures }
+    'Skia' { Build-Skia }
+    'All' { Build-Java; Build-FrameworkRes; Build-Fixtures; Build-Skia; Build-Host; Build-GuestBionic; Build-GuestJni; Build-ElfFixtures }
 }

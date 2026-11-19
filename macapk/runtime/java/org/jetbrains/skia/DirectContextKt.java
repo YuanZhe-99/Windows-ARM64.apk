@@ -5,5 +5,6 @@ public final class DirectContextKt {
     private DirectContextKt() {}
 
     public static native long _nMakeMetal(long devicePtr, long queuePtr);
+    public static native long _nMakeDirect3D(long adapterPtr, long devicePtr, long queuePtr);
     public static native void DirectContext_nSetResourceCacheLimit(long contextPtr, long bytes);
 }

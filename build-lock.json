@@ -66,6 +66,16 @@
       "status": "system",
       "version": "1.3.301 (as the loader reports; vulkan-1.dll 1.3.300.0)",
       "use": "Windows' own vulkan-1.dll from System32, loaded at run time; never shipped or replaced (AGENTS.md: leave the system alone)"
+    },
+    "skia": {
+      "status": "locked",
+      "name": "JetBrains Skiko (Skia Ganesh Direct3D 12)",
+      "version": "0.150.2",
+      "arch": "arm64",
+      "url": "https://repo1.maven.org/maven2/org/jetbrains/skiko/skiko-awt-runtime-windows-arm64/0.150.2/skiko-awt-runtime-windows-arm64-0.150.2.jar",
+      "sha256": "17109a3d107b0877afc387050c7bca438b517c9dac746724b366dce616fad78d",
+      "license": "Apache-2.0 (Skiko) AND BSD-3-Clause (Google Skia) AND ICU",
+      "use": "P8 AGSL RuntimeShader and RenderEffect GPU execution over hardware Direct3D 12 (NativeSkiaD3D12 + skiko-windows-arm64.dll, T15)"
     }
   },
   "guest": {
@@ -93,7 +103,5 @@
       "use": "the platform resource table staged with the runtime (P1)"
     }
   },
-  "deferred": {
-    "skia": "P8: Skia for AGSL/RenderEffect; upstream's prebuilt is macOS-only"
-  }
+  "deferred": {}
 }

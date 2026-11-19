@@ -81,6 +81,12 @@ extern "C" __declspec(dllexport) jboolean winapk_bridge_register(JNIEnv* env) {
     } else {
         env->ExceptionClear();
     }
+    if (jclass skiaCls = env->FindClass("com/macapk/graphics/NativeSkiaD3D12")) {
+        env->DeleteLocalRef(skiaCls);
+        ok = RegisterSkia(env) && ok;
+    } else {
+        env->ExceptionClear();
+    }
     macapk::sqlite::RegisterNativeSqliteMethods(env);  // logs its own result, as upstream
     return ok ? JNI_TRUE : JNI_FALSE;
 }

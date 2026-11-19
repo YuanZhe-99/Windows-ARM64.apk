@@ -45,7 +45,7 @@ Local runtime ZIP from package.ps1, required for Package.
 #>
 [CmdletBinding()]
 param(
-    [ValidateSet('Host', 'HostServices', 'Audio', 'Java', 'Native', 'Bionic', 'Modules', 'Memory', 'Io', 'Faults', 'Format', 'Libraries', 'Jni', 'ApkJni', 'GraphicsHost', 'GraphicsJava', 'Surface', 'GraphicsGuest', 'VulkanWsi', 'DexJob', 'Package', 'Stability')]
+    [ValidateSet('Host', 'HostServices', 'Audio', 'Agsl', 'Java', 'Native', 'Bionic', 'Modules', 'Memory', 'Io', 'Faults', 'Format', 'Libraries', 'Jni', 'ApkJni', 'GraphicsHost', 'GraphicsJava', 'Surface', 'GraphicsGuest', 'VulkanWsi', 'DexJob', 'Package', 'Stability')]
     [string]$Suite = 'Host',
     [string]$PackageZip
 )
@@ -1466,7 +1466,58 @@ function Test-Audio {
     }
 }
 
-switch ($Suite) { 'Host' { Test-Host } 'HostServices' { Test-HostServices } 'Audio' { Test-Audio } 'Java' { Test-Java } 'Native' { Test-Native } 'Bionic' { Test-Bionic } 'Modules' { Test-Modules } 'Memory' { Test-Bionic -Command memory } 'Io' { Test-Bionic -Command io } 'Faults' { Test-Bionic -Command faults } 'Format' { Test-Bionic -Command format } 'Libraries' { Test-Libraries } 'Jni' { Test-Jni } 'ApkJni' { Test-ApkJni } 'GraphicsHost' { Test-GraphicsHost } 'GraphicsJava' { Test-GraphicsJava } 'Surface' { Test-Surface } 'GraphicsGuest' { Test-GraphicsGuest } 'VulkanWsi' { Test-VulkanWsi } 'DexJob' { Test-DexJob } 'Package' { Test-Package } 'Stability' { & "$PSScriptRoot\test-stability.ps1"; if ($LASTEXITCODE) { $script:failed++ } } }
+<# Verifies P8 T15 Skia Direct3D 12 AGSL RuntimeShader and RenderEffect pixel contracts + negative refusal. #>
+function Test-Agsl {
+    $jdk = Find-Jdk
+    $lib = Join-Path $out 'lib'
+    $bridge = Join-Path $out 'bin\winapk-bridge.dll'
+    $skiaDll = Join-Path $out 'bin\skia\skiko-windows-arm64.dll'
+    if (-not (Test-Path $bridge)) { throw "Missing $bridge; run build.ps1 -Component Host" }
+    if (-not (Test-Path $skiaDll)) { throw "Missing $skiaDll; run build.ps1 -Component Skia" }
+    Check 'T15.agsl.pe' ((Get-PeMachine $skiaDll) -eq 'ARM64') 'skiko-windows-arm64.dll is ARM64 PE'
+
+    $root = Join-Path $out ('test-data\agsl-' + [guid]::NewGuid().ToString('N'))
+    $classes = Join-Path $root 'classes'
+    New-Item -ItemType Directory -Force $classes | Out-Null
+
+    $cp = "$lib\android-framework.jar;$lib\macapk-loader.jar;$lib\bcprov-jdk18on-1.79.jar"
+    Invoke-Checked (Join-Path $jdk 'bin\javac.exe') @(
+        '--release', '21', '-encoding', 'UTF-8', '-cp', $cp, '-d', $classes,
+        (Join-Path $repo 'tests\windows-arm64\host-probes\AgslSmokeWindows.java')
+    )
+    $javaExe = Join-Path $jdk 'bin\java.exe'
+    $baseArgs = @(
+        '-Xcheck:jni',
+        '-Djava.awt.headless=true',
+        "--patch-module=java.base=$lib\java_base_patch",
+        "--patch-module=jdk.unsupported=$lib\jdk_unsupported_patch",
+        '--enable-native-access=ALL-UNNAMED',
+        '--add-opens=java.base/java.lang=ALL-UNNAMED',
+        '-cp', "$classes;$cp", 'AgslSmokeWindows', $bridge
+    )
+    $saved = @{
+        WINAPK_DISABLE_SKIA = [Environment]::GetEnvironmentVariable('WINAPK_DISABLE_SKIA')
+        WINAPK_SKIA_DLL = [Environment]::GetEnvironmentVariable('WINAPK_SKIA_DLL')
+        PATH = [Environment]::GetEnvironmentVariable('PATH')
+    }
+    try {
+        Set-TestEnv @{ WINAPK_DISABLE_SKIA = $null; WINAPK_SKIA_DLL = $skiaDll; PATH = "$(Split-Path $bridge);$(Split-Path $skiaDll);$($saved.PATH)" }
+        $posOut = (& $javaExe @baseArgs 2>&1) -join "`n"
+        $posCode = $LASTEXITCODE
+        $backendLine = if ($posOut -match 'BACKEND=([^\r\n]+)') { $Matches[1] } else { 'missing' }
+        Check 'T15.agsl.d3d12' ($posCode -eq 0 -and $posOut -match 'PASS ALL 11 T15 AGSL pixel contracts' -and
+            $posOut -notmatch 'WARNING in native method|FATAL ERROR in native method') "backend=$backendLine; all 11 AGSL/RenderEffect pixel contracts passed"
+        if ($posCode -ne 0) { Write-Host $posOut }
+
+        Set-TestEnv @{ WINAPK_DISABLE_SKIA = '1'; WINAPK_SKIA_DLL = $skiaDll; PATH = "$(Split-Path $bridge);$($saved.PATH)" }
+        $negOut = (& $javaExe @baseArgs 'unavailable' 2>&1) -join "`n"
+        Check 'T15.agsl.unavailable' ($LASTEXITCODE -eq 0 -and $negOut -match 'PASS T15 unavailable explicit failure without silent CPU fallback') 'disabled Skia fails with GRAPHICS_CAPABILITY_MISSING'
+    } finally {
+        Set-TestEnv $saved
+    }
+}
+
+switch ($Suite) { 'Host' { Test-Host } 'HostServices' { Test-HostServices } 'Audio' { Test-Audio } 'Agsl' { Test-Agsl } 'Java' { Test-Java } 'Native' { Test-Native } 'Bionic' { Test-Bionic } 'Modules' { Test-Modules } 'Memory' { Test-Bionic -Command memory } 'Io' { Test-Bionic -Command io } 'Faults' { Test-Bionic -Command faults } 'Format' { Test-Bionic -Command format } 'Libraries' { Test-Libraries } 'Jni' { Test-Jni } 'ApkJni' { Test-ApkJni } 'GraphicsHost' { Test-GraphicsHost } 'GraphicsJava' { Test-GraphicsJava } 'Surface' { Test-Surface } 'GraphicsGuest' { Test-GraphicsGuest } 'VulkanWsi' { Test-VulkanWsi } 'DexJob' { Test-DexJob } 'Package' { Test-Package } 'Stability' { & "$PSScriptRoot\test-stability.ps1"; if ($LASTEXITCODE) { $script:failed++ } } }
 if ($script:failed -gt 0) { Write-Host "$script:failed check(s) failed"; exit 1 }
 Write-Host 'all checks passed'
 exit 0

@@ -40,6 +40,9 @@ bool RegisterHostServices(JNIEnv* env);
 /// Registers the WASAPI NativeAudio backend (audio.cpp).
 bool RegisterAudio(JNIEnv* env);
 
+/// Registers the Direct3D 12 Skia Ganesh bridge NativeSkiaD3D12 (skia_d3d12.cpp).
+bool RegisterSkia(JNIEnv* env);
+
 }  // namespace winapk::bridge
 
 /// Registers every Windows host native on the JVM `env` belongs to: NativeLog, NativeCocoa

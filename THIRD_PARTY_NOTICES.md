@@ -28,7 +28,7 @@ Go, Java and native dependencies with their license texts.
 | Android's `org.apache.http.legacy` (through Mac.apk) | Apache-2.0 (AOSP `platform/external/apache-http`, Apache HttpComponents' NOTICE) | Apache HttpClient for apps, inside `android-framework.jar` |
 | ANGLE `801a1a5` | BSD-3-Clause (The ANGLE Project Authors); public DEPS retain their licenses | optional ARM64 host experiment; no released package yet; packaging must supply full linked-dependency notices |
 | OpenJDK and AOSP resources | see `doc/en-us/third-party.md` | private JVM and framework resources |
-| Skia | deferred to P8 | not built or shipped |
+| JetBrains Skiko 0.150.2 (`skiko-windows-arm64.dll` + `icudtl.dat`) | Apache-2.0 (JetBrains s.r.o.), BSD-3-Clause (Google LLC Skia), Unicode/ICU | AGSL `RuntimeShader` and `RenderEffect` GPU post-processing over Direct3D 12 (`T15`) |
 
 The Vulkan loader and GPU drivers are system components, never copied into the package.
 
