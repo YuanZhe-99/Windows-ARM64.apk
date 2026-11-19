@@ -112,7 +112,11 @@ function Test-Host {
     $vkHeadlessCi = [bool]$env:GITHUB_ACTIONS -and $r.graphics.vulkanLoader -eq 'instance-failed: -9' -and ($vkLimIds -contains 'GRAPHICS_CAPABILITY_MISSING')
     Check 'T01.vulkan.loader' (($r.graphics.vulkanLoader -eq 'available' -or $vkHeadlessCi) -and $r.graphics.vulkanLoaderArch -eq 'arm64') "loader=$($r.graphics.vulkanLoader) arch=$($r.graphics.vulkanLoaderArch)"
     $privateAngle = (Test-Path (Join-Path $out 'bin\angle\libEGL.dll')) -and (Test-Path (Join-Path $out 'bin\angle\libGLESv2.dll'))
-    Check 'T01.angle.inventory' ($r.graphics.angleFilesArm64 -eq $privateAngle -and @($r.graphics.angleBackends).Count -eq 0) 'inventory only; no claimed rendering'
+    $probedNames = @($r.graphics.angleBackends | ForEach-Object backend)
+    $angleProbeOk = if (-not $privateAngle) { $probedNames.Count -eq 0 }
+                    elseif ($env:GITHUB_ACTIONS) { $true }
+                    else { $probedNames -contains 'd3d11' }
+    Check 'T01.angle.inventory' ($r.graphics.angleFilesArm64 -eq $privateAngle -and $angleProbeOk) "files=$privateAngle backends=$($probedNames -join ',')"
     Check 'T01.guestVulkan.off' ($r.runtime.guestVulkan -eq $false) 'guest Vulkan is not reported as available'
     Check 'T01.runtime.inventory' ($r.runtime.frameworkCommit -match '^[0-9a-f]{7}$' -and @($r.runtime.guestNativeProfiles) -contains 'N0') "macapk=$($r.runtime.frameworkCommit) profiles=$(@($r.runtime.guestNativeProfiles) -join ',')"
 
@@ -948,6 +952,7 @@ function Test-GraphicsJava {
     $data = Join-Path $out 'test-data\graphics-java'
     foreach ($variant in @(
         @{ Name = 'vulkan'; Request = 'vulkan'; Backend = 'vulkan'; Unavailable = $false },
+        @{ Name = 'auto-hardware'; Request = 'auto'; Backend = 'd3d11'; Unavailable = $false },
         @{ Name = 'auto'; Request = 'auto'; Backend = 'd3d11'; Unavailable = $true },
         @{ Name = 'vulkan-unavailable'; Request = 'vulkan'; Backend = ''; Unavailable = $true }
     )) {
@@ -1002,7 +1007,7 @@ function Test-GraphicsJava {
             $nextFrame = if ($variant.Request -eq 'auto') { 4 } else { 3 }
             Check "T10.java.$($variant.Name)" ($first -and $second -and $extent -ne "$($first.Groups[1].Value)x$($first.Groups[2].Value)" -and
                 $code -eq 0 -and $text -match "Java GLES request=$($variant.Request) backend=$($variant.Backend) renderer=" -and
-                ($variant.Request -ne 'auto' -or ($restored -and $text -match 'Java GLES auto: backend=vulkan.*trying d3d11')) -and
+                ($variant.Request -ne 'auto' -or ($restored -and $text -match 'Java GLES auto: (?:no native vendor Vulkan ICD; preferring hardware d3d11|backend=vulkan.*trying d3d11)')) -and
                 $text -match 'Java GLES teardown complete' -and
                 $text -notmatch "GRAPHICS_RENDER_FAILED|WARNING in native method|FATAL ERROR in native method|T10\.java: PASS frame=$nextFrame\b") "APK frame readbacks, resized to $extent, one context, restore=$restored and normal teardown"
         } finally {

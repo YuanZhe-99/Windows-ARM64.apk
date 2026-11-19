@@ -48,6 +48,17 @@ foreach ($f in Get-ChildItem $native -File | Where-Object { $_.Name -in @('winap
 foreach ($req in 'winapk.exe','winapk-bridge.dll','winapk-probe.jar','z.dll','sqlite3.dll','capstone.dll','liblzma.dll') {
     if (-not (Test-Path -LiteralPath (Join-Path $stage "bin\$req"))) { throw "Missing required Release binary: $req" }
 }
+$angleDir = Join-Path $build 'bin\angle'
+if (Test-Path -LiteralPath (Join-Path $angleDir 'libEGL.dll')) {
+    foreach ($dll in 'libEGL.dll','libGLESv2.dll','d3dcompiler_47.dll') {
+        if (Test-Path -LiteralPath (Join-Path $angleDir $dll)) {
+            Copy-Staged $angleDir $dll "bin\angle\$dll"
+        }
+    }
+    if (Test-Path -LiteralPath (Join-Path $angleDir 'angle.json')) {
+        Copy-Staged $angleDir 'angle.json' 'bin\angle\angle.json'
+    }
+}
 $skikoDir = Join-Path $build 'bin\skia'
 if (Test-Path -LiteralPath (Join-Path $skikoDir 'skiko-windows-arm64.dll')) {
     Copy-Staged $skikoDir 'skiko-windows-arm64.dll' 'bin\skia\skiko-windows-arm64.dll'

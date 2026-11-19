@@ -93,3 +93,35 @@ ANGLE 与客体 Vulkan 仍保持独立 device/资源所有权。
 
 **重新讨论**：当可使用厂商 ARM64 Vulkan 硬件、缺少所需 Dozen 能力或出现未解释的驱动/桥错误时。
 Java/G3 保持独立，受影响的图形路径报告阻塞，不替换为其他后端。
+
+## ADR-0005：硬件感知的 `--graphics=auto` 策略与 D3D11/DXGI 多层 GPU 合成架构
+
+2026-11-18，GPU-P1..GPU-P6。状态：用户已批准。
+
+**决定。**
+1. **随包内置 ANGLE：** 每个 Windows 11 ARM64 构建、便携包与单用户 NSIS 安装包均内置私有原生
+   ARM64 ANGLE（`bin\angle\libEGL.dll`、`libGLESv2.dll`，以及供运行时 HLSL 编译使用的
+   `d3dcompiler_47.dll`），同时启用 Direct3D 11 与 Vulkan 双后端，并挂载原子落盘的
+   `EGL_ANDROID_blob_cache`。
+2. **后端选择（`--graphics`）：** 显式指定 `d3d11` 或 `vulkan` 时仅绑定对应硬件后端，失败绝不静默切换。
+   `auto` 采用硬件感知择优：当存在厂商原生 ARM64 Vulkan ICD（`vulkanTranslated == false`）时，
+   `auto` 优先尝试 `vulkan`，失败回退 `d3d11`；当系统 Vulkan 仅为转换层（`vulkanTranslated == true`，
+   如基于 Direct3D 12 的 Mesa Dozen）时，`auto` 优先使用原生硬件 `d3d11`（直接跑在厂商驱动上的
+   GLES 3.0，避免 GLES→Vulkan→D3D12 双重转换与 SM 6.2 计算管线限制）。同理，在转换层机器上，
+   `auto` 模式下的客体 `libvulkan.so` 按上游 Manifest 强依赖策略暴露，使同时支持 Vulkan 与 GLES
+   的双栈引擎（如 Flutter、`libmpv`）自动采用满血原生 D3D11 GLES 3.0，除非用户显式指定
+   `--graphics=vulkan` 或应用声明必需 `android.hardware.vulkan.*`。
+3. **多层呈现与 `--embed` 跨进程传输：** 触发 ADR-0002 的多呈现目标重审条件，每个 Activity 窗口在宿主
+   Direct3D 11 / DXGI 设备上按 SurfaceFlinger Z 序合成多层画面（`[底层 SurfaceView] → [保留预乘
+   Alpha 透明挖孔与 TextureView 纹理的主 UI 层] → [zOrderOnTop 顶层 SurfaceView]`）。独立窗口通过
+   DXGI Flip 交换链硬件直出；`--embed` 窗格模式通过 3 槽异步 `D3D11_USAGE_STAGING` 环形缓冲回读合成帧并写入既有
+   `Local\winapk-frame-<token>` 共享内存协议，彻底消除隐藏 `HWND` 上 `PrintWindow` 黑屏与同步
+   `glReadPixels` 停顿，同时保留零重启 `Reattach`。
+
+**原因。** 真实 Android GPU 应用普遍将 `SurfaceView` 与 `TextureView` 嵌在 `ViewGroup` 内部并与
+Java UI 叠加，跨渲染/IO 线程创建共享 `EGLContext`，且在 `--embed` 窗格模式下运行时 `HWND` 从不显示。
+此前单表面夹具虽可通过，但 UI 线程同步转发 GL、全不透明 `presentBitmap` 覆盖以及隐藏交换链上的
+`PrintWindow` 导致真实应用无法出图。
+
+**重新讨论：** 若未来 MyGo `ui` 原生开放跨进程 DXGI 共享 `HANDLE` 纹理合成接口，`--embed` 可在不改动
+`WinApkCompositor` 之上任何 Java 或客体渲染层的前提下，进一步升级为零 CPU Staging 拷贝的共享纹理直传。

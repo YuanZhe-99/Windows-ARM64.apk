@@ -42,7 +42,8 @@ add_executable(winapk
   ${_win}/src/host_probe.cpp
   ${_win}/src/jvm_probe.cpp
   ${_win}/src/vulkan_probe.cpp
-  # the UTF-8 active code page, for Unicode paths in JVM options (embedded by the linker)
+  # the UTF-8 active code page and brand icon (embedded by the linker)
+  ${_win}/winapk.rc
   ${_win}/winapk.manifest)
 target_include_directories(winapk PRIVATE "${JAVA_HOME}/include" "${JAVA_HOME}/include/win32")
 target_compile_definitions(winapk PRIVATE WINAPK_VERSION="${WINAPK_VERSION}" WINAPK_MACAPK_COMMIT="${WINAPK_MACAPK_COMMIT}" UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX)
@@ -60,6 +61,8 @@ add_library(winapk-bridge SHARED
   ${_win}/src/bridge/host_services.cpp
   ${_win}/src/bridge/audio.cpp
   ${_win}/src/bridge/skia_d3d12.cpp
+  ${_win}/src/bridge/angle_runtime.cpp
+  ${_win}/src/bridge/compositor.cpp
   ${_win}/src/bridge/graphics.cpp
   ${_win}/src/bridge/guest_graphics.cpp
   ${_win}/src/bridge/guest_vulkan.cpp
@@ -80,7 +83,7 @@ target_include_directories(winapk-bridge PRIVATE "${JAVA_HOME}/include" "${JAVA_
 target_include_directories(winapk-bridge PRIVATE "${CMAKE_CURRENT_LIST_DIR}/../../translator/include")
 target_compile_definitions(winapk-bridge PRIVATE UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX _CRT_SECURE_NO_WARNINGS)
 target_compile_options(winapk-bridge PRIVATE /W4 /EHsc -Wno-missing-field-initializers)
-target_link_libraries(winapk-bridge PRIVATE Vulkan::Headers unofficial::sqlite3::sqlite3 LibLZMA::LibLZMA user32 gdi32 shcore dwrite d3d12 dxgi ole32 shell32 psapi mmdevapi mfplat mfreadwrite mfuuid shlwapi capstone::capstone mincore)
+target_link_libraries(winapk-bridge PRIVATE Vulkan::Headers unofficial::sqlite3::sqlite3 LibLZMA::LibLZMA user32 gdi32 shcore dwrite d3d11 d3d12 dxgi ole32 shell32 psapi mmdevapi mfplat mfreadwrite mfuuid shlwapi capstone::capstone mincore)
 set(_angle_headers "${CMAKE_CURRENT_LIST_DIR}/../../../../build/windows-arm64/deps/angle/include")
 if(EXISTS "${_angle_headers}/EGL/eglext_angle.h")
   target_include_directories(winapk-bridge PRIVATE "${_angle_headers}")

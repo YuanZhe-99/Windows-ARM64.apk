@@ -78,45 +78,30 @@ does not test `auto` or packaging.
 
 ## Java GLES increment
 
-The Windows Java GLES experiment uses one full-client `GLSurfaceView`, a host-owned EGL context
-and explicitly bound GLES20 methods. It does not expose EGL handles to Java or guest code.
-`--graphics=off` is the default; the Java bitmap path does not load ANGLE. `vulkan` and `d3d11`
-request those backends explicitly; `auto` may try D3D11 after Vulkan initialization fails.
-This increment starts with viewport, scissor, clear, queries and direct RGBA8 readback. Other
-GLES methods remain unbound; GL10 calls and custom EGL configuration are refused. Mixed
-composition, app-owned EGL and automatic recovery from context loss are outside the profile.
-The current context is scoped to the Win32 render callback, never the Activity/UI caller's
-Java thread. Resize renews the drawable while retaining the context; minimized windows stop
-GLES draws and request a new frame on restore.
+The Windows Java GLES path uses private ARM64 ANGLE (`bin\angle\libEGL.dll`, `libGLESv2.dll`,
+`d3dcompiler_47.dll`) with an atomic on-disk `EGL_ANDROID_blob_cache` (`angle_runtime.cpp`) and the
+Direct3D 11 multi-layer hardware compositor (`compositor.cpp`, ADR-0005). `--graphics=off` is the
+CLI default; `vulkan` and `d3d11` request those backends explicitly without fallback; `auto` prefers
+`vulkan` when a native GPU-vendor Vulkan ICD is present and prefers hardware `d3d11` (GLES 3.0) when
+host Vulkan is translated (such as Mesa Dozen).
 
-Build `Angle` before `Host` or `All` to provide the pinned headers. ANGLE DLLs still load only
-from the bridge's private `angle` directory when a `GLSurfaceView` uses the requested backend.
-`test.ps1 -Suite GraphicsJava` runs the real `hello-gles.apk` under CheckJNI: explicit Vulkan
-through Dozen, `auto` falling back to D3D11 when the child cannot see Vulkan, and explicit
-Vulkan refusal with the same ICD restriction. The APK asserts two different RGBA colors with
-a positioned direct buffer, read-only and off-context refusal, and renderer callbacks.
-The suite passed 4 checks on the same Adreno hardware. The client changed from `360x720`
-to `424x752`; the D3D11 case also minimized and restored at `424x752`, retaining the same
-context. The explicit unavailable case exited 1 before any draw. `doctor` only inventories
-ARM64 DLL files; its `angleBackends` list stays empty because it does not render.
-Shaders, textures, blending and FBOs are not yet verified through Java GLES; the host probe's
-shader test does not fill that gap.
+Build `Angle` before `Host` or `All` to stage the ARM64 DLLs (`stage-app-resources.ps1` and
+`package.ps1` bundle them automatically). `winapk doctor` probes `bin\angle` headlessly via 1x1
+Pbuffers and reports `angleBackends` with each backend's actual GLES ceiling (`d3d11` ES 3.0,
+`vulkan` ES 2.0 on Dozen). `test.ps1 -Suite GraphicsJava` runs the real `hello-gles.apk` under
+CheckJNI across 5 checks: explicit Vulkan through Dozen, `auto` selecting hardware D3D11 on a
+translated-Vulkan host, `auto` falling back to D3D11 when Vulkan is hidden, and explicit Vulkan
+refusal.
 
-## Managed Android native window
+## Managed Android native window and multi-layer compositing
 
-The restricted `libandroid.so` provider admits only `ANativeWindow_fromSurface`, acquire,
-release and width/height. It matches the actual `Surface` owned by the attached plain
-`SurfaceView`'s holder, not a Java-supplied address. An opaque guest token owns references to that
-attachment. A resize updates its client-pixel extent. Replacing the
-content or destroying the window retires the attachment, even while guest references remain.
-Size queries on stale or unknown tokens return a negative error; acquire/release never
-dereference such tokens. Releasing the Java `Surface` refuses new conversions but does not
-cancel native references already acquired to a still-live attachment.
-
-The endpoint does not give guest code an `HWND` or driver function pointer. It does not implement Android buffer
-queues, `ANativeWindow_lock`, or a general `SurfaceHolder.surfaceDestroyed` dispatcher.
-The bridge publishes a zero client extent on minimize, but minimized-size queries are not
-part of this fixture.
+`surface.cpp` (`libandroid.so`) provides `ANativeWindow_fromSurface`, `acquire`, `release`,
+`getWidth`, `getHeight`, `getFormat`, `setBuffersGeometry`, `lock` and `unlockAndPost` across both
+root `SurfaceView`s and child `SurfaceView`s nested inside a `ViewGroup`. Acquiring a `SurfaceView`
+notifies `Surface.macapkNoteNativeWindowConsumer` so `SurfaceView.draw` punches a transparent hole
+in `ViewCanvasDriver`, and `compositor.cpp` composites `[below-window SurfaceViews] → [UI layer with
+straight-alpha cutouts] → [zOrderOnTop SurfaceViews and WindowManager overlays]` on hardware D3D11
+with a 3-slot asynchronous `D3D11_USAGE_STAGING` readback ring for `--embed` panes.
 
 `test.ps1 -Suite Surface`: **4 PASS, 3.48 s** on Windows ARM64. The normally linked NDK API-30
 fixture declares `DT_NEEDED libandroid.so`. The same reference tracks `360x720` to `424x752`;

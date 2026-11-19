@@ -1,27 +1,44 @@
+// surface.h -- multi-surface Android ANativeWindow registry and CPU lock/post bridge (GPU-P1).
 #pragma once
 
+#include "compositor.h"
 #include "../../../../guest/loader/elf_loader.h"
 #include <jni.h>
 #include <windows.h>
 
 namespace winapk::bridge {
 
-/// Publishes the current window and its actual holder Surface; a different pair retires the old one.
-/// Notes: only the window thread publishes; Java reference is owned by its View until retired.
-void PublishSurface(HWND window, jobject surface, jfieldID released, int width, int height);
-/// Updates an attached window's client size without changing the attachment identity.
+/// Publishes a live holder `Surface` on `window`.
+/// Inputs: `replaceRoot` retires the previous root attachment on `window` when `SetContentView`
+///         replaces a root `SurfaceView`; `false` registers an additional child `SurfaceView`
+///         inside a `ViewGroup` without retiring sibling surfaces.
+void PublishSurface(HWND window, jobject surface, jfieldID released, int width, int height, bool replaceRoot = true);
+
+/// Updates client dimensions of root/default-sized surfaces attached to `window`.
 void ResizeSurface(HWND window, int width, int height);
-/// Removes the attachment before its JNI reference or window disappears. Null retires any window.
+
+/// Updates an individual published `Surface`'s pixel bounds and Z-order placement.
+void UpdateSurfaceBounds(HWND window, jobject surface, const SurfaceLayerPlacement& placement);
+
+/// Retires one specific `Surface` identity when its `View` renderer is released.
+void RetireSurfaceObject(JNIEnv* env, jobject surface);
+
+/// Removes all attachments on `window` before its JNI references or HWND disappear. Null retires all.
 void RetireSurface(HWND window);
-/// Takes a snapshot of a live guest token on the window thread, without exposing its HWND to the guest.
-bool ResolveSurface(void* token, HWND& window, int& width, int& height);
-/// Retains a live guest token for a graphics surface until that surface is destroyed.
+
+/// Takes a snapshot of a live guest `ANativeWindow*` token without exposing `HWND` to guest code.
+bool ResolveSurface(void* token, HWND& window, int& width, int& height, SurfaceLayerPlacement* placementOut = nullptr);
+
+/// Retains a live guest token for an EGL/Vulkan surface until that surface is destroyed.
 bool RetainSurface(void* token);
+
 /// Releases the graphics surface's lease on a native window token.
 void ReleaseSurface(void* token);
-/// Reports whether a host window/Surface attachment is currently published for guest WSI.
+
+/// Reports whether the surface bridge is active for guest WSI.
 bool SurfaceBridgeReady();
-/// Lists the five fixed Android native window exports in the restricted logical library.
+
+/// Lists the Android native window exports in the logical `libandroid.so` library.
 guest::BuiltinLibrary NativeWindowLibrary();
 
 } // namespace winapk::bridge

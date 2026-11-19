@@ -228,6 +228,26 @@ void PublishEmbedArgb(const uint32_t* argb, int w, int h) {
     CommitSlot(hdr, slot, w, h);
 }
 
+void PublishEmbedRgbaRows(const uint8_t* topDownRgba, size_t rowPitch, int w, int h) {
+    if (!IsEmbedded() || !topDownRgba || w <= 0 || h <= 0) return;
+    const size_t dstStride = static_cast<size_t>(w) * 4;
+    if (rowPitch < dstStride) return;
+    std::lock_guard<std::mutex> lock(g_frameMu);
+    EmbedFrameHeader* hdr = nullptr;
+    LONG slot = 0;
+    uint8_t* dst = AcquireSlot(w, h, hdr, slot);
+    if (!dst) return;
+    if (rowPitch == dstStride) {
+        std::memcpy(dst, topDownRgba, dstStride * static_cast<size_t>(h));
+    } else {
+        for (int y = 0; y < h; ++y) {
+            std::memcpy(dst + static_cast<size_t>(y) * dstStride,
+                        topDownRgba + static_cast<size_t>(y) * rowPitch, dstStride);
+        }
+    }
+    CommitSlot(hdr, slot, w, h);
+}
+
 void PublishEmbedGlRgba(const uint8_t* bottomUpRgba, int w, int h) {
     if (!IsEmbedded() || !bottomUpRgba || w <= 0 || h <= 0) return;
     std::lock_guard<std::mutex> lock(g_frameMu);

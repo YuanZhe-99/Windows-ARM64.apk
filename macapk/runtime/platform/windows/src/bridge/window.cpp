@@ -19,6 +19,7 @@
 // (1/96 inch); a point is a dp because the runtime starts with density = 160 × the window's
 // DPI scale.
 #include "bridge.h"
+#include "compositor.h"
 #include "embed.h"
 #include "graphics.h"
 #include "guest_graphics.h"
@@ -414,6 +415,71 @@ void TickGraphics(Window* w, View* v, JNIEnv* env, jclass cls) {
         PostMessageW(w->hwnd, WM_CLOSE, 0, 0);
 }
 
+/// Syncs sibling child `SurfaceView`s nested inside a `ViewGroup` (when `w->content` is a
+/// `ViewCanvasDriver`) so their `SurfaceHolder.Callback`s fire and `ANativeWindow_fromSurface`
+/// resolves their exact client bounds and Z-order.
+void SyncChildSurfaceViews(Window* w, JNIEnv* env, jmethodID changed) {
+    if (!w || w->minimized || !w->content) return;
+    static jclass svCls = [&] {
+        jclass c = env->FindClass("android/view/SurfaceView");
+        jclass g = c ? static_cast<jclass>(env->NewGlobalRef(c)) : nullptr;
+        if (c) env->DeleteLocalRef(c);
+        return g;
+    }();
+    if (!svCls) { env->ExceptionClear(); return; }
+    static jmethodID isShownMid = env->GetMethodID(svCls, "isShown", "()Z");
+    static jmethodID getWMid = env->GetMethodID(svCls, "getWidth", "()I");
+    static jmethodID getHMid = env->GetMethodID(svCls, "getHeight", "()I");
+    static jmethodID winOrigMid = env->GetMethodID(svCls, "macapkWindowOrigin", "([I)V");
+    static jmethodID zTopMid = env->GetMethodID(svCls, "macapkIsZOrderOnTop", "()Z");
+    if (!isShownMid || !getWMid || !getHMid || !winOrigMid || !zTopMid) {
+        env->ExceptionClear();
+        return;
+    }
+
+    std::vector<View*> snapshot;
+    {
+        std::lock_guard<std::mutex> lock(g_viewsMu);
+        snapshot = g_views;
+    }
+    jintArray origArr = nullptr;
+    for (View* sub : snapshot) {
+        if (!sub || sub == w->content || !sub->renderer || !sub->holderSurface) continue;
+        if (!env->IsInstanceOf(sub->renderer, svCls)) continue;
+
+        const jboolean shown = env->CallBooleanMethod(sub->renderer, isShownMid);
+        if (env->ExceptionCheck()) { CheckCallback(env, "SurfaceView.isShown"); continue; }
+        const jint sw = shown ? env->CallIntMethod(sub->renderer, getWMid) : 0;
+        const jint sh = shown ? env->CallIntMethod(sub->renderer, getHMid) : 0;
+        if (env->ExceptionCheck()) { CheckCallback(env, "SurfaceView.getSize"); continue; }
+
+        if (!shown || sw <= 0 || sh <= 0) {
+            UpdateSurfaceBounds(w->hwnd, sub->holderSurface, {0, 0, 0, 0, false, false});
+            continue;
+        }
+        if (!origArr) origArr = env->NewIntArray(2);
+        jint xy[2]{0, 0};
+        if (origArr) {
+            env->CallVoidMethod(sub->renderer, winOrigMid, origArr);
+            if (!env->ExceptionCheck()) env->GetIntArrayRegion(origArr, 0, 2, xy);
+            else env->ExceptionClear();
+        }
+        const bool zTop = env->CallBooleanMethod(sub->renderer, zTopMid) == JNI_TRUE;
+        env->ExceptionClear();
+
+        PublishSurface(w->hwnd, sub->holderSurface, sub->surfaceReleased, sw, sh, false);
+        UpdateSurfaceBounds(w->hwnd, sub->holderSurface, {xy[0], xy[1], sw, sh, true, zTop});
+
+        if (changed && (sw != sub->sizedW || sh != sub->sizedH)) {
+            sub->sizedW = sw;
+            sub->sizedH = sh;
+            env->CallVoidMethod(sub->renderer, changed, sw, sh);
+            CheckCallback(env, "child SurfaceView.macapkSurfaceChanged");
+        }
+    }
+    if (origArr) env->DeleteLocalRef(origArr);
+}
+
 /// Runs one frame of `w`'s view: reports a new size, then asks the renderer to draw.
 /// Notes: a minimised window has no client area; it keeps its last size and draws at 2 Hz.
 void Tick(Window* w) {
@@ -464,11 +530,12 @@ void Tick(Window* w) {
     if (v->sizedW <= 0) return;  // never sized: nothing to draw into yet
     env->CallVoidMethod(v->renderer, draw);
     CheckCallback(env, "macapkDrawFrame");
+    SyncChildSurfaceViews(w, env, changed);
 }
 
 /// Paints the view's last frame, scaled to the client area.
-/// Notes: the frame is opaque ARGB; its bytes are BGRA in memory, the layout of a 32-bit
-/// top-down DIB, so it is drawn without conversion. Alpha is not composited.
+/// Notes: when multi-layer D3D11 compositing is active on `w->hwnd`, `CompositorPresentWindow`
+/// presents the hardware swapchain directly; otherwise 32-bit top-down GDI DIB blits the UI bitmap.
 void Paint(Window* w) {
     PAINTSTRUCT ps;
     HDC dc = BeginPaint(w->hwnd, &ps);
@@ -479,6 +546,10 @@ void Paint(Window* w) {
     }
     RECT rc;
     GetClientRect(w->hwnd, &rc);
+    if (CompositorPresentWindow(w->hwnd, rc.right, rc.bottom)) {
+        EndPaint(w->hwnd, &ps);
+        return;
+    }
     View* v = w->content;
     bool drawn = false;
     if (v) {
@@ -635,6 +706,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             RetireSurface(hwnd);
             RetireGuestGraphics(hwnd, true);
             RetireGuestVulkan(hwnd, true);
+            CompositorDestroyWindow(hwnd);
             g_windows.erase(hwnd);
             delete w;
             PostQuitMessage(0);
@@ -692,6 +764,11 @@ jboolean JNICALL Init(JNIEnv* env, jclass) {
     WNDCLASSEXW wc{sizeof wc};
     wc.lpfnWndProc = WindowProc;
     wc.hInstance = inst;
+    wc.hIcon = static_cast<HICON>(LoadImageW(inst, MAKEINTRESOURCEW(1), IMAGE_ICON,
+        GetSystemMetrics(SM_CXICON), GetSystemMetrics(SM_CYICON), LR_SHARED));
+    wc.hIconSm = static_cast<HICON>(LoadImageW(inst, MAKEINTRESOURCEW(1), IMAGE_ICON,
+        GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON), LR_SHARED));
+    if (!wc.hIcon) wc.hIcon = LoadIconW(nullptr, IDI_APPLICATION);
     wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
     wc.lpszClassName = L"WinApkAppWindow";
     wc.style = CS_HREDRAW | CS_VREDRAW;
@@ -832,6 +909,7 @@ void JNICALL SetContentView(JNIEnv*, jclass, jlong window, jlong view) {
                 RetireSurface(w->hwnd);
                 RetireGuestGraphics(w->hwnd);
                 RetireGuestVulkan(w->hwnd);
+                CompositorClearSurfaceLayers(w->hwnd);
             }
             w->content = reinterpret_cast<View*>(view);
             g_current = w->content;
@@ -939,11 +1017,14 @@ void JNICALL ReleaseRenderer(JNIEnv*, jclass, jlong view) {
     if (!v) return;
     RunOnUi("releaseRenderer", [&] {
         if (v->holderSurface) {
+            bool wasRoot = false;
             for (auto& [hwnd, w] : g_windows) if (w->content == v) {
+                wasRoot = true;
                 RetireSurface(hwnd);
                 RetireGuestGraphics(hwnd);
                 RetireGuestVulkan(hwnd);
             }
+            if (!wasRoot) RetireSurfaceObject(Env(), v->holderSurface);
             Env()->DeleteGlobalRef(v->holderSurface);
             v->holderSurface = nullptr;
             v->surfaceReleased = nullptr;
@@ -963,25 +1044,128 @@ void JNICALL RegisterTouchDispatcher(JNIEnv* env, jclass, jobject dispatcher) {
     if (!ran && ref) env->DeleteGlobalRef(ref);
 }
 
-/// Copies a frame (ARGB, top-down, `w` × `h`) to the current view and repaints it.
+/// Copies a frame (ARGB, top-down, `w` × `h`) to the current view and composites/repaints it.
 /// Notes: `argb` is read only during the call (upstream's contract).
 void JNICALL PresentBitmap(JNIEnv* env, jclass, jintArray argb, jint w, jint h) {
     View* v = g_current;
     if (!v || !argb || w <= 0 || h <= 0 || env->GetArrayLength(argb) < static_cast<jsize>(w) * h) return;
+    HWND targetHwnd = nullptr;
+    for (auto& [hwnd, win] : g_windows) if (win->content == v) { targetHwnd = hwnd; break; }
     {
         std::lock_guard<std::mutex> lock(v->mu);
         v->pixels.resize(static_cast<size_t>(w) * h);
         env->GetIntArrayRegion(argb, 0, w * h, reinterpret_cast<jint*>(v->pixels.data()));
         v->frameW = w;
         v->frameH = h;
+        const bool composited = targetHwnd && CompositorSubmitUiArgb(targetHwnd, v->pixels.data(), w, h);
         if (IsEmbedded()) {
-            SendEmbedEvent("backend java2d");
-            PublishEmbedArgb(v->pixels.data(), w, h);
+            if (!GuestGraphicsActive() && !GuestVulkanOwnsWindow()) SendEmbedEvent("backend java2d");
+            if (!composited) PublishEmbedArgb(v->pixels.data(), w, h);
         }
     }
-    // InvalidateRect is safe from any thread.
-    for (auto& [hwnd, win] : g_windows) if (win->content == v) InvalidateRect(hwnd, nullptr, FALSE);
+    if (targetHwnd) InvalidateRect(targetHwnd, nullptr, FALSE);
 }
+
+/// Dirty-rect UI frame present (`NativeCocoa.presentFrame`), forwarding changed sub-rectangles
+/// directly to `WinApkCompositor` when dimensions match.
+jint JNICALL PresentFrame(JNIEnv* env, jclass, jintArray argb, jint w, jint h,
+                          jint left, jint top, jint right, jint bottom, jint flags) {
+    View* v = g_current;
+    if (!v || !argb || w <= 0 || h <= 0 || env->GetArrayLength(argb) < static_cast<jsize>(w) * h) return 0;
+    HWND targetHwnd = nullptr;
+    for (auto& [hwnd, win] : g_windows) if (win->content == v) { targetHwnd = hwnd; break; }
+
+    const bool forceFull = (flags & 1) != 0;
+    {
+        std::lock_guard<std::mutex> lock(v->mu);
+        const bool sameSize = v->frameW == w && v->frameH == h && v->pixels.size() == static_cast<size_t>(w) * h;
+        v->pixels.resize(static_cast<size_t>(w) * h);
+        env->GetIntArrayRegion(argb, 0, w * h, reinterpret_cast<jint*>(v->pixels.data()));
+        v->frameW = w;
+        v->frameH = h;
+
+        const int dx = (!forceFull && sameSize) ? std::max<int>(0, left) : 0;
+        const int dy = (!forceFull && sameSize) ? std::max<int>(0, top) : 0;
+        const int dw = (!forceFull && sameSize && right > dx) ? std::min<int>(w, right) - dx : 0;
+        const int dh = (!forceFull && sameSize && bottom > dy) ? std::min<int>(h, bottom) - dy : 0;
+        const bool composited = targetHwnd && CompositorSubmitUiArgb(targetHwnd, v->pixels.data(), w, h, dx, dy, dw, dh);
+        if (IsEmbedded()) {
+            if (!GuestGraphicsActive() && !GuestVulkanOwnsWindow()) SendEmbedEvent("backend java2d");
+            if (!composited) PublishEmbedArgb(v->pixels.data(), w, h);
+        }
+    }
+    if (targetHwnd) InvalidateRect(targetHwnd, nullptr, FALSE);
+    return 1; // PRESENT_PUBLISHED
+}
+
+/// Per-`SurfaceView` `lockCanvas` layer present (`NativeCocoa.presentSurfaceBitmap`).
+void JNICALL PresentSurfaceBitmap(JNIEnv* env, jclass, jint key, jintArray argb, jint w, jint h) {
+    if (key <= 0 || !argb || w <= 0 || h <= 0 || env->GetArrayLength(argb) < static_cast<jsize>(w) * h) return;
+    HWND targetHwnd = nullptr;
+    View* cur = g_current;
+    for (auto& [hwnd, win] : g_windows) if (!cur || win->content == cur) { targetHwnd = hwnd; break; }
+    if (!targetHwnd) return;
+
+    SurfaceLayerPlacement placement{0, 0, w, h, true, false};
+    if (jclass svCls = env->FindClass("android/view/SurfaceView")) {
+        jmethodID rectMid = env->GetStaticMethodID(svCls, "macapkSurfaceRectPacked", "(I)J");
+        jmethodID topMid = env->GetStaticMethodID(svCls, "macapkSurfaceZOrderOnTop", "(I)Z");
+        if (rectMid && topMid) {
+            const jlong packed = env->CallStaticLongMethod(svCls, rectMid, key);
+            const jboolean onTop = env->CallStaticBooleanMethod(svCls, topMid, key);
+            env->ExceptionClear();
+            if (packed == 0) {
+                env->DeleteLocalRef(svCls);
+                CompositorUpdateSurfacePlacement(targetHwnd, key, {}, true);
+                return;
+            } else if (packed == -1) {
+                placement.visible = false;
+            } else {
+                placement.x = static_cast<int16_t>((static_cast<uint64_t>(packed) >> 48) & 0xffffu);
+                placement.y = static_cast<int16_t>((static_cast<uint64_t>(packed) >> 32) & 0xffffu);
+                placement.width = static_cast<int>((static_cast<uint64_t>(packed) >> 16) & 0xffffu);
+                placement.height = static_cast<int>(static_cast<uint64_t>(packed) & 0xffffu);
+                placement.visible = placement.width > 0 && placement.height > 0;
+            }
+            placement.zOrderOnTop = onTop == JNI_TRUE;
+        } else {
+            env->ExceptionClear();
+        }
+        env->DeleteLocalRef(svCls);
+    }
+
+    std::vector<uint32_t> pixels(static_cast<size_t>(w) * static_cast<size_t>(h));
+    env->GetIntArrayRegion(argb, 0, w * h, reinterpret_cast<jint*>(pixels.data()));
+    CompositorSubmitSurfaceBytes(targetHwnd, key, pixels.data(), static_cast<size_t>(w) * 4,
+                                 w, h, LayerPixels::Bgra8, LayerAlpha::Straight, false, placement);
+    InvalidateRect(targetHwnd, nullptr, FALSE);
+}
+
+constexpr int kOverlayLayerKey = 0x7fffffff;
+
+/// WindowManager Dialog/Popup overlay composited above GL surfaces (`NativeCocoa.presentOverlayBitmap`).
+void JNICALL PresentOverlayBitmap(JNIEnv* env, jclass, jintArray argb, jint w, jint h) {
+    if (!argb || w <= 0 || h <= 0 || env->GetArrayLength(argb) < static_cast<jsize>(w) * h) return;
+    HWND targetHwnd = nullptr;
+    for (auto& [hwnd, win] : g_windows) { (void)win; targetHwnd = hwnd; break; }
+    if (!targetHwnd) return;
+    std::vector<uint32_t> pixels(static_cast<size_t>(w) * static_cast<size_t>(h));
+    env->GetIntArrayRegion(argb, 0, w * h, reinterpret_cast<jint*>(pixels.data()));
+    SurfaceLayerPlacement placement{0, 0, w, h, true, true};
+    CompositorSubmitSurfaceBytes(targetHwnd, kOverlayLayerKey, pixels.data(), static_cast<size_t>(w) * 4,
+                                 w, h, LayerPixels::Bgra8, LayerAlpha::Straight, false, placement);
+    InvalidateRect(targetHwnd, nullptr, FALSE);
+}
+
+void JNICALL ClearOverlayBitmap(JNIEnv*, jclass) {
+    for (auto& [hwnd, win] : g_windows) {
+        (void)win;
+        CompositorUpdateSurfacePlacement(hwnd, kOverlayLayerKey, {}, true);
+        InvalidateRect(hwnd, nullptr, FALSE);
+    }
+}
+
+void JNICALL SetTopActivityConfigChanges(JNIEnv*, jclass, jint) {}
 
 /// Runs the UI thread's message loop until the app's window closes.
 /// Side effects: from its start, RunOnUi's waits are limited; after it ends, RunOnUi fails at
@@ -1081,6 +1265,7 @@ const JNINativeMethod kMethods[] = {
     M("displayHz", "()I", DisplayHz),
     M("createWindow", "(Ljava/lang/String;)J", CreateWindowNative),
     M("createMetalSurfaceView", "(II)J", CreateSurfaceView),
+    M("createMetalSurfaceViewForGl", "(II)J", CreateSurfaceView),
     M("setContentView", "(JJ)V", SetContentView),
     M("showWindow", "(J)V", ShowWindowNative),
     M("closeWindow", "(J)V", CloseWindowNative),
@@ -1090,6 +1275,11 @@ const JNINativeMethod kMethods[] = {
     M("releaseRenderer", "(J)V", ReleaseRenderer),
     M("registerTouchDispatcher", "(Lcom/macapk/loader/TouchDispatcher;)V", RegisterTouchDispatcher),
     M("presentBitmap", "([III)V", PresentBitmap),
+    M("presentFrame", "([IIIIIIII)I", PresentFrame),
+    M("presentSurfaceBitmap", "(I[III)V", PresentSurfaceBitmap),
+    M("presentOverlayBitmap", "([III)V", PresentOverlayBitmap),
+    M("clearOverlayBitmap", "()V", ClearOverlayBitmap),
+    M("setTopActivityConfigChanges", "(I)V", SetTopActivityConfigChanges),
     M("runLoop", "()V", RunLoop),
     M("exitProcess", "(ILjava/lang/String;)V", ExitProcessNative),
     M("applyRequestedOrientation", "(Z)V", ApplyRequestedOrientation),

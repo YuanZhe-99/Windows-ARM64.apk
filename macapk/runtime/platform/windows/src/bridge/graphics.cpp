@@ -1,6 +1,8 @@
 // Windows host EGL and the bounded Java GLES20 JNI surface.
 #include "graphics.h"
+#include "angle_runtime.h"
 #include "bridge.h"
+#include "compositor.h"
 #include "embed.h"
 #include "guest_graphics.h"
 
@@ -211,10 +213,18 @@ JavaGraphics::~JavaGraphics() = default;
 std::shared_ptr<JavaGraphics> JavaGraphics::Open(HWND window, const std::string& request, std::string& error) {
     const std::filesystem::path directory = PrivateAngleDirectory();
     const bool automatic = request == "auto";
-    const int count = automatic ? 2 : 1;
-    for (int i = 0; i < count; ++i) {
-        const bool vulkan = request == "vulkan" || (automatic && i == 0);
-        const char* backend = vulkan ? "vulkan" : "d3d11";
+    bool nativeVk = false;
+    const auto candidates = SelectAngleBackends(request, &nativeVk);
+    if (candidates.empty()) {
+        error = "unsupported graphics request " + request;
+        return {};
+    }
+    if (automatic && !nativeVk) {
+        LogLine("[winapk] Java GLES auto: no native vendor Vulkan ICD; preferring hardware d3d11");
+    }
+    for (size_t i = 0; i < candidates.size(); ++i) {
+        const char* backend = candidates[i];
+        const bool vulkan = std::strcmp(backend, "vulkan") == 0;
         auto state = std::make_unique<State>();
         state->window = window;
         if (!state->Load(directory, error)) return {};
@@ -229,6 +239,10 @@ std::shared_ptr<JavaGraphics> JavaGraphics::Open(HWND window, const std::string&
         if (getDisplay) state->display = getDisplay(EGL_PLATFORM_ANGLE_ANGLE, EGL_DEFAULT_DISPLAY, displayArgs);
         EGLint major = 0, minor = 0, configs = 0;
         state->initialized = state->display != EGL_NO_DISPLAY && state->eglInitialize(state->display, &major, &minor);
+        if (state->initialized) {
+            InstallAngleBlobCache(state->display,
+                reinterpret_cast<void* (*)(const char*)>(state->eglGetProcAddress), backend);
+        }
         if (state->initialized && state->eglBindAPI(EGL_OPENGL_ES_API) &&
             state->eglChooseConfig(state->display, configArgs, &state->config, 1, &configs) && configs > 0) {
             state->context = state->eglCreateContext(state->display, state->config, EGL_NO_CONTEXT, contextArgs);
@@ -253,7 +267,9 @@ std::shared_ptr<JavaGraphics> JavaGraphics::Open(HWND window, const std::string&
             } else error = "eglCreateContext error=" + std::to_string(state->eglGetError());
         } else error = "EGL initialization/configuration error=" + std::to_string(state->eglGetError());
         error = std::string("backend=") + backend + " " + error;
-        if (automatic && i == 0) LogLine("[winapk] Java GLES auto: " + error + "; trying d3d11");
+        if (automatic && i + 1 < candidates.size()) {
+            LogLine("[winapk] Java GLES auto: " + error + "; trying " + candidates[i + 1]);
+        }
     }
     if (!automatic) error += "; no fallback";
     return {};
@@ -288,7 +304,11 @@ bool JavaGraphics::End(bool present, std::string& error) {
     if (present && IsEmbedded() && s.width > 0 && s.height > 0) {
         std::vector<uint8_t> pixels(static_cast<size_t>(s.width) * static_cast<size_t>(s.height) * 4);
         s.gl.glReadPixels(0, 0, s.width, s.height, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
-        PublishEmbedGlRgba(pixels.data(), s.width, s.height);
+        const SurfaceLayerPlacement full{0, 0, s.width, s.height, true, false};
+        if (!CompositorSubmitSurfaceBytes(s.window, -1, pixels.data(), static_cast<size_t>(s.width) * 4,
+                                          s.width, s.height, LayerPixels::Rgba8, LayerAlpha::Opaque, true, full)) {
+            PublishEmbedGlRgba(pixels.data(), s.width, s.height);
+        }
     }
     const bool swapped = !present || s.eglSwapBuffers(s.display, s.surface);
     if (!swapped) error = "eglSwapBuffers error=" + std::to_string(s.eglGetError());

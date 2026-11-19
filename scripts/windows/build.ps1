@@ -556,6 +556,8 @@ function Build-Angle {
     )) {
         $path = Join-Path $deps $source.Name
         if (-not (Test-Path $path)) { Invoke-Checked 'git' @('clone', '--depth', '1', $source.Url, $path) }
+        & git -C $path remote set-url origin $source.Url 2>$null
+        if ($LASTEXITCODE -ne 0) { Invoke-Checked 'git' @('-C', $path, 'remote', 'add', 'origin', $source.Url) }
         $head = & git -C $path rev-parse HEAD
         if ($LASTEXITCODE -ne 0) { throw "Not a source checkout: $path" }
         $changes = & git -C $path status --porcelain --untracked-files=no
@@ -594,11 +596,18 @@ solutions = [
     $env:CIPD_CACHE_DIR = Join-Path $deps 'cache\cipd'
     $env:VPYTHON_VIRTUALENV_ROOT = Join-Path $deps 'cache\vpython'
     $env:PATH = "$depot;$env:PATH"
-    Invoke-Checked (Join-Path $depot 'bootstrap\win_tools.bat') @()
-    Push-Location $deps
-    try {
-        Invoke-Checked (Join-Path $depot 'gclient.bat') @('sync', '--no-history', '--nohooks', '--revision', "angle@$($record.commit)", '-j4')
-    } finally { Pop-Location }
+    $syncStamp = Join-Path $deps '.winapk-angle-synced'
+    $alreadySynced = (Test-Path $syncStamp) -and ((Get-Content $syncStamp -Raw).Trim() -eq $record.commit) -and
+        (Test-Path (Join-Path $angle 'buildtools\win\gn.exe')) -and
+        (Test-Path (Join-Path $angle 'third_party\llvm-build\Release+Asserts\bin\clang-cl.exe'))
+    if (-not $alreadySynced) {
+        Invoke-Checked (Join-Path $depot 'bootstrap\win_tools.bat') @()
+        Push-Location $deps
+        try {
+            Invoke-Checked (Join-Path $depot 'gclient.bat') @('sync', '--no-history', '--nohooks', '--revision', "angle@$($record.commit)", '-j4')
+        } finally { Pop-Location }
+        $record.commit | Set-Content $syncStamp -Encoding utf8NoBOM
+    }
     foreach ($relative in $record.patches) {
         $patch = Join-Path $repo $relative
         & git -C (Join-Path $angle 'build') apply --reverse --check --ignore-space-change $patch 2> $null
@@ -636,10 +645,11 @@ solutions = [
         "windows_sdk_path = `"$($sdk.Replace('\', '/'))`"`nwindows_sdk_version = `"$($lock.host.windowsSdk.version)`"`n" +
         "wdk_path = `"$($sdk.Replace('\', '/'))`"`n"
     $gnArgs | Set-Content (Join-Path $native 'args.gn') -Encoding utf8NoBOM
+    $jobs = [Math]::Max(2, [Math]::Min(8, [Environment]::ProcessorCount))
     Push-Location $angle
     try {
         Invoke-InDevShell $vs @((Join-Path $angle 'buildtools\win\gn.exe'), 'gen', $native, '--fail-on-unused-args')
-        Invoke-InDevShell $vs @((Join-Path $vs.NinjaDir 'ninja.exe'), '-C', $native, '-j4', 'libEGL', 'libGLESv2')
+        Invoke-InDevShell $vs @((Join-Path $vs.NinjaDir 'ninja.exe'), '-C', $native, "-j$jobs", 'libEGL', 'libGLESv2')
     } finally { Pop-Location }
     $dest = Join-Path $out 'bin\angle'
     New-Item -ItemType Directory -Force $dest | Out-Null
@@ -650,6 +660,12 @@ solutions = [
         Copy-Item $dll (Join-Path $dest $name) -Force
         $hashes[$name] = (Get-FileHash $dll -Algorithm SHA256).Hash.ToLower()
     }
+    $d3dc = Join-Path $native 'd3dcompiler_47.dll'
+    if (-not (Test-Path $d3dc)) { $d3dc = Join-Path $sdk 'Redist\D3D\arm64\d3dcompiler_47.dll' }
+    if (-not (Test-Path $d3dc)) { $d3dc = Join-Path $sdk "bin\$($lock.host.windowsSdk.version)\arm64\d3dcompiler_47.dll" }
+    if (-not (Test-Path $d3dc) -or (Get-PeMachine $d3dc) -ne 'ARM64') { throw 'ARM64 d3dcompiler_47.dll not found in ANGLE output or Windows SDK' }
+    Copy-Item $d3dc (Join-Path $dest 'd3dcompiler_47.dll') -Force
+    $hashes['d3dcompiler_47.dll'] = (Get-FileHash (Join-Path $dest 'd3dcompiler_47.dll') -Algorithm SHA256).Hash.ToLower()
     $patches = @($record.patches | ForEach-Object {
         [ordered]@{ path = $_; sha256 = (Get-FileHash (Join-Path $repo $_) -Algorithm SHA256).Hash.ToLower() }
     })
@@ -721,6 +737,14 @@ function Build-Host([string]$Target = '') {
     )
     Write-Step "Building $(if ($Target) { "$Target.exe" } else { 'winapk.exe and native-probe.exe' })"
     Invoke-InDevShell $vs (@($cmake, '--build', $native) + $(if ($Target) { @('--target', $Target) } else { @() }))
+    $angleStaged = Join-Path $out 'bin\angle'
+    if ($Configuration -eq 'Release' -and (Test-Path (Join-Path $angleStaged 'libEGL.dll'))) {
+        $relAngle = Join-Path $bin 'angle'
+        New-Item -ItemType Directory -Force $relAngle | Out-Null
+        foreach ($af in Get-ChildItem $angleStaged -File) {
+            Copy-Item -LiteralPath $af.FullName -Destination (Join-Path $relAngle $af.Name) -Force
+        }
+    }
     foreach ($f in Get-ChildItem $bin -Include *.exe, *.dll -Recurse) {
         $m = Get-PeMachine $f.FullName
         if ($m -ne 'ARM64') { throw "$($f.Name) is $m, not ARM64 (AGENTS.md: native means native)" }

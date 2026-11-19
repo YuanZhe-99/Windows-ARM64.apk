@@ -119,6 +119,12 @@ type doctorJSON struct {
 		} `json:"devices"`
 		Win32Present    string `json:"win32Present"`
 		AngleFilesArm64 bool   `json:"angleFilesArm64"`
+		AngleBackends   []struct {
+			Backend    string `json:"backend"`
+			GLES       string `json:"gles"`
+			Renderer   string `json:"renderer"`
+			Translated bool   `json:"translated"`
+		} `json:"angleBackends"`
 	} `json:"graphics"`
 	Runtime struct {
 		GuestNativeProfiles []string `json:"guestNativeProfiles"`
@@ -208,7 +214,26 @@ func (r *Runtime) Doctor(ctx context.Context, javaHome string) (Report, error) {
 	glesDetail := "ANGLE DLLs not installed"
 	if raw.Graphics.AngleFilesArm64 {
 		glesLevel = Experimental
-		if raw.Graphics.VulkanLoader == "available" && len(raw.Graphics.Devices) > 0 {
+		if len(raw.Graphics.AngleBackends) > 0 {
+			var parts []string
+			for _, ab := range raw.Graphics.AngleBackends {
+				label := ab.Backend
+				switch ab.Backend {
+				case "d3d11":
+					label = "Direct3D 11"
+				case "vulkan":
+					label = "Vulkan"
+					if ab.Translated {
+						label += " (Dozen)"
+					}
+				}
+				if ab.GLES != "" {
+					label += " (" + ab.GLES + ")"
+				}
+				parts = append(parts, label)
+			}
+			glesDetail = "ANGLE · " + strings.Join(parts, " · ")
+		} else if raw.Graphics.VulkanLoader == "available" && len(raw.Graphics.Devices) > 0 {
 			if vkTranslated {
 				glesDetail = "ANGLE · Direct3D 11 · Vulkan (Dozen)"
 			} else {

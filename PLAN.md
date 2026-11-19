@@ -706,3 +706,37 @@ $zip = .\scripts\windows\package.ps1
 ## 20. 基线里程碑状态与当前起点
 
 P0 审计/锁定、Java MVP（G1）、N0 ELF/ABI（G2）及已声明 C/Bionic/JNI 子集与真实 APK 集成（G3）均已完成，证据见 `doc/en-us/platform-notes.md`。P5 受限客体 EGL/GLES、P6 Dozen 上的 T13 WSI/传输/SPIR-V 图形管线/`VkImage` 回读/回调与设备丢失恢复、P7 前后端一体化实验包 + NSIS + GitHub Actions `windows-11-arm` CI/Release 签名流水线 + 完整 30 分钟 T14 稳定性基线、以及 P8 宿主服务（`NativeOs`/剪贴板/DirectWrite 字体/`/proc`/动态 DPI）、WASAPI 43 方法原生音频和硬件 Direct3D 12 Skia AGSL/RenderEffect（`T15` 11/11）均已在本机验证通过。本机只有 Mesa Dozen，厂商原生 Vulkan 路径仍受硬件阻塞（`BLOCKED`），验证层与 macOS 回归为 `NOT_RUN`。
+
+## 21. 完整 D3D11 + Vulkan GPU 支持新方案（GPU-P1..GPU-P6）
+
+`v0.1.0` 实装验收暴露出真实重度 GPU APK（如含 Flutter Skia/Impeller、子 `SurfaceView`/`TextureView` 与视频解码的应用）无法渲染的完整根因链：发布包缺失私有 ARM64 ANGLE 二进制、现有 Java/Guest GLES 与 Guest Vulkan 仍为夹具级最小子集且采用单线程/单上下文/UI 线程串行转发模型、`--graphics=auto` 在 Dozen 转换层机器上优先选择了 Vulkan 而非满血原生 D3D11、单 `w->content` 与全不透明 `PublishEmbedArgb` 吞掉子 `SurfaceView` 并覆盖 GPU 帧、`--embed` 隐藏窗口 `PrintWindow` / 阻塞 `glReadPixels` 失效，以及缺少 `libm.so`、`libjnigraphics.so`、`ALooper`/`AChoreographer`/`AAssetManager` 与 `ReLinker` 路径分隔符兼容。
+
+经确认（ADR-0005），按以下 6 个阶段推进完整双后端（D3D11 + Vulkan）GPU 支持，严守纯原生 ARM64 PE、不改 `x18`/`TPIDR_EL0`、不伪造成功、D3D11 与 Vulkan 独立诚实报告的契约：
+
+### GPU-P1：ANGLE 全链路打包、双后端自检与多层 D3D11/DXGI 硬件合成器
+- [x] 修复本地构建、NSIS（`stage-app-resources.ps1`）、便携包（`package.ps1`）与 GitHub Actions `windows-11-arm` CI 缓存，100% 随包构建并校验原生 ARM64 `bin\angle\libEGL.dll`、`libGLESv2.dll`（及所需 `d3dcompiler_47.dll`）。
+- [x] 升级 `--graphics=auto` 硬件感知择优策略：存在原生厂商 Vulkan ICD（`vulkanTranslated == false`）时优先 `vulkan`；仅有转换层（`vulkanTranslated == true`，如 Mesa Dozen）时优先原生硬件 `d3d11`（ANGLE ES 3.0）；显式 `d3d11` / `vulkan` 绝不静默切换。
+- [x] 挂载 `EGL_ANDROID_blob_cache`（`eglSetBlobCacheFuncsANDROID`）按版本与后端命名空间原子落盘缓存编译后着色器；`winapk doctor` 通过无窗口 `1x1` Pbuffer 实测报告 `angleBackends` 与各自最高 GLES 版本。
+- [x] 实现 `WinApkCompositor`（D3D11/DXGI 多层合成器）：支持同一窗口内 `[底层 SurfaceView*] → [主窗口 UI (保留 Premultiplied Alpha 挖孔)] → [顶层 zOrderOnTop SurfaceView*]` Z 序硬件合成，对齐先建层后回调 `surfaceCreated` 的无锁契约；`--embed` 模式采用 3 槽异步 `D3D11_USAGE_STAGING` 环形缓冲回读写入现有 `Local\winapk-frame-<token>` 共享内存，彻底废除隐藏窗口 `PrintWindow` 与阻塞式 `glReadPixels`，保持窗格/独立窗口零重启 `Reattach`。
+
+### GPU-P2：Java OpenGL ES 1.1–3.2 + EGL 1.4/1.5 + `TextureView` 全集
+- [ ] 接入上游已验证的 `GLES10`、`GLES11`、`GLES20`、`GLES30`、`GLES31`、`GLES32`、`EGL14`、`EGL15`、`EGLExt` 全部 667 个 JNI 桥函数，在 Windows 下统一绑定私有 ARM64 ANGLE。
+- [ ] 解锁 `GLSurfaceView` 的 ES 1.1/2.0/3.0+、自定义 `EGLConfigChooser` / `EGLContextFactory` / 独立 `GLThread` 渲染，以及 `MacApkEGL10` + `MacApkGlWindow`（`TextureView` / `SurfaceTexture` 生产者纹理合成）。
+
+### GPU-P3：Guest Native EGL 1.5 + GLES 1.1–3.1 多线程共享上下文全集
+- [ ] 基于 ARM64 标量/指针调用约定一致性证明，解除“所有客体 GL 命令同步派发至 Win32 UI 线程”的串行限制，允许客体各渲染/IO 线程直接在当前线程驱动 ANGLE。
+- [ ] 提供 `libEGL.so`、`libGLESv1_CM.so`、`libGLESv2.so`、`libGLESv3.so` 完整导出表与 `eglGetProcAddress` 动态表（含 `glDebugMessageCallback*` 安全客体 thunk）；支持多线程多 `EGLContext`、`share_context`、`eglCreatePbufferSurface`、`EGL_KHR_surfaceless_context`、`EGLImageKHR` / `glEGLImageTargetTexture2DOES`、`eglSwapInterval` 及 `EGL_RECORDABLE_ANDROID` 兼容过滤，按实际后端诚实报告 ES 版本与扩展。
+
+### GPU-P4：Guest Vulkan 1.0–1.3 全集（`vk.xml` 代码生成 + 离屏/共享纹理 WSI）
+- [ ] 基于锁定版 `Vulkan-Headers` `vk.xml` 自动生成结构体编译期 ABI 断言、250+ 数据面/录制面命令零开销直通绑定及多 `VkInstance`/`VkDevice`/`VkQueue` 控制面包装器。
+- [ ] 支持标准 Vulkan 1.1–1.3 `pNext` 特性链、Dynamic Rendering、Descriptor Update Template、`VkPipelineCache` 及全套客体回调安全 thunk（`VkAllocationCallbacks`、`VK_EXT_debug_utils`、`VK_EXT_debug_report`、`VK_EXT_device_memory_report`）；未支持的外部 fd 扩展明确返回 `VK_ERROR_EXTENSION_NOT_PRESENT`。
+- [ ] 实现独立于窗口可见性的 Vulkan WSI 合成（优先 `VK_KHR_external_memory_win32` DXGI 共享纹理，回退交换链异步 Transfer 拷贝环），并按 `auto` / `vulkan` 策略诚实向客体暴露 `libvulkan.so`。
+
+### GPU-P5：GPU 引擎配套 NDK / Bionic 运行库与真实重度 GPU APK 端到端验收
+- [ ] 修复原生库装载链路：`ApplicationInfo.nativeLibraryDir`（`app_lib`）暴露已准入 `.so`、导出 `MACAPK_APK_PATH`、兼容 `ReLinker` 在 Windows 下的 ZIP 条目查找、`GuestNativeLoader` 详细诊断日志、主 Activity 原生初始化致命异常透传（消除空白假运行），以及前端添加 `needs-native` APK 时的清晰受限原生引导。
+- [ ] 实现 NDK 平台库：`libm.so`（完整 C99/POSIX 数学库与 `sincos`/`sincosf`）、`libjnigraphics.so`（`AndroidBitmap_*`）、`libandroid.so`（多表面 `ANativeWindow` 含 `lock/unlockAndPost/setBuffersGeometry`、忠实超时语义 `ALooper_*`、显示器帧率驱动 `AChoreographer_*`、APK 直读 `AAssetManager_*`）及基于 WASAPI 的 `libOpenSLES.so` / `libaaudio.so` 输出桥。
+- [ ] 补齐 Bionic / ELF Loader：`STT_OBJECT` 数据符号 `dlsym`、`RTLD_DEFAULT`、`dladdr`、`dl_iterate_phdr`、虚拟句柄表 `epoll`/`eventfd`/`timerfd`/`pipe2`/Winsock2 套接字桥、`pthread_cond_timedwait`/`rwlock`/`sem`、`__system_property_get/find`、`getauxval` 及 APK 内置 `arm64-v8a` C++ 运行时库加载隔离；在真机实装环境中完成 Flutter + 视频类重度 GPU APK 的窗格与独立窗口完整交互渲染验收。
+
+### GPU-P6：Skia D3D12 硬件画布协同与 30 分钟双后端 GPU 稳定性门禁
+- [ ] 打通 `NativeCocoa.presentFrame` 脏矩形增量提交与 Skia D3D12 ↔ `WinApkCompositor` DXGI 共享纹理合成。
+- [ ] 完成 D3D11 与 Vulkan 双后端的 30 分钟连续渲染、窗格↔独立窗口热切换（`Reattach`）、动态缩放/旋转与显存/句柄零泄漏门禁，同步中英双语文档。

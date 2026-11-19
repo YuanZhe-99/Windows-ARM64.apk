@@ -1,8 +1,11 @@
 // Android EGL/GLES fixed signatures. Driver objects and current state stay on the Win32 thread.
 #include "guest_graphics.h"
+#include "angle_runtime.h"
+#include "compositor.h"
 #include "guest_vulkan.h"
 #include "bridge.h"
 #include "embed.h"
+#include "surface.h"
 
 #ifdef WINAPK_HAS_ANGLE_HEADERS
 #include <EGL/egl.h>
@@ -202,14 +205,22 @@ EGLint Start(uint64_t owner) {
 #undef LOAD
     auto get = reinterpret_cast<PFNEGLGETPLATFORMDISPLAYEXTPROC>(session.eglGetProcAddress("eglGetPlatformDisplayEXT"));
     if (!get) { Shutdown(); return EGL_NOT_INITIALIZED; }
-    for (int i = 0; i < (request == "auto" ? 2 : 1); ++i) {
-        const bool vulkan = request == "vulkan" || (request == "auto" && !i);
-        const char* backend = vulkan ? "vulkan" : "d3d11";
+    bool nativeVk = false;
+    const auto candidates = SelectAngleBackends(request, &nativeVk);
+    if (candidates.empty()) { Shutdown(); return EGL_NOT_INITIALIZED; }
+    if (request == "auto" && !nativeVk) {
+        LogLine("[winapk] guest EGL auto: no native vendor Vulkan ICD; preferring hardware d3d11");
+    }
+    for (size_t i = 0; i < candidates.size(); ++i) {
+        const char* backend = candidates[i];
+        const bool vulkan = std::strcmp(backend, "vulkan") == 0;
         const EGLint attrs[] = {EGL_PLATFORM_ANGLE_TYPE_ANGLE,
             vulkan ? EGL_PLATFORM_ANGLE_TYPE_VULKAN_ANGLE : EGL_PLATFORM_ANGLE_TYPE_D3D11_ANGLE,
             EGL_PLATFORM_ANGLE_DEVICE_TYPE_ANGLE, EGL_PLATFORM_ANGLE_DEVICE_TYPE_HARDWARE_ANGLE, EGL_NONE};
         session.display = get(EGL_PLATFORM_ANGLE_ANGLE, EGL_DEFAULT_DISPLAY, attrs);
         if (session.display && session.eglInitialize(session.display, nullptr, nullptr)) {
+            InstallAngleBlobCache(session.display,
+                reinterpret_cast<void* (*)(const char*)>(session.eglGetProcAddress), backend);
             session.owner = owner;
             constexpr EGLint rgba[] = {EGL_SURFACE_TYPE, EGL_WINDOW_BIT, EGL_RENDERABLE_TYPE, EGL_OPENGL_ES2_BIT,
                 EGL_RED_SIZE, 8, EGL_GREEN_SIZE, 8, EGL_BLUE_SIZE, 8, EGL_ALPHA_SIZE, 8, EGL_NONE};
@@ -224,8 +235,11 @@ EGLint Start(uint64_t owner) {
             Shutdown();
             return EGL_NOT_INITIALIZED;
         }
-        if (request == "auto" && !i) LogLine("[winapk] guest EGL auto: Vulkan unavailable; trying d3d11");
-        else LogLine("GRAPHICS_CAPABILITY_MISSING: guest EGL backend=" + std::string(backend) + "; no fallback");
+        if (request == "auto" && i + 1 < candidates.size()) {
+            LogLine(std::string("[winapk] guest EGL auto: ") + backend + " unavailable; trying " + candidates[i + 1]);
+        } else {
+            LogLine("GRAPHICS_CAPABILITY_MISSING: guest EGL backend=" + std::string(backend) + "; no fallback");
+        }
     }
     Shutdown();
     return EGL_NOT_INITIALIZED;
@@ -381,7 +395,16 @@ EGLBoolean Swap(EGLDisplay d, EGLSurface surface) {
         if (IsEmbedded() && session.width > 0 && session.height > 0) {
             std::vector<uint8_t> pixels(static_cast<size_t>(session.width) * static_cast<size_t>(session.height) * 4);
             session.glReadPixels(0, 0, session.width, session.height, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
-            PublishEmbedGlRgba(pixels.data(), session.width, session.height);
+            HWND resolvedHwnd = nullptr;
+            int rw = 0, rh = 0;
+            SurfaceLayerPlacement placement{0, 0, session.width, session.height, true, false};
+            ResolveSurface(session.native, resolvedHwnd, rw, rh, &placement);
+            const int layerKey = -static_cast<int>(reinterpret_cast<uintptr_t>(session.native));
+            if (!CompositorSubmitSurfaceBytes(session.window, layerKey, pixels.data(),
+                                              static_cast<size_t>(session.width) * 4, session.width, session.height,
+                                              LayerPixels::Rgba8, LayerAlpha::Opaque, true, placement)) {
+                PublishEmbedGlRgba(pixels.data(), session.width, session.height);
+            }
         }
         if (!session.eglSwapBuffers(session.display, session.drawable)) {
             const auto error = DriverError();

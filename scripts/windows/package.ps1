@@ -58,10 +58,15 @@ foreach ($file in Get-ChildItem $native -File | Where-Object { $_.Name -in @('wi
 foreach ($req in 'winapk.exe','winapk-bridge.dll','winapk-probe.jar','z.dll','sqlite3.dll','capstone.dll') {
     if (!(Test-Path -LiteralPath (Join-Path $stage "bin\$req"))) { throw "Missing required runtime file: $req" }
 }
-if ($IncludeAngle) {
-    $angleBin = Join-Path $build 'bin\angle'
-    foreach ($dll in 'libEGL.dll','libGLESv2.dll') {
-        Copy-Payload $angleBin $dll "bin\angle\$dll"
+$angleBin = Join-Path $build 'bin\angle'
+if ($IncludeAngle -or (Test-Path -LiteralPath (Join-Path $angleBin 'libEGL.dll'))) {
+    foreach ($dll in 'libEGL.dll','libGLESv2.dll','d3dcompiler_47.dll') {
+        if ($IncludeAngle -or (Test-Path -LiteralPath (Join-Path $angleBin $dll))) {
+            Copy-Payload $angleBin $dll "bin\angle\$dll"
+        }
+    }
+    if (Test-Path -LiteralPath (Join-Path $angleBin 'angle.json')) {
+        Copy-Payload $angleBin 'angle.json' 'bin\angle\angle.json'
     }
 }
 # Reject a mixed Debug/Release build tree, including Debug CRT imports in dependency DLLs.

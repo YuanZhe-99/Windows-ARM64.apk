@@ -120,3 +120,40 @@ Vulkan keep separate device/resource ownership.
 **Revisit** when vendor ARM64 Vulkan hardware is available, a required Dozen capability is
 missing, or an unexplained driver/bridge failure appears. Retain Java/G3 independently and
 report the affected graphics path as blocked rather than substituting another backend.
+
+## ADR-0005: hardware-aware `--graphics=auto` and D3D11/DXGI multi-layer GPU compositing
+
+2026-11-18, GPU-P1..GPU-P6. Status: accepted by the user.
+
+**Decision.**
+1. **Shipping ANGLE:** Every Windows 11 ARM64 build, portable bundle and per-user NSIS installer
+   ships private native ARM64 ANGLE (`bin\angle\libEGL.dll`, `libGLESv2.dll`, plus
+   `d3dcompiler_47.dll` for runtime HLSL compilation) with both the Direct3D 11 and Vulkan backends
+   compiled in, backed by an atomic on-disk `EGL_ANDROID_blob_cache`.
+2. **Backend selection (`--graphics`):** Explicit `d3d11` and `vulkan` bind only that hardware
+   backend and never switch silently on failure. `auto` is hardware-aware: when a native GPU-vendor
+   ARM64 Vulkan ICD is present (`vulkanTranslated == false`), `auto` prefers `vulkan` and falls back
+   to `d3d11`; when Vulkan is provided only through a translation layer (`vulkanTranslated == true`,
+   such as Mesa Dozen on Direct3D 12), `auto` prefers native hardware `d3d11` (GLES 3.0 directly on
+   the vendor driver, avoiding GLES→Vulkan→D3D12 double translation and SM 6.2 compute limits).
+   Likewise, `libvulkan.so` under `auto` follows upstream's manifest requirement policy on
+   translated-Vulkan hosts so dual-backend engines (such as Flutter and `libmpv`) select native
+   D3D11 GLES 3.0 unless `--graphics=vulkan` or `android.hardware.vulkan.*` is requested.
+3. **Multi-layer presentation and `--embed` transport:** Reopening ADR-0002's single-target revisit
+   trigger, each Activity window composites multiple layers in SurfaceFlinger Z-order on a host
+   Direct3D 11 / DXGI device (`[below-window SurfaceViews] → [ViewCanvasDriver UI with preserved
+   premultiplied alpha cutouts and TextureView textures] → [zOrderOnTop SurfaceViews]`). Standalone
+   windows present via a DXGI flip-model swapchain; `--embed` panes read back the composited frame
+   through a 3-slot asynchronous `D3D11_USAGE_STAGING` ring into the existing
+   `Local\winapk-frame-<token>` shared-memory protocol, eliminating hidden-HWND `PrintWindow`
+   black frames and synchronous `glReadPixels` stalls while preserving zero-restart `Reattach`.
+
+**Why.** Real Android GPU apps place `SurfaceView` and `TextureView` instances inside a `ViewGroup`
+alongside Java UI, create shared `EGLContext`s across render and IO threads, and run inside
+`--embed` panes where the runtime `HWND` is never shown. Synchronous UI-thread GL forwarding,
+opaque `presentBitmap` overwrites, and `PrintWindow` on hidden swapchains broke real apps even when
+isolated single-surface fixtures passed.
+
+**Revisit** if MyGo exposes cross-process DXGI shared `HANDLE` composition directly in `ui`, in
+which case `--embed` can hand over the composited `IDXGIResource1` handle with zero CPU staging
+without changing any guest or Java rendering layer above `WinApkCompositor`.

@@ -75,6 +75,14 @@ struct VulkanInfo {
     std::string win32Present;
 };
 
+/// Describes one probed private ANGLE backend (`d3d11` or `vulkan`).
+struct AngleBackend {
+    std::string backend;
+    std::string gles;
+    std::string renderer;
+    bool translated = false;
+};
+
 /// Everything doctor reports.
 struct Report {
     std::string version;          ///< winapk's own version (internal/version)
@@ -83,7 +91,8 @@ struct Report {
     std::vector<Adapter> adapters;
     JvmInfo jvm;
     VulkanInfo vulkan;
-    bool angleFilesArm64 = false; ///< private EGL/GLES PE files found; no rendering was probed
+    bool angleFilesArm64 = false; ///< private EGL/GLES PE files found
+    std::vector<AngleBackend> angleBackends; ///< hardware backends verified via headless 1x1 Pbuffer
     std::vector<std::string> guestNativeProfiles; ///< restricted profiles whose helpers are present
     /// Stable identifiers of what this build cannot do yet (PLAN.md §14.2 style), each with
     /// a reason; doctor reports them rather than letting a missing capability look present.

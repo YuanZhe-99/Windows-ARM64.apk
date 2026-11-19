@@ -108,7 +108,14 @@ void PrintJson(const Report& r) {
     }
     o += std::string(v.devices.empty() ? "" : "\n    ") + "],\n";
     o += "    \"win32Present\": " + Json(v.win32Present) + ",\n    \"angleFilesArm64\": " + Bool(r.angleFilesArm64) +
-         ",\n    \"angleBackends\": []\n  },\n";
+         ",\n    \"angleBackends\": [";
+    for (size_t i = 0; i < r.angleBackends.size(); ++i) {
+        const AngleBackend& ab = r.angleBackends[i];
+        o += std::string(i ? "," : "") + "\n      { \"backend\": " + Json(ab.backend) +
+             ", \"gles\": " + Json(ab.gles) + ", \"renderer\": " + Json(ab.renderer) +
+             ", \"translated\": " + Bool(ab.translated) + " }";
+    }
+    o += std::string(r.angleBackends.empty() ? "" : "\n    ") + "]\n  },\n";
     o += "  \"runtime\": { \"guestNativeProfiles\": [";
     for (size_t i = 0; i < r.guestNativeProfiles.size(); ++i)
         o += (i ? ", " : "") + Json(r.guestNativeProfiles[i]);
@@ -144,7 +151,12 @@ void PrintText(const Report& r) {
                d.apiVersion.c_str(), d.driverName.empty() ? "?" : d.driverName.c_str(), d.translated ? " (translated)" : "",
                d.queueFamilies, d.win32Presentation ? "yes" : "no");
     }
-    printf("ANGLE     private ARM64 DLLs %s; renderer not tested by doctor\n", r.angleFilesArm64 ? "found" : "not found");
+    printf("ANGLE     private ARM64 DLLs %s; %zu hardware backend(s)\n",
+           r.angleFilesArm64 ? "found" : "not found", r.angleBackends.size());
+    for (const AngleBackend& ab : r.angleBackends) {
+        printf("          %s%s: %s (%s)\n", ab.backend.c_str(), ab.translated ? " (translated)" : "",
+               ab.gles.c_str(), ab.renderer.c_str());
+    }
     printf("Not yet:\n");
     for (const auto& [id, why] : r.limitations) printf("  %s: %s\n", id.c_str(), why.c_str());
 }
@@ -228,6 +240,39 @@ int wmain(int argc, wchar_t** argv) {
     ProbeVulkan(r, present);
     r.angleFilesArm64 = PeArch(dir + L"\\angle\\libEGL.dll") == "arm64" &&
                         PeArch(dir + L"\\angle\\libGLESv2.dll") == "arm64";
+    if (r.angleFilesArm64 && r.host.processArch == "arm64") {
+        bool vkTranslated = !r.vulkan.devices.empty();
+        for (const VulkanDevice& d : r.vulkan.devices) {
+            if (d.type != "cpu" && !d.translated) { vkTranslated = false; break; }
+        }
+        if (HMODULE br = LoadLibraryExW((dir + L"\\winapk-bridge.dll").c_str(), nullptr,
+                                        LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_SYSTEM32)) {
+            using ProbeFn = int (*)(const wchar_t*, int, char*, int);
+            if (auto fn = reinterpret_cast<ProbeFn>(GetProcAddress(br, "winapk_bridge_probe_angle"))) {
+                char buf[4096]{};
+                if (fn((dir + L"\\angle").c_str(), vkTranslated ? 1 : 0, buf, sizeof(buf)) > 0) {
+                    const char* p = buf;
+                    while (*p) {
+                        const char* nl = strchr(p, '\n');
+                        std::string line(p, nl ? static_cast<size_t>(nl - p) : strlen(p));
+                        p = nl ? (nl + 1) : (p + line.size());
+                        size_t t1 = line.find('\t');
+                        size_t t2 = t1 == std::string::npos ? std::string::npos : line.find('\t', t1 + 1);
+                        size_t t3 = t2 == std::string::npos ? std::string::npos : line.find('\t', t2 + 1);
+                        if (t3 != std::string::npos) {
+                            r.angleBackends.push_back({
+                                line.substr(0, t1),
+                                line.substr(t1 + 1, t2 - t1 - 1),
+                                line.substr(t2 + 1, t3 - t2 - 1),
+                                line.substr(t3 + 1) == "1"
+                            });
+                        }
+                    }
+                }
+            }
+            FreeLibrary(br);
+        }
+    }
     if (r.host.processArch == "arm64" && PeArch(dir + L"\\winapk-bridge.dll") == "arm64") {
         r.guestNativeProfiles.push_back("N0");
         if (GetFileAttributesW((dir + L"\\guest\\libwinapk-bionic.so").c_str()) != INVALID_FILE_ATTRIBUTES &&

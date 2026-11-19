@@ -71,37 +71,28 @@ P5a 从受控私有 DLL 目录加载 libEGL/libGLESv2，显式选择 Vulkan 或 
 
 ## Java GLES 增量
 
-Windows Java GLES 实验使用一个铺满客户区的 `GLSurfaceView`、由宿主管理的 EGL context
-和显式绑定的 GLES20 方法。不向 Java 或客体代码暴露 EGL 句柄。`--graphics=off` 为默认值；
-Java 位图路径不加载 ANGLE。`vulkan` 和 `d3d11` 显式请求对应后端；`auto` 可在 Vulkan
-初始化失败后尝试 D3D11。此增量从 viewport、scissor、clear、查询和 RGBA8 直接回读起步。
-其他 GLES 方法保持未绑定；GL10 调用与自定义 EGL 配置明确拒绝。不包含混合合成、
-应用自管 EGL 或 context loss 的自动恢复。只有 Win32 渲染回调期间 context 才是 current，
-Activity/UI Java 调用线程没有该 context。resize 更新 drawable 而保留 context；
-最小化时停止 GLES 绘制，恢复时请求新帧。
+Windows Java GLES 路径使用私有 ARM64 ANGLE（`bin\angle\libEGL.dll`、`libGLESv2.dll`、
+`d3dcompiler_47.dll`），挂载原子落盘的 `EGL_ANDROID_blob_cache`（`angle_runtime.cpp`）并接入
+Direct3D 11 多层硬件合成器（`compositor.cpp`，ADR-0005）。CLI 默认 `--graphics=off`；`vulkan` 与
+`d3d11` 显式请求对应后端且不回退；`auto` 在存在原生 GPU 厂商 Vulkan ICD 时优先 `vulkan`，在宿主
+Vulkan 为转换层（如 Mesa Dozen）时优先原生硬件 `d3d11`（GLES 3.0）。
 
-先构建 `Angle`，再构建 `Host` 或 `All` 以使用固定头文件。只有 `GLSurfaceView` 使用所请求
-后端时，才从桥 DLL 的私有 `angle` 目录加载 ANGLE DLL。
-`test.ps1 -Suite GraphicsJava` 在 CheckJNI 下运行真实 `hello-gles.apk`：显式 Vulkan 经 Dozen、
-子进程看不到 Vulkan 时 `auto` 回退到 D3D11，以及相同 ICD 限制下显式 Vulkan 拒绝。
-APK 断言带 position 的直接缓冲区回读出两种 RGBA 颜色、只读和非 current 调用拒绝及 renderer 回调。
-在同一 Adreno 硬件上通过 4 项。客户区从 `360x720` 改到 `424x752`；D3D11 正例还以
-`424x752` 完成最小化/恢复，保留原有 context。显式后端不可用在任何绘制之前退出 1。
-`doctor` 只盘点 ARM64 DLL 文件，不做渲染，`angleBackends` 保持为空。
-尚未通过 Java GLES 验证 shader、纹理、混合及 FBO；宿主探测的 shader 测试不替代它们。
+先构建 `Angle` 再构建 `Host` 或 `All` 以暂存 ARM64 DLL（`stage-app-resources.ps1` 与
+`package.ps1` 自动将其打入发布包）。`winapk doctor` 通过无窗口 `1x1` Pbuffer 实测探测 `bin\angle`，
+在 `angleBackends` 中报告各后端及实际最高 GLES 版本（Dozen 机器上 `d3d11` 为 ES 3.0，`vulkan` 为
+ES 2.0）。`test.ps1 -Suite GraphicsJava` 在 CheckJNI 下运行真实 `hello-gles.apk` 共 5 项检查：
+显式 Vulkan 经 Dozen、转换层机器上 `auto` 优选硬件 D3D11、隐藏 Vulkan 时 `auto` 回退 D3D11、以及显式
+Vulkan 不可用拒绝。
 
-## 受管理的 Android native window
+## 受管理的 Android native window 与多层硬件合成
 
-受限 `libandroid.so` 只提供 `ANativeWindow_fromSurface`、acquire、release 和宽高查询。
-桥匹配已挂载的普通 `SurfaceView` 的实际 `SurfaceHolder` 所持对象，不使用 Java 提供的地址。
-不透明客体令牌持有对该挂载的引用。resize 更新客户区像素尺寸。
-更换内容或销毁窗口会使挂载失效，即使客体仍持有引用。失效或未知令牌的尺寸查询返回负值；
-acquire/release 不解引用这些令牌。释放 Java `Surface` 后不允许新的转换，
-但不会取消已取得且挂载仍有效的原生引用。
-
-该端点不向客体传递 `HWND` 或宿主图形函数指针。
-不实现 Android buffer queue、`ANativeWindow_lock`，也不提供通用的 `SurfaceHolder.surfaceDestroyed` 分发。
-最小化时桥发布零尺寸，但该夹具不覆盖最小化时的尺寸查询。
+`surface.cpp`（`libandroid.so`）对根 `SurfaceView` 与嵌在 `ViewGroup` 内的子 `SurfaceView` 提供
+`ANativeWindow_fromSurface`、`acquire`、`release`、`getWidth`、`getHeight`、`getFormat`、
+`setBuffersGeometry`、`lock` 与 `unlockAndPost`。获取 `SurfaceView` 原生窗口时回调
+`Surface.macapkNoteNativeWindowConsumer` 使 `SurfaceView.draw` 在 `ViewCanvasDriver` 中透明挖孔，
+由 `compositor.cpp` 在硬件 D3D11 上按 `[底层 SurfaceView] → [保留直通 Alpha 挖孔的主 UI 层] →
+[zOrderOnTop 顶层 SurfaceView 与弹窗覆盖层]` Z 序合成，并通过 3 槽异步 `D3D11_USAGE_STAGING`
+环形缓冲为 `--embed` 窗格输出帧。
 
 `test.ps1 -Suite Surface`：Windows ARM64 上 **4 项 PASS，3.48 秒**。普通 NDK API-30
 夹具声明 `DT_NEEDED libandroid.so`，同一引用追踪 `360x720` 到 `424x752`；

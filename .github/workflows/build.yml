@@ -66,6 +66,7 @@ jobs:
             build/windows-arm64/framework-res
             build/windows-arm64/deps/skia
             build/windows-arm64/deps/angle
+            build/windows-arm64/bin/angle
           key: ${{ steps.keys.outputs.deps }}
 
       - name: Restore vcpkg cache
@@ -105,6 +106,7 @@ jobs:
             build/windows-arm64/framework-res
             build/windows-arm64/deps/skia
             build/windows-arm64/deps/angle
+            build/windows-arm64/bin/angle
           key: ${{ steps.keys.outputs.deps }}
 
       - name: Save vcpkg cache

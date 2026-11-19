@@ -64,6 +64,9 @@ void SendEmbedLog(const std::string& line);
 /// Publishes a top-down `0xAARRGGBB` software frame into shared memory and notifies the front end.
 void PublishEmbedArgb(const uint32_t* argb, int w, int h);
 
+/// Publishes top-down `RGBA8` rows (with `rowPitch` stride) directly from a GPU staging surface.
+void PublishEmbedRgbaRows(const uint8_t* topDownRgba, size_t rowPitch, int w, int h);
+
 /// Publishes a bottom-up OpenGL `RGBA8` frame into shared memory (flipped top-down, opaque alpha).
 void PublishEmbedGlRgba(const uint8_t* bottomUpRgba, int w, int h);
 
