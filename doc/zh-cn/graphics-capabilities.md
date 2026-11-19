@@ -80,9 +80,14 @@ Vulkan 为转换层（如 Mesa Dozen）时优先原生硬件 `d3d11`（GLES 3.0�
 先构建 `Angle` 再构建 `Host` 或 `All` 以暂存 ARM64 DLL（`stage-app-resources.ps1` 与
 `package.ps1` 自动将其打入发布包）。`winapk doctor` 通过无窗口 `1x1` Pbuffer 实测探测 `bin\angle`，
 在 `angleBackends` 中报告各后端及实际最高 GLES 版本（Dozen 机器上 `d3d11` 为 ES 3.0，`vulkan` 为
-ES 2.0）。`test.ps1 -Suite GraphicsJava` 在 CheckJNI 下运行真实 `hello-gles.apk` 共 5 项检查：
-显式 Vulkan 经 Dozen、转换层机器上 `auto` 优选硬件 D3D11、隐藏 Vulkan 时 `auto` 回退 D3D11、以及显式
-Vulkan 不可用拒绝。
+ES 2.0）。`graphics.cpp` 将上游全部 `GLES10`、`GLES11`、`GLES20`、`GLUtils`、`GLES30`、`GLES31`、
+`GLES31Ext`、`GLES32`、`EGL14`、`EGL15` 与 `EGLExt` JNI 方法动态绑定到私有 ARM64 ANGLE，支持
+ES 1.1/2.0/3.x `GLSurfaceView` 以及独立线程的 `EGL14` / `MacApkEGL10` / `SurfaceTexture`
+（`MacApkGlWindow`）纹理生产者。`test.ps1 -Suite GraphicsJava` 运行 `hello-gles.apk` 与
+`hello-gles3.apk` 共 8 项检查：显式 Vulkan 经 Dozen、转换层机器上 `auto` 优选硬件 D3D11、隐藏 Vulkan
+时 `auto` 回退 D3D11、显式 Vulkan 不可用拒绝、D3D11 上的 GLES 3.0 `#version 300 es`
+VAO/UBO/`glTexStorage2D`/FBO-blit + 工作线程 `EGL14` `SurfaceTexture` 呈现，以及 Dozen ES 2.0
+Vulkan 后端对 ES 3.0 请求的显式拒绝。
 
 ## 受管理的 Android native window 与多层硬件合成
 

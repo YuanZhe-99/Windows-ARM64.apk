@@ -1,4 +1,5 @@
-// Host-only EGL owner for a Java GLSurfaceView. No guest handles or dispatch.
+// graphics.h -- Windows host EGL/GLES runtime and full Java OpenGL ES 1.0–3.2 / EGL 1.4–1.5 JNI
+// bindings (GPU-P2).
 #pragma once
 
 #include <jni.h>
@@ -9,12 +10,20 @@
 
 namespace winapk::bridge {
 
-/// Owns a single Win32 EGL surface/context; all operations run on the window thread.
+/// Records the process `--graphics` mode (`off`, `auto`, `d3d11`, `vulkan`) for Java `EGL14` /
+/// `MacApkEGL10` / `TextureView` contexts as well as `GLSurfaceView`.
+void SetJavaGraphicsRequest(const std::string& request);
+
+/// Returns the active top-level app `HWND` and client extent for `EGL14` `SurfaceView` windows.
+void* EnsureJavaSurfaceViewWindow(int* widthOut, int* heightOut);
+
+/// Owns a Win32 EGL surface/context for host-driven `GLSurfaceView` (ES 1.1, 2.0, or 3.x).
 class JavaGraphics {
 public:
-    /// Creates an EGL session from the private ANGLE directory, or supplies a diagnostic.
-    static std::shared_ptr<JavaGraphics> Open(HWND window, const std::string& request, std::string& error);
-    /// Releases the EGL surface and context before unloading its DLLs.
+    /// Creates an EGL session from the private ANGLE directory for `clientVersion` (1, 2, or 3).
+    static std::shared_ptr<JavaGraphics> Open(HWND window, const std::string& request,
+                                              int clientVersion, std::string& error);
+    /// Releases the EGL surface and context and decrements the display reference count.
     ~JavaGraphics();
     /// Makes the context current, renewing only the drawable on a client-size change.
     bool Begin(int width, int height, std::string& error);
@@ -26,7 +35,8 @@ private:
     std::unique_ptr<State> state_;
 };
 
-/// Registers the supported GLES20 natives, without loading ANGLE.
+/// Registers all 667+ Java OpenGL ES (`GLES10`, `GLES11`, `GLES20`, `GLUtils`, `GLES30`,
+/// `GLES31`, `GLES31Ext`, `GLES32`) and EGL (`EGL14`, `EGL15`, `EGLExt`) JNI methods.
 bool RegisterJavaGraphics(JNIEnv* env);
 
 } // namespace winapk::bridge

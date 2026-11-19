@@ -368,9 +368,9 @@ void TickGraphics(Window* w, View* v, JNIEnv* env, jclass cls) {
         return;
     }
     if (version == -1) return; // The Activity has not installed its Renderer yet.
-    if (version != 2 || g_graphicsRequest == "off") {
-        const char* detail = version == -2 ? "custom EGL configuration is not implemented" :
-            version != 2 ? "only GLES2 is implemented" : "use --graphics=auto, vulkan or d3d11";
+    if ((version != 1 && version != 2 && version != 3) || g_graphicsRequest == "off") {
+        const char* detail = version == -2 ? "custom EGL factories/GLWrapper are not implemented" :
+            (version < 1 || version > 3) ? "unsupported GLES client version" : "use --graphics=auto, vulkan or d3d11";
         FailGraphics(w, "GRAPHICS_CAPABILITY_MISSING", detail);
         return;
     }
@@ -378,7 +378,6 @@ void TickGraphics(Window* w, View* v, JNIEnv* env, jclass cls) {
     std::string error;
     const bool fresh = !w->graphics;
     if (fresh) {
-        // A second live HWND would share an EGLDisplay; don't terminate another owner's display.
         for (const auto& [handle, other] : g_windows) {
             if (handle != w->hwnd && other->graphics) {
                 w->inGraphicsFrame = false;
@@ -386,7 +385,7 @@ void TickGraphics(Window* w, View* v, JNIEnv* env, jclass cls) {
                 return;
             }
         }
-        w->graphics = JavaGraphics::Open(w->hwnd, g_graphicsRequest, error);
+        w->graphics = JavaGraphics::Open(w->hwnd, g_graphicsRequest, static_cast<int>(version), error);
         w->graphicsView = v;
         w->graphicsRevision = v->rendererRevision;
     }
@@ -753,6 +752,7 @@ jboolean JNICALL Init(JNIEnv* env, jclass) {
         jstring key = env->NewStringUTF("winapk.graphics");
         auto mode = static_cast<jstring>(env->CallStaticObjectMethod(sys, property, key));
         if (!env->ExceptionCheck() && mode) g_graphicsRequest = Utf8(env, mode);
+        SetJavaGraphicsRequest(g_graphicsRequest);
         if (mode) env->DeleteLocalRef(mode);
         env->DeleteLocalRef(key);
         env->DeleteLocalRef(sys);
@@ -1305,6 +1305,25 @@ const JNINativeMethod kMethods[] = {
 
 bool RegisterWindow(JNIEnv* env) {
     return Bind(env, "com/macapk/loader/NativeCocoa", kMethods, static_cast<int>(std::size(kMethods)));
+}
+
+void* EnsureJavaSurfaceViewWindow(int* widthOut, int* heightOut) {
+    HWND hwnd = nullptr;
+    int w = 0, h = 0;
+    RunOnUi("ensureJavaSurfaceViewWindow", [&] {
+        for (auto& [handle, win] : g_windows) {
+            (void)win;
+            RECT rc{};
+            GetClientRect(handle, &rc);
+            hwnd = handle;
+            w = rc.right;
+            h = rc.bottom;
+            break;
+        }
+    });
+    if (widthOut) *widthOut = w;
+    if (heightOut) *heightOut = h;
+    return hwnd;
 }
 
 bool DispatchGuestGraphics(const std::function<void()>& command) {

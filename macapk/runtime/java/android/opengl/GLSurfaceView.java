@@ -200,32 +200,20 @@ public class GLSurfaceView extends SurfaceView
     }
     public GLSurfaceView(Context c, android.util.AttributeSet a) { this(c); }
 
-    /** Returns the client version, -1 before setRenderer, or -2 for an unsupported custom configuration. */
+    /** Returns the client version (1, 2, or 3), -1 before setRenderer, or -2 for unsupported factories/wrappers. */
     private int macapkWindowsClientVersion() {
         if (renderer == null) return -1;
-        if (macapkHasCustomEGLFactories() || mRequestedConfigSizes != null || mGLWrapper != null) return -2;
+        if (macapkHasCustomEGLFactories() || mGLWrapper != null) return -2;
         int version = macapkRequestedEGLContextClientVersion();
-        return version < 0 ? 0 : version;
+        return version <= 1 ? 1 : version;
     }
 
-    /** Keeps the opaque config and GL10 callback objects separate from the macOS EGL facade. */
-    private static final class WindowsGles2 {
+    /** Opaque config object for host-driven Windows GLSurfaceView callbacks. */
+    private static final class WindowsGlesConfig {
         static final EGLConfig CONFIG = new EGLConfig() {};
-        static final GL10 GL = (GL10) java.lang.reflect.Proxy.newProxyInstance(
-            GL10.class.getClassLoader(), new Class<?>[] { GL10.class },
-            (proxy, method, args) -> {
-                if (method.getDeclaringClass() == Object.class) {
-                    switch (method.getName()) {
-                        case "toString": return "Windows GLES2 (GLES1 unavailable)";
-                        case "hashCode": return System.identityHashCode(proxy);
-                        case "equals": return proxy == args[0];
-                    }
-                }
-                throw new UnsupportedOperationException("GRAPHICS_CAPABILITY_MISSING: Windows GLSurfaceView has no GL10 methods");
-            });
     }
 
-    /** Draws the full Win32 client area with the host's current context, without Metal overlays. */
+    /** Draws the full Win32 client area with the host's current context (ES 1.1, 2.0, or 3.x). */
     private boolean macapkWindowsDrawFrame(int w, int h, boolean freshContext, boolean exposed) {
         if (freshContext) lifecycleDeliveredTo = null;
         if (exposed) requestRenderPending.set(true);
@@ -239,18 +227,18 @@ public class GLSurfaceView extends SurfaceView
             android.os.Looper.macapkEnterGlRenderer();
             try {
                 if (lifecycleDeliveredTo != r) {
-                    r.onSurfaceCreated(WindowsGles2.GL, WindowsGles2.CONFIG);
+                    r.onSurfaceCreated(STUB_GL10, WindowsGlesConfig.CONFIG);
                     lifecycleDeliveredTo = r;
                     lifecycleDeliveredW = -1;
                 }
                 if (lifecycleDeliveredW != w || lifecycleDeliveredH != h) {
-                    r.onSurfaceChanged(WindowsGles2.GL, w, h);
+                    r.onSurfaceChanged(STUB_GL10, w, h);
                     lifecycleDeliveredW = w;
                     lifecycleDeliveredH = h;
                     requestRenderPending.set(true);
                 }
                 if (!macapkTakeRenderRequest()) return false;
-                r.onDrawFrame(WindowsGles2.GL);
+                r.onDrawFrame(STUB_GL10);
                 return true;
             } finally {
                 android.os.Looper.macapkExitGlRenderer();

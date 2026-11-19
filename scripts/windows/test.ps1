@@ -1015,6 +1015,39 @@ function Test-GraphicsJava {
             $p.Dispose()
         }
     }
+
+    # GPU-P2: GLES 3.0 (VAO/UBO/TexStorage2D/DrawBuffers/Instanced/Blit) + worker-thread EGL14 SurfaceTexture
+    $apk3 = Join-Path $repo 'tests\fixtures\hello-gles3.apk'
+    $fix3 = Get-Content (Join-Path $repo 'tests\fixtures\hello-gles3.json') -Raw | ConvertFrom-Json
+    Check 'T10.gles3.hash' ((Get-FileHash $apk3).Hash.ToLower() -eq $fix3.apkSha256) 'GLES3/EGL14 APK build record'
+    $log3Ok = Join-Path $logs 'T10-java-gles3-d3d11.log'
+    $p3 = Start-App $apk3 $data $log3Ok 'off' 'd3d11'
+    try {
+        $h3 = Find-AppWindow $p3.Id 'Hello GLES3' 15 $p3
+        $m3 = Wait-Log $log3Ok 'T10\.gles3: PASS frame=1 egl14Worker=true size=(\d+x\d+)' 30 $p3
+        $c3 = if ($h3) { Close-App $h3 $p3 } else { 1 }
+        $t3 = Read-Log $log3Ok
+        $ext3 = if ($m3) { $m3.Groups[1].Value } else { 'none' }
+        Check 'T10.gles3.d3d11' ($null -ne $m3 -and $c3 -eq 0 -and
+            $t3 -match 'Java GLES request=d3d11 backend=d3d11 renderer=.*OpenGL ES 3\.0' -and
+            $t3 -notmatch 'GRAPHICS_RENDER_FAILED|FATAL ERROR in native method') "GLES 3.0 VAO/UBO/FBO-blit + worker EGL14 SurfaceTexture on D3D11 ($ext3)"
+    } finally {
+        if (!$p3.HasExited) { $p3.Kill(); $p3.WaitForExit() }
+        $p3.Dispose()
+    }
+    # Explicit Vulkan on Dozen (ES 2.0 ceiling) must refuse an ES 3.0 context cleanly without falling back to D3D11.
+    $log3Neg = Join-Path $logs 'T10-java-gles3-vulkan-es2only.log'
+    $p3n = Start-App $apk3 $data $log3Neg 'off' 'vulkan'
+    try {
+        $ex3 = $p3n.WaitForExit(30000)
+        $tn3 = Read-Log $log3Neg
+        Check 'T10.gles3.vulkan-refusal' ($ex3 -and $p3n.ExitCode -eq 1 -and
+            $tn3 -match 'GRAPHICS_CAPABILITY_MISSING: Java GLES backend=vulkan.*no fallback' -and
+            $tn3 -notmatch 'T10\.gles3: PASS|backend=d3d11') 'Dozen ES 2.0 ceiling refuses ES 3.0 request without fallback'
+    } finally {
+        if (!$p3n.HasExited) { $p3n.Kill(); $p3n.WaitForExit() }
+        $p3n.Dispose()
+    }
 }
 
 <# Checks actual NDK window references and replacement in one APK, without any EGL or Vulkan. #>

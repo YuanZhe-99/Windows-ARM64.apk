@@ -9,7 +9,7 @@ independent; enabling guest native does not enable GLES or guest Vulkan.
 |---|---|---|
 | Host ANGLE/D3D11 | PASS | Adreno 8cx Gen 3 hardware, driver `30.0.4122.4000`, EGL 1.5 / GLES 3.0; draw/readback, resize and teardown |
 | Host ANGLE/Vulkan on Dozen | PASS; user-approved experiment (ADR-0004) | same Adreno GPU via D3D12, Mesa `26.3.0-devel (git-e3fc7749c6)`, Vulkan `1.2.359`, EGL 1.5 / GLES 2.0; `translated=yes software=no` |
-| Java GLES into ANGLE | PASS for the bounded GLES20 profile below | real APK `GLSurfaceView` colors, resize, restore, teardown, and explicit refusal |
+| Java GLES into ANGLE | PASS (`GLES10/11/20/30/31/32` + `EGL14/15/EGLExt`) | real APK `GLSurfaceView` ES 2.0 & ES 3.0 (VAO/UBO/`glTexStorage2D`/FBO MRT/instancing/blit), worker-thread `EGL14` `SurfaceTexture` (`MacApkGlWindow`), resize, restore, teardown, and explicit ES3-on-Dozen refusal |
 | Managed native window | PASS for the reference profile below | real restricted APK, client extent, replacement and refused references; no drawing |
 | Guest GLES/N2 | PASS for the bounded T11 profile | normal NDK APK; texture/FBO, blended shader, resize, surface replacement, and explicit Vulkan refusal |
 | Guest Vulkan instance/WSI | PASS for T13.wsi on Dozen | real APK, Android→Win32 surface, actual support/capabilities, resize, replacement and refusal; no drawing |
@@ -88,10 +88,15 @@ host Vulkan is translated (such as Mesa Dozen).
 Build `Angle` before `Host` or `All` to stage the ARM64 DLLs (`stage-app-resources.ps1` and
 `package.ps1` bundle them automatically). `winapk doctor` probes `bin\angle` headlessly via 1x1
 Pbuffers and reports `angleBackends` with each backend's actual GLES ceiling (`d3d11` ES 3.0,
-`vulkan` ES 2.0 on Dozen). `test.ps1 -Suite GraphicsJava` runs the real `hello-gles.apk` under
-CheckJNI across 5 checks: explicit Vulkan through Dozen, `auto` selecting hardware D3D11 on a
-translated-Vulkan host, `auto` falling back to D3D11 when Vulkan is hidden, and explicit Vulkan
-refusal.
+`vulkan` ES 2.0 on Dozen). `graphics.cpp` binds all upstream `GLES10`, `GLES11`, `GLES20`, `GLUtils`,
+`GLES30`, `GLES31`, `GLES31Ext`, `GLES32`, `EGL14`, `EGL15` and `EGLExt` JNI methods dynamically to
+private ARM64 ANGLE, supporting ES 1.1/2.0/3.x `GLSurfaceView`s as well as off-thread `EGL14` /
+`MacApkEGL10` / `SurfaceTexture` (`MacApkGlWindow`) producers. `test.ps1 -Suite GraphicsJava` runs
+`hello-gles.apk` and `hello-gles3.apk` across 8 checks: explicit Vulkan through Dozen, `auto`
+selecting hardware D3D11 on a translated-Vulkan host, `auto` falling back to D3D11 when Vulkan is
+hidden, explicit Vulkan refusal, GLES 3.0 `#version 300 es` VAO/UBO/`glTexStorage2D`/FBO-blit +
+worker-thread `EGL14` `SurfaceTexture` swap on D3D11, and explicit ES 3.0 refusal on Dozen's ES 2.0
+Vulkan backend.
 
 ## Managed Android native window and multi-layer compositing
 

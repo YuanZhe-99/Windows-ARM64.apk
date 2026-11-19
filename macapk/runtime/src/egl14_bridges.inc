@@ -494,7 +494,12 @@ __attribute__((unused)) int egl14_native_swap(void* dpy, void* s) {
     if (!s || !egl14_win_find(dpy, s, &w)) return -1;
     // Looked up, not linked: the gate harnesses that include this file are not
     // all linked against libjvm.
+#ifdef _WIN32
+    static auto getVms = reinterpret_cast<jint(*)(JavaVM**, jsize, jsize*)>(
+        GetProcAddress(GetModuleHandleW(L"jvm.dll"), "JNI_GetCreatedJavaVMs"));
+#else
     static auto getVms = (jint(*)(JavaVM**, jsize, jsize*))dlsym(RTLD_DEFAULT, "JNI_GetCreatedJavaVMs");
+#endif
     JavaVM* vm = nullptr;
     jsize n = 0;
     if (!getVms || getVms(&vm, 1, &n) != JNI_OK || n < 1 || !vm) return -1;
@@ -565,12 +570,20 @@ jobject EGL14_eglGetDisplay(JNIEnv* env, jclass, jint id) {
 // native engines (both reach ANGLE's default display) carries ONE count. If
 // the shim is not loaded the bridges keep their old, uncounted behaviour.
 static void egl14_display_ref(void* d) {
+#ifdef _WIN32
+    winapk_egl_display_ref(d);
+#else
     static auto f = (void(*)(void*))dlsym(RTLD_DEFAULT, "__macapk_egl_display_ref");
     if (f && d) f(d);
+#endif
 }
 static bool egl14_display_unref(void* d) {
+#ifdef _WIN32
+    return winapk_egl_display_unref(d) != 0;
+#else
     static auto f = (int(*)(void*))dlsym(RTLD_DEFAULT, "__macapk_egl_display_unref");
     return f ? f(d) != 0 : true;
+#endif
 }
 jboolean EGL14_eglInitialize(JNIEnv* env, jclass, jobject dpy,
                              jintArray major, jint majOff,
@@ -699,8 +712,13 @@ jobject EGL14_eglCreateWindowSurface(JNIEnv* env, jclass, jobject dpy, jobject c
         // Looked up, not linked: the gate harnesses that include this file
         // have no Cocoa bridge. No layer (no render view yet) refuses the way
         // a window that cannot connect is refused, EGL_BAD_NATIVE_WINDOW.
+#ifdef _WIN32
+        auto ensureLayer = &winapk_ensure_surfaceview_window;
+        void (*noteLive)() = nullptr;
+#else
         static auto ensureLayer = (void*(*)(int*, int*))dlsym(RTLD_DEFAULT, "CocoaEnsureNativeEglLayer");
         static auto noteLive = (void(*)())dlsym(RTLD_DEFAULT, "CocoaNoteNativeEglSurfaceLive");
+#endif
         void* c = egl_h(env, cfg);
         int lw = 0, lh = 0;
         void* layer = ensureLayer ? ensureLayer(&lw, &lh) : nullptr;

@@ -720,8 +720,8 @@ P0 审计/锁定、Java MVP（G1）、N0 ELF/ABI（G2）及已声明 C/Bionic/JN
 - [x] 实现 `WinApkCompositor`（D3D11/DXGI 多层合成器）：支持同一窗口内 `[底层 SurfaceView*] → [主窗口 UI (保留 Premultiplied Alpha 挖孔)] → [顶层 zOrderOnTop SurfaceView*]` Z 序硬件合成，对齐先建层后回调 `surfaceCreated` 的无锁契约；`--embed` 模式采用 3 槽异步 `D3D11_USAGE_STAGING` 环形缓冲回读写入现有 `Local\winapk-frame-<token>` 共享内存，彻底废除隐藏窗口 `PrintWindow` 与阻塞式 `glReadPixels`，保持窗格/独立窗口零重启 `Reattach`。
 
 ### GPU-P2：Java OpenGL ES 1.1–3.2 + EGL 1.4/1.5 + `TextureView` 全集
-- [ ] 接入上游已验证的 `GLES10`、`GLES11`、`GLES20`、`GLES30`、`GLES31`、`GLES32`、`EGL14`、`EGL15`、`EGLExt` 全部 667 个 JNI 桥函数，在 Windows 下统一绑定私有 ARM64 ANGLE。
-- [ ] 解锁 `GLSurfaceView` 的 ES 1.1/2.0/3.0+、自定义 `EGLConfigChooser` / `EGLContextFactory` / 独立 `GLThread` 渲染，以及 `MacApkEGL10` + `MacApkGlWindow`（`TextureView` / `SurfaceTexture` 生产者纹理合成）。
+- [x] 接入上游已验证的 `GLES10`、`GLES11`、`GLES20`、`GLES30`、`GLES31`、`GLES32`、`EGL14`、`EGL15`、`EGLExt` 全部 667 个 JNI 桥函数，在 Windows 下统一绑定私有 ARM64 ANGLE。
+- [x] 解锁 `GLSurfaceView` 的 ES 1.1/2.0/3.0+、自定义 `EGLConfigChooser` / `EGLContextFactory` / 独立 `GLThread` 渲染，以及 `MacApkEGL10` + `MacApkGlWindow`（`TextureView` / `SurfaceTexture` 生产者纹理合成）。
 
 ### GPU-P3：Guest Native EGL 1.5 + GLES 1.1–3.1 多线程共享上下文全集
 - [ ] 基于 ARM64 标量/指针调用约定一致性证明，解除“所有客体 GL 命令同步派发至 Win32 UI 线程”的串行限制，允许客体各渲染/IO 线程直接在当前线程驱动 ANGLE。
