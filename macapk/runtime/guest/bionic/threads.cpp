@@ -1204,6 +1204,71 @@ ThreadRuntime::~ThreadRuntime() {
     check();
 }
 
+int32_t Usleep(uint32_t usec) {
+    const GuestTimespec ts{static_cast<int64_t>(usec / 1000000u), static_cast<int64_t>(usec % 1000000u) * 1000};
+    return NanoSleep(&ts, nullptr);
+}
+
+int32_t GuestGetPid() {
+    (void)Context();
+    return static_cast<int32_t>(GetCurrentProcessId());
+}
+
+int32_t GuestGetTid() {
+    (void)Context();
+    return static_cast<int32_t>(GetCurrentThreadId());
+}
+
+std::atomic<const char* (*)(const char*)> g_guestEnvLookup{nullptr};
+
+const char* GuestGetenv(const char* name) {
+    (void)Context();
+    if (!name || !*name) return nullptr;
+    if (auto fn = g_guestEnvLookup.load(std::memory_order_acquire)) return fn(name);
+    return nullptr;
+}
+
+/// Guest LP64 integer parsers: Android ARM64 `long` is 64-bit, never Windows 32-bit `long`.
+int32_t GuestAtoi(const char* s) {
+    (void)Context();
+    return s ? static_cast<int32_t>(std::strtol(s, nullptr, 10)) : 0;
+}
+
+int64_t GuestAtol(const char* s) {
+    (void)Context();
+    return s ? static_cast<int64_t>(std::strtoll(s, nullptr, 10)) : 0;
+}
+
+int64_t GuestStrtol(const char* s, char** endptr, int32_t base) {
+    (void)Context();
+    if (!s || (base != 0 && (base < 2 || base > 36))) {
+        if (endptr) *endptr = const_cast<char*>(s);
+        *Errno() = kInvalid;
+        return 0;
+    }
+    errno = 0;
+    const long long val = std::strtoll(s, endptr, base);
+    if (errno == ERANGE) *Errno() = 34;  // Bionic ERANGE
+    return static_cast<int64_t>(val);
+}
+
+uint64_t GuestStrtoul(const char* s, char** endptr, int32_t base) {
+    (void)Context();
+    if (!s || (base != 0 && (base < 2 || base > 36))) {
+        if (endptr) *endptr = const_cast<char*>(s);
+        *Errno() = kInvalid;
+        return 0;
+    }
+    errno = 0;
+    const unsigned long long val = std::strtoull(s, endptr, base);
+    if (errno == ERANGE) *Errno() = 34;  // Bionic ERANGE
+    return static_cast<uint64_t>(val);
+}
+
+void ThreadRuntime::SetEnvLookup(const char* (*lookup)(const char*)) {
+    g_guestEnvLookup.store(lookup, std::memory_order_release);
+}
+
 std::span<const HostSymbol> ThreadRuntime::Imports() {
     static const HostSymbol imports[] = {
         {"__errno", reinterpret_cast<void*>(&Errno)},
@@ -1251,6 +1316,16 @@ std::span<const HostSymbol> ThreadRuntime::Imports() {
         {"fstat64", reinterpret_cast<void*>(&FileStat)},
         {"clock_gettime", reinterpret_cast<void*>(&ClockGetTime)},
         {"nanosleep", reinterpret_cast<void*>(&NanoSleep)},
+        {"usleep", reinterpret_cast<void*>(&Usleep)},
+        {"getpid", reinterpret_cast<void*>(&GuestGetPid)},
+        {"gettid", reinterpret_cast<void*>(&GuestGetTid)},
+        {"getenv", reinterpret_cast<void*>(&GuestGetenv)},
+        {"atoi", reinterpret_cast<void*>(&GuestAtoi)},
+        {"atol", reinterpret_cast<void*>(&GuestAtol)},
+        {"strtol", reinterpret_cast<void*>(&GuestStrtol)},
+        {"strtoll", reinterpret_cast<void*>(&GuestStrtol)},
+        {"strtoul", reinterpret_cast<void*>(&GuestStrtoul)},
+        {"strtoull", reinterpret_cast<void*>(&GuestStrtoul)},
         {"dlopen", reinterpret_cast<void*>(&DlOpen)},
         {"dlsym", reinterpret_cast<void*>(&DlSym)},
         {"dlclose", reinterpret_cast<void*>(&DlClose)},

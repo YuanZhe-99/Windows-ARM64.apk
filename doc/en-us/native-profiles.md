@@ -131,7 +131,9 @@ unsupported attributes, invalid/self join, and read-only x18/sp host-state check
 The `native-probe memory` subset uses fixed-signature wrappers, not raw UCRT export lookup.
 Its audited imports are `malloc`, `calloc`, `realloc`, `free`; `memcpy`, `memmove`, `memset`,
 `memcmp`, `memchr`; `strlen`, `strnlen`, `strcmp`, `strncmp`, `strcpy`, `strncpy`, `strchr`,
-`strrchr`, `strstr`, `strdup`. Sizes and length returns are explicit unsigned 64-bit guest types.
+`strrchr`, `strstr`, `strdup`; plus LP64 integer/environment/process helpers `atoi`, `atol`,
+`strtol`, `strtoll`, `strtoul`, `strtoull`, `getenv`, `getpid`, `gettid` and `usleep`. Sizes,
+`long` results and length returns are explicit 64-bit guest types.
 
 - Each runtime owns a private Windows heap and an allocation ownership table shared by its
   managed threads. Bytes may cross a proven pointer signature; no allocator or CRT object does.
@@ -220,10 +222,13 @@ The first JNI increment is a standalone, real-JVM probe, not APK admission. A pr
 references and IDs remain JVM-owned tokens; neither host table nor host environment address is
 exposed to guest code. Unsupported slots terminate with `GUEST_ABI_UNSUPPORTED` and the slot.
 Method descriptors are recorded on lookup, bounded to 64 arguments and checked before calls.
-The fixed subset covers exception queries/throw/clear, local/global/weak references, superclass
-and instance checks, method and field lookup/access, UTF-16/modified-UTF8 strings and regions,
-primitive/object arrays and element/region acquire/release. Reflection, class definition,
-critical pinning, monitors, direct buffers and guest UnregisterNatives are not admitted.
+The fixed subset covers exception queries/throw/clear, local/global/weak references, `AllocObject`,
+superclass and instance checks, method and field lookup/access, `FromReflectedField` /
+`ToReflectedField` / `ToReflectedMethod`, UTF-16/modified-UTF8 strings and regions,
+primitive/object arrays and element/region/critical acquire/release, and bounded
+`NewDirectByteBuffer` / `GetDirectBufferAddress` / `GetDirectBufferCapacity`. Class definition,
+`FromReflectedMethod` without recorded descriptors, `MonitorEnter` / `MonitorExit` and guest
+`UnregisterNatives` remain refused.
 
 Android-built helper entries implement constructor and instance/nonvirtual/static `...`/V
 calls with guest `va_copy`/`va_arg`, including default promotions, then use the proxy's A

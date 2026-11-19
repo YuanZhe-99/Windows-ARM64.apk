@@ -672,6 +672,25 @@ jobject NewObject(void* guest, jclass type, jmethodID method, const jvalue* argu
     return Checked(guest).host->NewObjectA(type, method, arguments);
 }
 
+/// Wraps a guest-owned native memory range in a Java DirectByteBuffer with bounds validation.
+jobject NewDirectBuffer(void* guest, void* address, jlong capacity) {
+    JNIEnv* host = Checked(guest).host;
+    if (!address || capacity < 0 || capacity > 0x7fffffffLL) return nullptr;
+    return host->NewDirectByteBuffer(address, capacity);
+}
+
+/// Returns the base address of a Java DirectByteBuffer, or nullptr for null/non-direct objects.
+void* DirectBufferAddress(void* guest, jobject buf) {
+    JNIEnv* host = Checked(guest).host;
+    return buf ? host->GetDirectBufferAddress(buf) : nullptr;
+}
+
+/// Returns the 64-bit byte capacity of a Java DirectByteBuffer, or -1 for null/non-direct objects.
+jlong DirectBufferCapacity(void* guest, jobject buf) {
+    JNIEnv* host = Checked(guest).host;
+    return buf ? host->GetDirectBufferCapacity(buf) : -1;
+}
+
 // Every A entry below is a fixed signature. The Android helper supplies the ... and V entries.
 #define CALL(Name, CType, Code) \
     /** Calls one checked instance method through its host A entry. */ \
@@ -727,6 +746,13 @@ void Install(JniState& state) {
     SET(GetJavaVM, &GetVm);
     SET(NewObjectA, &NewObject);
     SET(RegisterNatives, &Register);
+    SET(NewDirectByteBuffer, &NewDirectBuffer);
+    SET(GetDirectBufferAddress, &DirectBufferAddress);
+    SET(GetDirectBufferCapacity, &DirectBufferCapacity);
+    FIXED(AllocObject);
+    FIXED(FromReflectedField); FIXED(ToReflectedField); FIXED(ToReflectedMethod);
+    FIXED(GetPrimitiveArrayCritical); FIXED(ReleasePrimitiveArrayCritical);
+    FIXED(GetStringCritical); FIXED(ReleaseStringCritical);
     FIXED(GetSuperclass); FIXED(IsAssignableFrom);
     FIXED(Throw); FIXED(ThrowNew); FIXED(ExceptionOccurred); FIXED(ExceptionDescribe);
     FIXED(ExceptionClear); FIXED(ExceptionCheck); FIXED(FatalError);

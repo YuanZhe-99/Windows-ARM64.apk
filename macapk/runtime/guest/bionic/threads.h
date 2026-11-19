@@ -44,6 +44,9 @@ public:
     /// Returns audited thread/errno/emutls, memory/string, file/time and dl imports, not arbitrary CRT exports.
     static std::span<const HostSymbol> Imports();
 
+    /// Installs the host-owned mutable environment lookup backing guest getenv(3).
+    static void SetEnvLookup(const char* (*lookup)(const char*));
+
     /// Calls a guest entry with a fresh context, then runs key destructors and frees emulated TLS.
     /// Inputs: entry -- the proven-compatible signature void*(void*).
     /// Notes: synchronous, not nested; modules stay mapped through cleanup. No guest exception

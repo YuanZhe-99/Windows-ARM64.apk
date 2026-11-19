@@ -59,6 +59,9 @@ int bionic_value(void) {
     free(text);
     void* library = dlopen("libc.so", RTLD_NOW | RTLD_LOCAL);
     if (!library || !dlsym(library, "malloc") || dlerror() || dlclose(library)) return 2;
+    char* end = NULL;
+    long wide64 = strtol("8589934593", &end, 10);
+    if (wide64 != 8589934593LL || !end || *end != '\0' || atoi("-42") != -42 || getpid() <= 0 || gettid() <= 0) return 2;
     if (__android_log_print(4, "T07", "%s", "versioned Bionic") != 1) return 3;
     return result ? 0 : 4;
 #endif

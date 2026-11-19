@@ -105,9 +105,10 @@ T08 检查损坏描述符与仍有未 join worker 时销毁运行时导致的终
 ## P3 内存、字节与字符串（T08）
 
 `native-probe memory` 子集使用固定签名包装，不直接查找 UCRT 导出。
-经审计的导入为 `malloc`、`calloc`、`realloc`、`free`；`memcpy`、`memmove`、`memset`、
-`memcmp`、`memchr`；`strlen`、`strnlen`、`strcmp`、`strncmp`、`strcpy`、`strncpy`、`strchr`、
-`strrchr`、`strstr`、`strdup`。大小及长度返回值显式使用客体无符号 64 位类型。
+经审计的导入为 `malloc`、`calloc`、`realloc`、`free`；`memcpy`、`memmove`、`memset`、`memcmp`、`memchr`；
+`strlen`、`strnlen`、`strcmp`、`strncmp`、`strcpy`、`strncpy`、`strchr`、`strrchr`、`strstr`、`strdup`；
+以及 LP64 整数/环境/进程辅助函数 `atoi`、`atol`、`strtol`、`strtoll`、`strtoul`、`strtoull`、`getenv`、
+`getpid`、`gettid` 与 `usleep`。大小、`long` 返回值及长度显式使用客体 64 位类型。
 
 - 每个运行时拥有私有 Windows 堆及由其受管理线程共享的分配归属表。字节可经已验证指针签名跨域，
   分配器或 CRT 对象不可跨域。分配至少按 16 字节对齐；未释放分配在运行时销毁时释放。
@@ -178,9 +179,11 @@ T08 io 合并读写/seek/stat、open/追加标志、映射/错误拒绝与时钟
 代理只转发经审计的固定签名。不透明 JNI 引用及 ID 仍是 JVM 所有的标识；
 不向客体暴露宿主表或环境地址。不支持的槽位以 `GUEST_ABI_UNSUPPORTED` 及槽号终止。
 查询方法时记录描述符，限定为 64 个参数，并在调用前检查。
-固定子集包含异常查询/throw/clear、局部/全局/弱引用、父类及实例检查、方法与字段查询/访问、
-UTF-16/modified-UTF8 字符串及 region、原生类型/对象数组及 element/region 获取/释放。
-尚不开放反射、类定义、critical pinning、monitor、直接缓冲区及客体 UnregisterNatives。
+固定子集包含异常查询/throw/clear、局部/全局/弱引用、`AllocObject`、父类及实例检查、方法与字段查询/访问、
+`FromReflectedField` / `ToReflectedField` / `ToReflectedMethod`、UTF-16/modified-UTF8 字符串及 region、
+原生类型/对象数组及 element/region/critical 获取/释放，以及有界 `NewDirectByteBuffer` /
+`GetDirectBufferAddress` / `GetDirectBufferCapacity`。类定义、未登记描述符的 `FromReflectedMethod`、
+`MonitorEnter` / `MonitorExit` 及客体 `UnregisterNatives` 仍保持拒绝。
 
 Android 构建的辅助库入口用客体 `va_copy`/`va_arg` 实现构造及实例/非虚/静态 `...`/V
 调用，包含默认参数提升，再进入代理的 A 入口。宿主 `va_list` 不跨域。

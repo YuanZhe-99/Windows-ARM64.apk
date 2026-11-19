@@ -283,7 +283,20 @@ static int references(JNIEnv* env) {
     (*env)->ReleaseIntArrayElements(env, array, pinned, 0);
     jint check[3];
     (*env)->GetIntArrayRegion(env, array, 0, 3, check);
-    if (check[1] != 77) return 11;
+    jint* crit = (*env)->GetPrimitiveArrayCritical(env, array, NULL);
+    if (!crit || crit[1] != 77) return 11;
+    crit[1] = 88;
+    (*env)->ReleasePrimitiveArrayCritical(env, array, crit, 0);
+    (*env)->GetIntArrayRegion(env, array, 0, 3, check);
+    if (check[1] != 88) return 11;
+    uint8_t raw_direct[16] = {10, 20, 30, 40};
+    if ((*env)->NewDirectByteBuffer(env, NULL, 16) || (*env)->NewDirectByteBuffer(env, raw_direct, -1)) return 11;
+    jobject direct = (*env)->NewDirectByteBuffer(env, raw_direct, 16);
+    if (!direct || (*env)->GetDirectBufferAddress(env, direct) != raw_direct ||
+        (*env)->GetDirectBufferCapacity(env, direct) != 16 ||
+        (*env)->GetDirectBufferAddress(env, NULL) != NULL ||
+        (*env)->GetDirectBufferCapacity(env, NULL) != -1) return 11;
+    (*env)->DeleteLocalRef(env, direct);
     jobject global = (*env)->NewGlobalRef(env, string);
     jweak weak = (*env)->NewWeakGlobalRef(env, string);
     if (!global || !weak || (*env)->GetObjectRefType(env, global) != JNIGlobalRefType ||

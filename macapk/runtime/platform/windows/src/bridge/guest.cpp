@@ -1,5 +1,6 @@
 // guest.cpp -- process-private P4 APK namespace and host-owned guest JNI service.
 #include "bridge.h"
+#include "host_services.h"
 #include "surface.h"
 #include "guest_graphics.h"
 #include "guest_vulkan.h"
@@ -68,6 +69,7 @@ void Open(JNIEnv* env, jclass, jobject loader, jstring name) {
                 std::span<const guest::HostSymbol> imports{};
                 std::vector<guest::BuiltinLibrary> libraries;
                 if (!n0) {
+                    guest::ThreadRuntime::SetEnvLookup(&GuestEnvGet);
                     value->support = guest::BionicLibraries::Load(config.helpers + L"\\libwinapk-bionic.so", &error);
                     if (!value->support) { Reject(env, error); return; }
                     imports = value->support->Imports();
