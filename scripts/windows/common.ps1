@@ -116,8 +116,8 @@ the Kotlin fixture T04; it runs on the build JDK.
 function Find-Kotlinc {
     $lock = Get-Content (Join-Path (Get-RepoRoot) 'build-lock.json') -Raw | ConvertFrom-Json
     $want = $lock.guest.kotlinc.version -replace '.*\((.*)\).*', '$1'
-    $studio = (Get-ItemProperty 'HKLM:\SOFTWARE\Android Studio' -Name Path -ErrorAction SilentlyContinue).Path
-    if (-not $studio) { $studio = Join-Path $env:ProgramFiles 'Android\Android Studio' }
+    $reg = Get-ItemProperty 'HKLM:\SOFTWARE\Android Studio' -Name Path -ErrorAction SilentlyContinue
+    $studio = if ($reg -and $reg.PSObject.Properties['Path']) { $reg.Path } else { Join-Path $env:ProgramFiles 'Android\Android Studio' }
     foreach ($k in @($env:KOTLIN_HOME, (Join-Path $studio 'plugins\Kotlin\kotlinc'))) {
         if (-not $k -or -not (Test-Path (Join-Path $k 'bin\kotlinc.bat'))) { continue }
         $have = (Get-Content (Join-Path $k 'build.txt') -ErrorAction SilentlyContinue | Select-Object -First 1)

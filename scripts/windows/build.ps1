@@ -703,6 +703,9 @@ function Build-Host([string]$Target = '') {
     Write-Step "Configuring the native host ($Configuration, ARM64, clang-cl)"
     $cmake = Join-Path $vs.CMakeDir 'cmake.exe'
     $toolchain = Join-Path $vs.Root 'VC\vcpkg\scripts\buildsystems\vcpkg.cmake'
+    if (-not (Test-Path $toolchain) -and $env:VCPKG_INSTALLATION_ROOT) {
+        $toolchain = Join-Path $env:VCPKG_INSTALLATION_ROOT 'scripts\buildsystems\vcpkg.cmake'
+    }
     $env:VCPKG_ROOT = $null
     Invoke-InDevShell $vs @(
         $cmake, '-S', $rt, '-B', $native, '-G', 'Ninja',
