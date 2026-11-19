@@ -9,9 +9,9 @@ G3 之后 P5/P6 进行中，尚无图形关卡通过。Java 位图路径保持�
 |---|---|---|
 | 宿主 ANGLE/D3D11 | PASS | Adreno 8cx Gen 3 硬件，驱动 `30.0.4122.4000`，EGL 1.5 / GLES 3.0；绘制/回读、resize 及销毁 |
 | 宿主 ANGLE/Vulkan 经 Dozen | PASS；用户批准的实验（ADR-0004） | 同一 Adreno GPU 经 D3D12，Mesa `26.3.0-devel (git-e3fc7749c6)`、Vulkan `1.2.359`、EGL 1.5 / GLES 2.0；`translated=yes software=no` |
-| Java GLES 进入 ANGLE | 下述受限 GLES20 profile PASS | 真实 APK `GLSurfaceView` 颜色、resize、恢复、销毁及显式拒绝 |
+| Java GLES 进入 ANGLE | PASS（`GLES10/11/20/30/31/32` + `EGL14/15/EGLExt`） | 真实 APK `GLSurfaceView` ES 2.0 与 ES 3.0（VAO/UBO/`glTexStorage2D`/FBO MRT/实例化/blit）、工作线程 `EGL14` `SurfaceTexture`（`MacApkGlWindow`）、resize、恢复、销毁及 Dozen 下 ES3 显式拒绝 |
 | 受管理的 native window | 下述引用 profile PASS | 真实受限 APK、客户区尺寸、换挂载及引用拒绝；不绘制 |
-| 客体 GLES/N2 | 受限 T11 profile PASS | 普通 NDK APK；纹理/FBO、混合 shader、resize、surface 替换与显式 Vulkan 拒绝 |
+| 客体 GLES/N2 | PASS（`libEGL.so` + `libGLESv1_CM/v2/v3.so`） | 普通 NDK APK（`DT_NEEDED` ES2 + ES3）；多线程 `pthread` `share_context`、`Pbuffer`、`KHR_surfaceless_context`、`EGLImageKHR`（`glEGLImageTargetTexture2DOES`）、D3D11 ES 3.0 VAO + Dozen ES 3.0 拒绝、resize、最小化/恢复、表面替换与显式 Vulkan 拒绝 |
 | 客体 Vulkan 实例/WSI | T13.wsi 在 Dozen 上 PASS | 真实 APK、Android→Win32 surface、实际支持与 capabilities、resize、换挂载及拒绝；不绘制 |
 | 客体 Vulkan 交换链清屏 | Dozen 上受限 T13 profile PASS | 真实客体设备/队列、命令缓冲区及交换链，resize 前后共三次呈现 |
 | 客体 Vulkan 传输缓冲区 | Dozen 上受限 T13 profile PASS | 一致内存分配及 GPU 填充，16 个字精确回读及生命周期拒绝 |
@@ -105,27 +105,27 @@ Vulkan 后端对 ES 3.0 请求的显式拒绝。
 
 ## 客体 EGL/GLES profile
 
-启用 `--native=restricted` 及 `--graphics` 后端后，普通 `SurfaceView` 可承载一组客体 EGL
-display/config/context/window surface。客体看到的是桥接令牌；驱动句柄留在 Win32 消息线程。
-客体线程持有逻辑绑定，命令同步在消息线程执行，不持有注册表锁。resize 更新宿主 drawable
-而不更换客体 context；失效挂载不能交换或再次绑定。客体 EGL 与 Java EGL 不能同时占用
-ANGLE；客体 Vulkan 使用独立 dispatch 与所有权。
+启用 `--native=restricted` 及 `--graphics` 后端后，逻辑系统库 `libEGL.so`、
+`libGLESv1_CM.so`、`libGLESv2.so` 与 `libGLESv3.so`（`guest_graphics.cpp`、
+`guest_gles_autogen.inc`）暴露 EGL 1.5（`EGL_KHR_create_context`、
+`EGL_KHR_surfaceless_context`、`EGL_KHR_image_base`、`EGL_KHR_gl_texture_2D_image`、
+`EGL_KHR_gl_renderbuffer_image`、`EGL_KHR_fence_sync`、`EGL_KHR_wait_sync`）及 505 个
+GLES 1.0/1.1/2.0/3.0/3.1/3.2 与 OES/EXT/KHR 入口。客体线程直接在当前调用线程上驱动 ANGLE，
+不再串行转发至 Win32 消息线程，支持多 `EGLContext`、跨渲染线程与 IO 工作 `pthread` 的
+`share_context`、`eglCreatePbufferSurface`、无表面 `eglMakeCurrent` 以及 `EGLImageKHR` 跨线程纹理传递。
 
-逻辑 `libEGL.so` 与 `libGLESv2.so` 只暴露固定的 ES2 和窗口 EGL 命令。`eglGetProcAddress`
-从同一张表返回桥入口或空值。不公布扩展；不支持 ES3 context、pbuffer / 无 surface context、
-多个 display、自定义 native display 或共享 context。报告的 1.4/ES2 字符串标识 profile，
-不是一致性声明。调用要求窗口消息循环已运行，display 归属不能在客体线程间转移。
-受管理的 surface 最小化且尺寸为零时，桥拒绝 swap 并返回 `EGL_BAD_SURFACE`。
-恢复后，夹具用原客体 context、surface 和 program 绘制并回读，再测试 resize 和替换。
-这不等于真实 context loss 或长期稳定性验证。
-T11 仍只启动原有三个进程。首次扩展测试观察到一次 Vulkan 在 resize/替换后的 swap 失败；
-复测通过。驱动 swap 失败现会记录 EGL 错误码，不再只留下夹具步骤编号。
+客体窗口表面（`ANativeWindow*`）底层由动态缩放的 ANGLE Pbuffer 承载，并交由 `WinApkCompositor`
+按 Z 序合成（D3D11 下采用 `EGL_D3D_TEXTURE_2D_SHARE_HANDLE_ANGLE` 零拷贝共享纹理，Vulkan 下采用
+FBO-0 RGBA8 传输），在独立窗口与 `--embed` 窗格中表现完全一致。宿主 WSI 扩展
+（`eglCreatePlatformWindowSurface`）与未知扩展仍返回空指针。最小化（`0x0`）或已失效表面调用
+`eglSwapBuffers` 时返回 `EGL_BAD_SURFACE`。
 
-`test.ps1 -Suite GraphicsGuest` 以一个 API-30 APK 分别测试显式硬件 D3D11 和 Vulkan/Dozen，
-并在仅隐藏子进程 Vulkan ICD 时额外启动一次。检查 RGBA8 纹理上传经 FBO 精确回读、
-混合三角形回读（容差 1–2 字节）、resize 和 surface 替换保留同一个 context、不公布扩展、
-proc 地址身份，以及无效 native window、ES3、过期/当前 surface 和后端不可用错误。
-显式 Vulkan 失败时应用收到 `EGL_NOT_INITIALIZED`，可以正常关闭。
+`test.ps1 -Suite GraphicsGuest` 以一个 API-30 NDK APK（`DT_NEEDED` 含 `libandroid.so`、
+`libEGL.so`、`libGLESv2.so`、`libGLESv3.so`）分别测试显式硬件 D3D11、显式 Vulkan/Dozen，以及屏蔽子进程
+Vulkan ICD 的拒绝用例。验证后台 `pthread_create` IO 线程经 `share_context` + Pbuffer + 无表面绑定 +
+`EGLImageKHR` / `glEGLImageTargetTexture2DOES` 上传纹理并由主渲染线程采样回读、D3D11 下的 GLES 3.0
+（`#version 300 es` / VAO）与 Dozen ES 2.0 后端下对 ES 3.0 的诚实拒绝（`EGL_BAD_MATCH`）、混合三角形回读、
+最小化/恢复、窗口缩放（`360x720` → `424x752`）、表面替换及显式不可用拒绝（`EGL_NOT_INITIALIZED`）。
 
 ## 客体 Vulkan 实例与 WSI 增量
 

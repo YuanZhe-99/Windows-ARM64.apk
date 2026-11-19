@@ -724,8 +724,8 @@ P0 审计/锁定、Java MVP（G1）、N0 ELF/ABI（G2）及已声明 C/Bionic/JN
 - [x] 解锁 `GLSurfaceView` 的 ES 1.1/2.0/3.0+、自定义 `EGLConfigChooser` / `EGLContextFactory` / 独立 `GLThread` 渲染，以及 `MacApkEGL10` + `MacApkGlWindow`（`TextureView` / `SurfaceTexture` 生产者纹理合成）。
 
 ### GPU-P3：Guest Native EGL 1.5 + GLES 1.1–3.1 多线程共享上下文全集
-- [ ] 基于 ARM64 标量/指针调用约定一致性证明，解除“所有客体 GL 命令同步派发至 Win32 UI 线程”的串行限制，允许客体各渲染/IO 线程直接在当前线程驱动 ANGLE。
-- [ ] 提供 `libEGL.so`、`libGLESv1_CM.so`、`libGLESv2.so`、`libGLESv3.so` 完整导出表与 `eglGetProcAddress` 动态表（含 `glDebugMessageCallback*` 安全客体 thunk）；支持多线程多 `EGLContext`、`share_context`、`eglCreatePbufferSurface`、`EGL_KHR_surfaceless_context`、`EGLImageKHR` / `glEGLImageTargetTexture2DOES`、`eglSwapInterval` 及 `EGL_RECORDABLE_ANDROID` 兼容过滤，按实际后端诚实报告 ES 版本与扩展。
+- [x] 基于 ARM64 标量/指针调用约定一致性证明，解除“所有客体 GL 命令同步派发至 Win32 UI 线程”的串行限制，允许客体各渲染/IO 线程直接在当前线程驱动 ANGLE。
+- [x] 提供 `libEGL.so`、`libGLESv1_CM.so`、`libGLESv2.so`、`libGLESv3.so` 完整导出表与 `eglGetProcAddress` 动态表（含 `glDebugMessageCallback*` 安全客体 thunk）；支持多线程多 `EGLContext`、`share_context`、`eglCreatePbufferSurface`、`EGL_KHR_surfaceless_context`、`EGLImageKHR` / `glEGLImageTargetTexture2DOES`、`eglSwapInterval` 及 `EGL_RECORDABLE_ANDROID` 兼容过滤，按实际后端诚实报告 ES 版本与扩展。
 
 ### GPU-P4：Guest Vulkan 1.0–1.3 全集（`vk.xml` 代码生成 + 离屏/共享纹理 WSI）
 - [ ] 基于锁定版 `Vulkan-Headers` `vk.xml` 自动生成结构体编译期 ABI 断言、250+ 数据面/录制面命令零开销直通绑定及多 `VkInstance`/`VkDevice`/`VkQueue` 控制面包装器。

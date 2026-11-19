@@ -1,239 +1,448 @@
-// Android EGL/GLES fixed signatures. Driver objects and current state stay on the Win32 thread.
+// guest_graphics.cpp -- Full multi-threaded Android guest EGL 1.5 + OpenGL ES 1.1/2.0/3.0/3.1
+// bridge over private ARM64 ANGLE and WinApkCompositor (GPU-P3, ADR-0005).
+//
+// Architecture:
+//   - Guest threads execute GLES commands directly on the calling thread against ANGLE (no
+//     Win32 UI-thread serialization bottleneck or cross-thread deadlocks).
+//   - Multiple `EGLContext`s, `share_context` resource sharing across render and IO worker
+//     threads, `eglCreatePbufferSurface`, `EGL_KHR_surfaceless_context`, `EGLImageKHR` and
+//     `EGLSyncKHR` are supported.
+//   - Guest window surfaces (`ANativeWindow*`) are backed by dynamically resized ANGLE Pbuffers
+//     composited in SurfaceFlinger Z-order by `WinApkCompositor` (zero-copy DXGI shared texture
+//     on D3D11, FBO-0 RGBA8 transfer on Vulkan), working identically in standalone windows and
+//     `--embed` panes without `HWND` swapchain collisions.
 #include "guest_graphics.h"
 #include "angle_runtime.h"
-#include "compositor.h"
-#include "guest_vulkan.h"
 #include "bridge.h"
+#include "compositor.h"
 #include "embed.h"
+#include "guest_vulkan.h"
 #include "surface.h"
 
 #ifdef WINAPK_HAS_ANGLE_HEADERS
 #include <EGL/egl.h>
 #include <EGL/eglext.h>
 #include <EGL/eglext_angle.h>
+#include <GLES/gl.h>
 #include <GLES2/gl2.h>
+#include <GLES2/gl2ext.h>
+#include <GLES3/gl32.h>
+
+#include <algorithm>
 #include <atomic>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
-#include <new>
+#include <map>
+#include <memory>
+#include <mutex>
+#include <string>
+#include <unordered_map>
 #include <utility>
+#include <vector>
 
 namespace winapk::bridge {
 namespace {
 
 static_assert(sizeof(EGLint) == 4 && sizeof(EGLBoolean) == 4 && sizeof(GLint) == 4 &&
               sizeof(GLenum) == 4 && sizeof(GLfloat) == 4 && sizeof(GLboolean) == 1 &&
-              sizeof(EGLDisplay) == 8 && sizeof(EGLSurface) == 8 && sizeof(EGLContext) == 8);
+              sizeof(GLintptr) == 8 && sizeof(GLsizeiptr) == 8 &&
+              sizeof(GLint64) == 8 && sizeof(GLuint64) == 8 &&
+              sizeof(EGLDisplay) == 8 && sizeof(EGLSurface) == 8 && sizeof(EGLContext) == 8 &&
+              sizeof(EGLImageKHR) == 8 && sizeof(EGLSyncKHR) == 8);
 
-#define EGL_DRIVER(X) \
-    X(eglGetProcAddress) X(eglInitialize) X(eglBindAPI) X(eglChooseConfig) \
-    X(eglCreateContext) X(eglCreateWindowSurface) X(eglMakeCurrent) X(eglSwapBuffers) \
-    X(eglDestroyContext) X(eglDestroySurface) X(eglTerminate) X(eglGetError) X(eglGetConfigAttrib)
+constexpr uintptr_t kLogicalDisplay = 1;
 
-// Fixed scalar/pointer ARM64 signatures; no variadic calls, callbacks, or native handle forwarding.
-#define GL_VOID(X) \
-    X(glClear, (GLbitfield a), (a)) \
-    X(glClearColor, (GLfloat a, GLfloat b, GLfloat c, GLfloat d), (a,b,c,d)) \
-    X(glViewport, (GLint x, GLint y, GLsizei w, GLsizei h), (x,y,w,h)) \
-    X(glScissor, (GLint x, GLint y, GLsizei w, GLsizei h), (x,y,w,h)) \
-    X(glEnable, (GLenum a), (a)) X(glDisable, (GLenum a), (a)) \
-    X(glBlendFunc, (GLenum a, GLenum b), (a,b)) \
-    X(glGenTextures, (GLsizei n, GLuint* a), (n,a)) \
-    X(glDeleteTextures, (GLsizei n, const GLuint* a), (n,a)) \
-    X(glBindTexture, (GLenum a, GLuint b), (a,b)) \
-    X(glTexParameteri, (GLenum a, GLenum b, GLint c), (a,b,c)) \
-    X(glTexImage2D, (GLenum a, GLint b, GLint c, GLsizei d, GLsizei e, GLint f, GLenum g, GLenum h, const void* i), (a,b,c,d,e,f,g,h,i)) \
-    X(glGenFramebuffers, (GLsizei n, GLuint* a), (n,a)) \
-    X(glDeleteFramebuffers, (GLsizei n, const GLuint* a), (n,a)) \
-    X(glBindFramebuffer, (GLenum a, GLuint b), (a,b)) \
-    X(glFramebufferTexture2D, (GLenum a, GLenum b, GLenum c, GLuint d, GLint e), (a,b,c,d,e)) \
-    X(glShaderSource, (GLuint a, GLsizei b, const GLchar* const* c, const GLint* d), (a,b,c,d)) \
-    X(glCompileShader, (GLuint a), (a)) X(glDeleteShader, (GLuint a), (a)) \
-    X(glGetShaderiv, (GLuint a, GLenum b, GLint* c), (a,b,c)) \
-    X(glAttachShader, (GLuint a, GLuint b), (a,b)) \
-    X(glLinkProgram, (GLuint a), (a)) X(glUseProgram, (GLuint a), (a)) X(glDeleteProgram, (GLuint a), (a)) \
-    X(glGetProgramiv, (GLuint a, GLenum b, GLint* c), (a,b,c)) \
-    X(glBindAttribLocation, (GLuint a, GLuint b, const GLchar* c), (a,b,c)) \
-    X(glEnableVertexAttribArray, (GLuint a), (a)) X(glDisableVertexAttribArray, (GLuint a), (a)) \
-    X(glVertexAttribPointer, (GLuint a, GLint b, GLenum c, GLboolean d, GLsizei e, const void* f), (a,b,c,d,e,f)) \
-    X(glDrawArrays, (GLenum a, GLint b, GLsizei c), (a,b,c)) \
-    X(glReadPixels, (GLint a, GLint b, GLsizei c, GLsizei d, GLenum e, GLenum f, void* g), (a,b,c,d,e,f,g))
-#define GL_RESULT(X) \
-    X(GLenum, glCheckFramebufferStatus, (GLenum a), (a)) \
-    X(GLuint, glCreateShader, (GLenum a), (a)) \
-    X(GLuint, glCreateProgram, (), ())
-
-/// Owns one host display and one logical configuration/context/window, all on the window thread.
-struct Session {
-#define FIELD(name) decltype(&::name) name = nullptr;
-#define VFIELD(name, args, call) FIELD(name)
-#define RFIELD(type, name, args, call) FIELD(name)
-    EGL_DRIVER(FIELD)
-    GL_VOID(VFIELD)
-    GL_RESULT(RFIELD)
-    FIELD(glGetString) FIELD(glGetError)
-#undef RFIELD
-#undef VFIELD
-#undef FIELD
-    HMODULE egl = nullptr, gles = nullptr;
-    EGLDisplay display = EGL_NO_DISPLAY;
-    EGLConfig config = nullptr;
-    EGLContext context = EGL_NO_CONTEXT;
-    EGLSurface drawable = EGL_NO_SURFACE;
-    HWND window = nullptr;
-    void* native = nullptr;
-    void* configId = nullptr;
-    void* contextId = nullptr;
-    void* surfaceId = nullptr;
-    uint64_t owner = 0;
-    uint64_t current = 0;
-    int width = 0, height = 0;
-    bool presented = false;
-    bool lost = false;
-    const char* backend = nullptr;
-    bool rendererChecked = false;
+struct GuestConfigEntry {
+    EGLConfig hostConfig = nullptr;
+    EGLint renderableMask = EGL_OPENGL_ES2_BIT;
 };
 
-Session session;
-constexpr uintptr_t kDisplay = 1;
-uintptr_t nextId = 2; // never reused; access is serialized on the owner thread
-std::atomic<uint64_t> nextThread{1};
-thread_local const uint64_t caller = nextThread.fetch_add(1, std::memory_order_relaxed);
-thread_local EGLint lastError = EGL_SUCCESS;
-thread_local GLenum lastGlError = GL_NO_ERROR;
+struct GuestContextEntry {
+    EGLContext hostContext = nullptr;
+    EGLConfig guestConfig = nullptr;
+    int clientMajor = 2;
+    uint64_t boundThread = 0;
+};
 
-/// Sets an EGL error for the calling guest thread.
-EGLint Fail(EGLint error) { lastError = error; return error; }
+struct GuestSurfaceEntry {
+    bool isWindow = false;
+    EGLConfig hostConfig = nullptr;
+    EGLSurface hostPbuffer = EGL_NO_SURFACE;
+    void* nativeToken = nullptr;
+    HWND hwnd = nullptr;
+    int width = 0, height = 0;
+    uint64_t boundThread = 0;
+    bool presented = false;
+};
 
-/// Contains allocation errors at the fixed guest ABI boundary.
-template<class F> bool Dispatch(F&& f) {
-    try {
-        return DispatchGuestGraphics(std::forward<F>(f));
-    } catch (const std::bad_alloc&) {
-        return false;
+struct AngleDispatch {
+    HMODULE egl = nullptr;
+    HMODULE gles = nullptr;
+    EGLDisplay display = EGL_NO_DISPLAY;
+    const char* backend = nullptr;
+    int maxEsMajor = 2;
+    int initRefs = 0;
+    bool lost = false;
+    bool injectLoss = false;
+    bool lossInjected = false;
+    bool loggedRenderer = false;
+
+    PFNEGLGETPROCADDRESSPROC eglGetProcAddress = nullptr;
+    PFNEGLINITIALIZEPROC eglInitialize = nullptr;
+    PFNEGLTERMINATEPROC eglTerminate = nullptr;
+    PFNEGLGETERRORPROC eglGetError = nullptr;
+    PFNEGLQUERYSTRINGPROC eglQueryString = nullptr;
+    PFNEGLBINDAPIPROC eglBindAPI = nullptr;
+    PFNEGLQUERYAPIPROC eglQueryAPI = nullptr;
+    PFNEGLWAITCLIENTPROC eglWaitClient = nullptr;
+    PFNEGLRELEASETHREADPROC eglReleaseThread = nullptr;
+    PFNEGLGETCONFIGSPROC eglGetConfigs = nullptr;
+    PFNEGLCHOOSECONFIGPROC eglChooseConfig = nullptr;
+    PFNEGLGETCONFIGATTRIBPROC eglGetConfigAttrib = nullptr;
+    PFNEGLCREATEPBUFFERSURFACEPROC eglCreatePbufferSurface = nullptr;
+    PFNEGLDESTROYSURFACEPROC eglDestroySurface = nullptr;
+    PFNEGLQUERYSURFACEPROC eglQuerySurface = nullptr;
+    PFNEGLSURFACEATTRIBPROC eglSurfaceAttrib = nullptr;
+    PFNEGLBINDTEXIMAGEPROC eglBindTexImage = nullptr;
+    PFNEGLRELEASETEXIMAGEPROC eglReleaseTexImage = nullptr;
+    PFNEGLSWAPINTERVALPROC eglSwapInterval = nullptr;
+    PFNEGLCREATECONTEXTPROC eglCreateContext = nullptr;
+    PFNEGLDESTROYCONTEXTPROC eglDestroyContext = nullptr;
+    PFNEGLMAKECURRENTPROC eglMakeCurrent = nullptr;
+    PFNEGLQUERYCONTEXTPROC eglQueryContext = nullptr;
+    PFNEGLWAITGLPROC eglWaitGL = nullptr;
+    PFNEGLWAITNATIVEPROC eglWaitNative = nullptr;
+    PFNEGLQUERYSURFACEPOINTERANGLEPROC eglQuerySurfacePointerANGLE = nullptr;
+
+    PFNEGLCREATEIMAGEKHRPROC eglCreateImageKHR = nullptr;
+    PFNEGLDESTROYIMAGEKHRPROC eglDestroyImageKHR = nullptr;
+    PFNEGLCREATESYNCKHRPROC eglCreateSyncKHR = nullptr;
+    PFNEGLDESTROYSYNCKHRPROC eglDestroySyncKHR = nullptr;
+    PFNEGLCLIENTWAITSYNCKHRPROC eglClientWaitSyncKHR = nullptr;
+    PFNEGLWAITSYNCKHRPROC eglWaitSyncKHR = nullptr;
+    PFNEGLGETSYNCATTRIBKHRPROC eglGetSyncAttribKHR = nullptr;
+
+    PFNGLGETERRORPROC glGetError = nullptr;
+    PFNGLGETSTRINGPROC glGetString = nullptr;
+    PFNGLGETSTRINGIPROC glGetStringi = nullptr;
+    PFNGLFLUSHPROC glFlush = nullptr;
+    PFNGLFINISHPROC glFinish = nullptr;
+    PFNGLREADPIXELSPROC glReadPixels = nullptr;
+    PFNGLBINDFRAMEBUFFERPROC glBindFramebuffer = nullptr;
+    PFNGLGETINTEGERVPROC glGetIntegerv = nullptr;
+};
+
+std::mutex g_mu;
+AngleDispatch g_drv;
+uintptr_t g_nextHandle = 0x100;
+std::map<void*, GuestConfigEntry> g_configs;
+std::map<void*, EGLConfig> g_hostToGuestConfig;
+std::map<void*, GuestContextEntry> g_contexts;
+std::map<void*, GuestSurfaceEntry> g_surfaces;
+std::map<void*, EGLImageKHR> g_images;
+std::map<void*, EGLSyncKHR> g_syncs;
+
+std::atomic<uint64_t> g_nextThreadId{1};
+struct GuestThreadState {
+    uint64_t id = g_nextThreadId.fetch_add(1, std::memory_order_relaxed);
+    EGLContext guestCtx = EGL_NO_CONTEXT;
+    EGLContext hostCtx = EGL_NO_CONTEXT;
+    EGLSurface guestDraw = EGL_NO_SURFACE;
+    EGLSurface guestRead = EGL_NO_SURFACE;
+    EGLint eglError = EGL_SUCCESS;
+    GLenum unboundGlError = GL_NO_ERROR;
+    char strBuf[4][2048]{};
+    unsigned strSlot = 0;
+};
+thread_local GuestThreadState t_tls;
+
+EGLint SetEglError(EGLint err) {
+    t_tls.eglError = err;
+    return err;
+}
+
+bool GuestGlReady() {
+    if (t_tls.hostCtx != EGL_NO_CONTEXT) return true;
+    if (!t_tls.unboundGlError) t_tls.unboundGlError = GL_INVALID_OPERATION;
+    return false;
+}
+
+void NoteGlUnsupported() {
+    if (!t_tls.unboundGlError) t_tls.unboundGlError = GL_INVALID_OPERATION;
+}
+
+void* ResolveAngleGl(const char* name) {
+    if (!name || !g_drv.gles) return nullptr;
+    if (void* p = reinterpret_cast<void*>(GetProcAddress(g_drv.gles, name))) return p;
+    return g_drv.eglGetProcAddress ? reinterpret_cast<void*>(g_drv.eglGetProcAddress(name)) : nullptr;
+}
+
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wunused-function"
+#include "guest_gles_autogen.inc"
+#pragma clang diagnostic pop
+
+GLenum GL_APIENTRY G_glGetError() {
+    if (t_tls.unboundGlError != GL_NO_ERROR) {
+        const GLenum e = t_tls.unboundGlError;
+        t_tls.unboundGlError = GL_NO_ERROR;
+        return e;
     }
+    if (t_tls.hostCtx == EGL_NO_CONTEXT || !g_drv.glGetError) return GL_NO_ERROR;
+    return g_drv.glGetError();
 }
 
-/// Runs a logical EGL command and copies its failure code to the calling guest thread.
-template<class F> EGLBoolean Run(F&& f) {
-    EGLint error = EGL_BAD_ACCESS;
-    const uint64_t id = caller;
-    if (!Dispatch([&] { error = f(id); })) error = EGL_BAD_ACCESS;
-    return error == EGL_SUCCESS ? EGL_TRUE : (Fail(error), EGL_FALSE);
+const GLubyte* GL_APIENTRY G_glGetString(GLenum name) {
+    if (!GuestGlReady() || !g_drv.glGetString) return nullptr;
+    const GLubyte* s = g_drv.glGetString(name);
+    if (!s) return nullptr;
+    char* dst = t_tls.strBuf[(t_tls.strSlot++) & 3];
+    std::snprintf(dst, sizeof(t_tls.strBuf[0]), "%s", reinterpret_cast<const char*>(s));
+    return reinterpret_cast<const GLubyte*>(dst);
 }
 
-/// Validates the bridge display identity and its owner.
-EGLint CheckDisplay(EGLDisplay display, uint64_t id) {
-    if (reinterpret_cast<uintptr_t>(display) != kDisplay) return EGL_BAD_DISPLAY;
-    if (!session.owner) return EGL_NOT_INITIALIZED;
-    return session.owner == id ? EGL_SUCCESS : EGL_BAD_ACCESS;
+const GLubyte* GL_APIENTRY G_glGetStringi(GLenum name, GLuint index) {
+    if (!GuestGlReady() || !g_drv.glGetStringi) return nullptr;
+    const GLubyte* s = g_drv.glGetStringi(name, index);
+    if (!s) return nullptr;
+    char* dst = t_tls.strBuf[(t_tls.strSlot++) & 3];
+    std::snprintf(dst, sizeof(t_tls.strBuf[0]), "%s", reinterpret_cast<const char*>(s));
+    return reinterpret_cast<const GLubyte*>(dst);
 }
 
-/// Consumes one native EGL error; notices loss instead of silently replacing a context.
-EGLint DriverError() {
-    auto error = session.eglGetError();
-    if (error == EGL_CONTEXT_LOST) session.lost = true;
-    return error == EGL_SUCCESS ? EGL_BAD_ACCESS : error;
+// Debug callbacks from guest code are safely ignored at the host driver boundary so raw guest
+// code pointers are never invoked on driver worker threads without `x18`/TLS context.
+void GL_APIENTRY G_glDebugMessageCallback(GLDEBUGPROC, const void*) {
+    if (!GuestGlReady()) return;
+}
+void GL_APIENTRY G_glDebugMessageCallbackKHR(GLDEBUGPROCKHR, const void*) {
+    if (!GuestGlReady()) return;
 }
 
-/// Clears the actual and logical current bindings on the owner thread.
-EGLint Unbind() {
-    if (!session.current) return EGL_SUCCESS;
-    if (!session.eglMakeCurrent(session.display, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT))
-        return DriverError();
-    session.current = 0;
-    return EGL_SUCCESS;
-}
-
-/// Destroys one drawable, optionally maintaining the logical token for explicit cleanup.
-EGLint DropSurface(bool keepToken) {
-    if (auto error = Unbind(); error != EGL_SUCCESS && error != EGL_CONTEXT_LOST) return error;
-    session.current = 0;
-    if (session.drawable && !session.eglDestroySurface(session.display, session.drawable)) return DriverError();
-    session.drawable = EGL_NO_SURFACE;
-    if (session.native) ReleaseSurface(session.native);
-    session.native = nullptr;
-    session.presented = false;
-    if (!keepToken) {
-        if (session.window) InvalidateRect(session.window, nullptr, FALSE);
-        session.window = nullptr;
-        session.surfaceId = nullptr;
+void GL_APIENTRY G_glEGLImageTargetTexture2DOES(GLenum target, GLeglImageOES image) {
+    if (!GuestGlReady()) return;
+    EGLImageKHR hostImg = EGL_NO_IMAGE_KHR;
+    {
+        std::lock_guard lock(g_mu);
+        auto it = g_images.find(image);
+        if (it == g_images.end()) { NoteGlUnsupported(); return; }
+        hostImg = it->second;
     }
-    return EGL_SUCCESS;
+    static auto fn = reinterpret_cast<PFNGLEGLIMAGETARGETTEXTURE2DOESPROC>(ResolveAngleGl("glEGLImageTargetTexture2DOES"));
+    if (fn) fn(target, static_cast<GLeglImageOES>(hostImg));
+    else NoteGlUnsupported();
 }
 
-/// Releases the session, including when the application closes without calling eglTerminate.
-EGLint Shutdown() {
-    EGLint error = DropSurface(false);
-    if (session.context && !session.eglDestroyContext(session.display, session.context))
-        error = DriverError();
-    if (session.owner) {
-        if (!session.eglTerminate(session.display)) error = DriverError();
-        LogLine(error == EGL_SUCCESS ? "[winapk] guest EGL teardown complete" : "GRAPHICS_RENDER_FAILED: guest EGL teardown");
+void GL_APIENTRY G_glEGLImageTargetRenderbufferStorageOES(GLenum target, GLeglImageOES image) {
+    if (!GuestGlReady()) return;
+    EGLImageKHR hostImg = EGL_NO_IMAGE_KHR;
+    {
+        std::lock_guard lock(g_mu);
+        auto it = g_images.find(image);
+        if (it == g_images.end()) { NoteGlUnsupported(); return; }
+        hostImg = it->second;
     }
-    if (session.native) ReleaseSurface(session.native);
-    if (session.egl) FreeLibrary(session.egl);
-    if (session.gles) FreeLibrary(session.gles);
-    session = {};
-    return error;
+    static auto fn = reinterpret_cast<PFNGLEGLIMAGETARGETRENDERBUFFERSTORAGEOESPROC>(ResolveAngleGl("glEGLImageTargetRenderbufferStorageOES"));
+    if (fn) fn(target, static_cast<GLeglImageOES>(hostImg));
+    else NoteGlUnsupported();
 }
 
-/// Opens private ARM64 ANGLE and selects explicit hardware backends, never the default display.
-EGLint Start(uint64_t owner) {
-    const std::string& request = GuestGraphicsRequest();
+void ShutdownLocked() {
+    if (t_tls.hostCtx != EGL_NO_CONTEXT && g_drv.display != EGL_NO_DISPLAY && g_drv.eglMakeCurrent) {
+        g_drv.eglMakeCurrent(g_drv.display, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
+        t_tls.hostCtx = EGL_NO_CONTEXT;
+        t_tls.guestCtx = EGL_NO_CONTEXT;
+        t_tls.guestDraw = t_tls.guestRead = EGL_NO_SURFACE;
+    }
+    for (auto& [id, img] : g_images) {
+        if (img && g_drv.eglDestroyImageKHR) g_drv.eglDestroyImageKHR(g_drv.display, img);
+    }
+    g_images.clear();
+    for (auto& [id, syn] : g_syncs) {
+        if (syn && g_drv.eglDestroySyncKHR) g_drv.eglDestroySyncKHR(g_drv.display, syn);
+    }
+    g_syncs.clear();
+    for (auto& [id, surf] : g_surfaces) {
+        if (surf.hostPbuffer != EGL_NO_SURFACE && g_drv.eglDestroySurface) {
+            g_drv.eglDestroySurface(g_drv.display, surf.hostPbuffer);
+        }
+        if (surf.nativeToken) {
+            if (surf.hwnd) {
+                const int key = -static_cast<int>(reinterpret_cast<uintptr_t>(surf.nativeToken));
+                CompositorUpdateSurfacePlacement(surf.hwnd, key, {}, true);
+            }
+            ReleaseSurface(surf.nativeToken);
+        }
+    }
+    g_surfaces.clear();
+    for (auto& [id, ctx] : g_contexts) {
+        if (ctx.hostContext != EGL_NO_CONTEXT && g_drv.eglDestroyContext) {
+            g_drv.eglDestroyContext(g_drv.display, ctx.hostContext);
+        }
+    }
+    g_contexts.clear();
+    g_configs.clear();
+    g_hostToGuestConfig.clear();
+
+    bool ok = true;
+    if (g_drv.display != EGL_NO_DISPLAY && g_drv.eglTerminate) {
+        ok = g_drv.eglTerminate(g_drv.display) == EGL_TRUE;
+        LogLine(ok ? "[winapk] guest EGL teardown complete" : "GRAPHICS_RENDER_FAILED: guest EGL teardown");
+    }
+    if (g_drv.egl) FreeLibrary(g_drv.egl);
+    if (g_drv.gles) FreeLibrary(g_drv.gles);
+    g_drv = {};
+}
+
+std::string QueryGuestGraphicsRequest() {
+    std::string req = "off";
+    if (!DispatchGuestGraphics([&] { req = GuestGraphicsRequest(); })) {
+        // Fallback when called off-main while loop is active: read JVM system property captured at boot.
+        req = "auto";
+    }
+    return req;
+}
+
+EGLint InitDriverLocked(const std::string& request) {
     if (request == "off" || GuestVulkanOwnsWindow()) return EGL_NOT_INITIALIZED;
-    const std::wstring directory = PrivateAngleDirectory();
-    if (directory.empty()) return EGL_NOT_INITIALIZED;
+    const std::wstring dir = PrivateAngleDirectory();
+    if (dir.empty()) return EGL_NOT_INITIALIZED;
     constexpr DWORD flags = LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_SYSTEM32;
-    session.gles = LoadLibraryExW((directory + L"\\libGLESv2.dll").c_str(), nullptr, flags);
-    session.egl = LoadLibraryExW((directory + L"\\libEGL.dll").c_str(), nullptr, flags);
-    if (!session.egl || !session.gles) { Shutdown(); return EGL_NOT_INITIALIZED; }
-#define LOAD(lib, name) session.name = reinterpret_cast<decltype(session.name)>(GetProcAddress(session.lib, #name)); \
-    if (!session.name) { Shutdown(); return EGL_NOT_INITIALIZED; }
-#define ELOAD(name) LOAD(egl, name)
-#define GLOAD(name) LOAD(gles, name)
-#define VLOAD(name, args, call) GLOAD(name)
-#define RLOAD(type, name, args, call) GLOAD(name)
-    EGL_DRIVER(ELOAD)
-    GL_VOID(VLOAD)
-    GL_RESULT(RLOAD)
-    GLOAD(glGetString) GLOAD(glGetError)
-#undef RLOAD
-#undef VLOAD
-#undef GLOAD
-#undef ELOAD
-#undef LOAD
-    auto get = reinterpret_cast<PFNEGLGETPLATFORMDISPLAYEXTPROC>(session.eglGetProcAddress("eglGetPlatformDisplayEXT"));
-    if (!get) { Shutdown(); return EGL_NOT_INITIALIZED; }
+    g_drv.gles = LoadLibraryExW((dir + L"\\libGLESv2.dll").c_str(), nullptr, flags);
+    g_drv.egl = g_drv.gles ? LoadLibraryExW((dir + L"\\libEGL.dll").c_str(), nullptr, flags) : nullptr;
+    if (!g_drv.egl || !g_drv.gles) { ShutdownLocked(); return EGL_NOT_INITIALIZED; }
+
+#define REQ_EGL(name) \
+    g_drv.name = reinterpret_cast<decltype(g_drv.name)>(GetProcAddress(g_drv.egl, #name)); \
+    if (!g_drv.name) { ShutdownLocked(); return EGL_NOT_INITIALIZED; }
+    REQ_EGL(eglGetProcAddress)
+    REQ_EGL(eglInitialize)
+    REQ_EGL(eglTerminate)
+    REQ_EGL(eglGetError)
+    REQ_EGL(eglQueryString)
+    REQ_EGL(eglBindAPI)
+    REQ_EGL(eglQueryAPI)
+    REQ_EGL(eglWaitClient)
+    REQ_EGL(eglReleaseThread)
+    REQ_EGL(eglGetConfigs)
+    REQ_EGL(eglChooseConfig)
+    REQ_EGL(eglGetConfigAttrib)
+    REQ_EGL(eglCreatePbufferSurface)
+    REQ_EGL(eglDestroySurface)
+    REQ_EGL(eglQuerySurface)
+    REQ_EGL(eglSurfaceAttrib)
+    REQ_EGL(eglBindTexImage)
+    REQ_EGL(eglReleaseTexImage)
+    REQ_EGL(eglSwapInterval)
+    REQ_EGL(eglCreateContext)
+    REQ_EGL(eglDestroyContext)
+    REQ_EGL(eglMakeCurrent)
+    REQ_EGL(eglQueryContext)
+    REQ_EGL(eglWaitGL)
+    REQ_EGL(eglWaitNative)
+#undef REQ_EGL
+
+#define REQ_GL(name) \
+    g_drv.name = reinterpret_cast<decltype(g_drv.name)>(GetProcAddress(g_drv.gles, #name)); \
+    if (!g_drv.name) { ShutdownLocked(); return EGL_NOT_INITIALIZED; }
+    REQ_GL(glGetError)
+    REQ_GL(glGetString)
+    REQ_GL(glFlush)
+    REQ_GL(glFinish)
+    REQ_GL(glReadPixels)
+    REQ_GL(glBindFramebuffer)
+    REQ_GL(glGetIntegerv)
+#undef REQ_GL
+    g_drv.glGetStringi = reinterpret_cast<PFNGLGETSTRINGIPROC>(ResolveAngleGl("glGetStringi"));
+    g_drv.eglQuerySurfacePointerANGLE = reinterpret_cast<PFNEGLQUERYSURFACEPOINTERANGLEPROC>(
+        g_drv.eglGetProcAddress("eglQuerySurfacePointerANGLE"));
+    g_drv.eglCreateImageKHR = reinterpret_cast<PFNEGLCREATEIMAGEKHRPROC>(g_drv.eglGetProcAddress("eglCreateImageKHR"));
+    g_drv.eglDestroyImageKHR = reinterpret_cast<PFNEGLDESTROYIMAGEKHRPROC>(g_drv.eglGetProcAddress("eglDestroyImageKHR"));
+    g_drv.eglCreateSyncKHR = reinterpret_cast<PFNEGLCREATESYNCKHRPROC>(g_drv.eglGetProcAddress("eglCreateSyncKHR"));
+    g_drv.eglDestroySyncKHR = reinterpret_cast<PFNEGLDESTROYSYNCKHRPROC>(g_drv.eglGetProcAddress("eglDestroySyncKHR"));
+    g_drv.eglClientWaitSyncKHR = reinterpret_cast<PFNEGLCLIENTWAITSYNCKHRPROC>(g_drv.eglGetProcAddress("eglClientWaitSyncKHR"));
+    g_drv.eglWaitSyncKHR = reinterpret_cast<PFNEGLWAITSYNCKHRPROC>(g_drv.eglGetProcAddress("eglWaitSyncKHR"));
+    g_drv.eglGetSyncAttribKHR = reinterpret_cast<PFNEGLGETSYNCATTRIBKHRPROC>(g_drv.eglGetProcAddress("eglGetSyncAttribKHR"));
+
+    auto getPlat = reinterpret_cast<PFNEGLGETPLATFORMDISPLAYEXTPROC>(g_drv.eglGetProcAddress("eglGetPlatformDisplayEXT"));
+    if (!getPlat) { ShutdownLocked(); return EGL_NOT_INITIALIZED; }
+
     bool nativeVk = false;
     const auto candidates = SelectAngleBackends(request, &nativeVk);
-    if (candidates.empty()) { Shutdown(); return EGL_NOT_INITIALIZED; }
+    if (candidates.empty()) { ShutdownLocked(); return EGL_NOT_INITIALIZED; }
     if (request == "auto" && !nativeVk) {
         LogLine("[winapk] guest EGL auto: no native vendor Vulkan ICD; preferring hardware d3d11");
     }
+
     for (size_t i = 0; i < candidates.size(); ++i) {
         const char* backend = candidates[i];
-        const bool vulkan = std::strcmp(backend, "vulkan") == 0;
-        const EGLint attrs[] = {EGL_PLATFORM_ANGLE_TYPE_ANGLE,
-            vulkan ? EGL_PLATFORM_ANGLE_TYPE_VULKAN_ANGLE : EGL_PLATFORM_ANGLE_TYPE_D3D11_ANGLE,
-            EGL_PLATFORM_ANGLE_DEVICE_TYPE_ANGLE, EGL_PLATFORM_ANGLE_DEVICE_TYPE_HARDWARE_ANGLE, EGL_NONE};
-        session.display = get(EGL_PLATFORM_ANGLE_ANGLE, EGL_DEFAULT_DISPLAY, attrs);
-        if (session.display && session.eglInitialize(session.display, nullptr, nullptr)) {
-            InstallAngleBlobCache(session.display,
-                reinterpret_cast<void* (*)(const char*)>(session.eglGetProcAddress), backend);
-            session.owner = owner;
-            constexpr EGLint rgba[] = {EGL_SURFACE_TYPE, EGL_WINDOW_BIT, EGL_RENDERABLE_TYPE, EGL_OPENGL_ES2_BIT,
-                EGL_RED_SIZE, 8, EGL_GREEN_SIZE, 8, EGL_BLUE_SIZE, 8, EGL_ALPHA_SIZE, 8, EGL_NONE};
-            EGLint count = 0;
-            if (session.eglBindAPI(EGL_OPENGL_ES_API) &&
-                session.eglChooseConfig(session.display, rgba, &session.config, 1, &count) && count == 1) {
-                session.configId = reinterpret_cast<void*>(nextId++);
-                session.backend = backend;
-                LogLine("[winapk] guest EGL request=" + request + " backend=" + backend);
+        const bool isVk = std::strcmp(backend, "vulkan") == 0;
+        const EGLint dispAttrs[] = {
+            EGL_PLATFORM_ANGLE_TYPE_ANGLE, isVk ? EGL_PLATFORM_ANGLE_TYPE_VULKAN_ANGLE : EGL_PLATFORM_ANGLE_TYPE_D3D11_ANGLE,
+            EGL_PLATFORM_ANGLE_DEVICE_TYPE_ANGLE, EGL_PLATFORM_ANGLE_DEVICE_TYPE_HARDWARE_ANGLE,
+            EGL_NONE
+        };
+        g_drv.display = getPlat(EGL_PLATFORM_ANGLE_ANGLE, EGL_DEFAULT_DISPLAY, dispAttrs);
+        if (g_drv.display != EGL_NO_DISPLAY && g_drv.eglInitialize(g_drv.display, nullptr, nullptr)) {
+            InstallAngleBlobCache(g_drv.display, reinterpret_cast<void* (*)(const char*)>(g_drv.eglGetProcAddress), backend);
+            if (!g_drv.eglBindAPI(EGL_OPENGL_ES_API)) {
+                g_drv.eglTerminate(g_drv.display);
+                g_drv.display = EGL_NO_DISPLAY;
+                continue;
+            }
+            // Probe actual ES ceiling (3 vs 2) and renderer identity on a 1x1 Pbuffer.
+            EGLConfig probeCfg = nullptr;
+            EGLint numCfg = 0;
+            constexpr EGLint pbCfgAttrs[] = {
+                EGL_SURFACE_TYPE, EGL_PBUFFER_BIT,
+                EGL_RENDERABLE_TYPE, EGL_OPENGL_ES2_BIT,
+                EGL_RED_SIZE, 8, EGL_GREEN_SIZE, 8, EGL_BLUE_SIZE, 8, EGL_ALPHA_SIZE, 8,
+                EGL_NONE
+            };
+            if (!g_drv.eglChooseConfig(g_drv.display, pbCfgAttrs, &probeCfg, 1, &numCfg) || numCfg < 1) {
+                g_drv.eglTerminate(g_drv.display);
+                g_drv.display = EGL_NO_DISPLAY;
+                continue;
+            }
+            constexpr EGLint pbAttrs[] = {EGL_WIDTH, 1, EGL_HEIGHT, 1, EGL_NONE};
+            EGLSurface pb = g_drv.eglCreatePbufferSurface(g_drv.display, probeCfg, pbAttrs);
+            int ceiling = 0;
+            std::string rendererStr;
+            for (int maj : {3, 2}) {
+                const EGLint ctxAttrs[] = {EGL_CONTEXT_CLIENT_VERSION, maj, EGL_NONE};
+                EGLContext c = g_drv.eglCreateContext(g_drv.display, probeCfg, EGL_NO_CONTEXT, ctxAttrs);
+                if (c != EGL_NO_CONTEXT) {
+                    if (pb != EGL_NO_SURFACE && g_drv.eglMakeCurrent(g_drv.display, pb, pb, c)) {
+                        const char* r = reinterpret_cast<const char*>(g_drv.glGetString(GL_RENDERER));
+                        if (r) rendererStr = r;
+                        g_drv.eglMakeCurrent(g_drv.display, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
+                    }
+                    g_drv.eglDestroyContext(g_drv.display, c);
+                    ceiling = maj;
+                    break;
+                }
+            }
+            if (pb != EGL_NO_SURFACE) g_drv.eglDestroySurface(g_drv.display, pb);
+
+            const bool matchBackend = !rendererStr.empty() &&
+                rendererStr.find("Microsoft Basic Render Driver") == std::string::npos &&
+                (isVk ? rendererStr.find("Vulkan") != std::string::npos
+                      : (rendererStr.find("Direct3D11") != std::string::npos || rendererStr.find("D3D11") != std::string::npos));
+            if (ceiling >= 2 && matchBackend) {
+                g_drv.backend = backend;
+                g_drv.maxEsMajor = ceiling;
+                g_drv.initRefs = 1;
+                wchar_t lossEnv[8]{};
+                g_drv.injectLoss = GetEnvironmentVariableW(L"WINAPK_TEST_INJECT_CONTEXT_LOSS", lossEnv, 8) > 0 && lossEnv[0] == L'1';
+                LogLine("[winapk] guest EGL request=" + request + " backend=" + backend + " maxEs=" + std::to_string(ceiling));
+                LogLine("[winapk] guest GLES renderer backend=" + std::string(backend) + " name=" + rendererStr);
+                g_drv.loggedRenderer = true;
+                SendEmbedEvent(std::string("backend gles-") + backend);
                 return EGL_SUCCESS;
             }
-            Shutdown();
-            return EGL_NOT_INITIALIZED;
+            g_drv.eglTerminate(g_drv.display);
+            g_drv.display = EGL_NO_DISPLAY;
         }
         if (request == "auto" && i + 1 < candidates.size()) {
             LogLine(std::string("[winapk] guest EGL auto: ") + backend + " unavailable; trying " + candidates[i + 1]);
@@ -241,348 +450,1079 @@ EGLint Start(uint64_t owner) {
             LogLine("GRAPHICS_CAPABILITY_MISSING: guest EGL backend=" + std::string(backend) + "; no fallback");
         }
     }
-    Shutdown();
+    ShutdownLocked();
     return EGL_NOT_INITIALIZED;
 }
 
-/// Ensures the drawable refers to the live window and recreates it at a new extent.
-EGLint EnsureSurface(uint64_t resume) {
-    if (session.lost) return EGL_CONTEXT_LOST;
-    HWND window;
-    int width, height;
-    if (!ResolveSurface(session.native, window, width, height) || window != session.window || width <= 0 || height <= 0)
-        return EGL_BAD_SURFACE;
-    if (!session.drawable || width != session.width || height != session.height) {
-        if (auto error = Unbind(); error != EGL_SUCCESS) return error;
-        if (session.drawable && !session.eglDestroySurface(session.display, session.drawable)) return DriverError();
-        session.drawable = session.eglCreateWindowSurface(session.display, session.config, window, nullptr);
-        if (!session.drawable) return DriverError();
-        session.width = width;
-        session.height = height;
+EGLConfig InternHostConfigLocked(EGLConfig hostCfg) {
+    auto it = g_hostToGuestConfig.find(hostCfg);
+    if (it != g_hostToGuestConfig.end()) return it->second;
+    EGLint renderable = EGL_OPENGL_ES2_BIT;
+    g_drv.eglGetConfigAttrib(g_drv.display, hostCfg, EGL_RENDERABLE_TYPE, &renderable);
+    if (g_drv.maxEsMajor < 3) renderable &= ~0x0040 /* EGL_OPENGL_ES3_BIT_KHR */;
+    void* token = reinterpret_cast<void*>(g_nextHandle++);
+    g_configs[token] = {hostCfg, renderable};
+    g_hostToGuestConfig[hostCfg] = token;
+    return token;
+}
+
+bool CheckDisplayLocked(EGLDisplay d, EGLint& errOut) {
+    if (reinterpret_cast<uintptr_t>(d) != kLogicalDisplay) { errOut = EGL_BAD_DISPLAY; return false; }
+    if (g_drv.initRefs <= 0 || g_drv.display == EGL_NO_DISPLAY) { errOut = EGL_NOT_INITIALIZED; return false; }
+    return true;
+}
+
+// Recreates a virtual window surface's backing Pbuffer when its ANativeWindow resized while >0x0.
+bool SyncWindowSurfaceSizeLocked(void* guestSurfToken, GuestSurfaceEntry& surf) {
+    if (!surf.isWindow) return true;
+    HWND hwnd = nullptr;
+    int w = 0, h = 0;
+    if (!ResolveSurface(surf.nativeToken, hwnd, w, h) || hwnd != surf.hwnd) return false;
+    if (w <= 0 || h <= 0) return true; // Minimized: keep existing Pbuffer until Swap refuses or window restores.
+    if (surf.hostPbuffer != EGL_NO_SURFACE && surf.width == w && surf.height == h) return true;
+
+    const bool rebindHere = (t_tls.guestDraw == guestSurfToken || t_tls.guestRead == guestSurfToken) &&
+                            t_tls.hostCtx != EGL_NO_CONTEXT;
+    if (rebindHere) {
+        g_drv.eglMakeCurrent(g_drv.display, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
     }
-    if (resume && !session.current) {
-        if (!session.eglMakeCurrent(session.display, session.drawable, session.drawable, session.context)) return DriverError();
-        session.current = resume;
-        if (!session.rendererChecked) {
-            const auto* text = reinterpret_cast<const char*>(session.glGetString(GL_RENDERER));
-            const bool vulkan = std::strcmp(session.backend, "vulkan") == 0;
-            const bool matches = text && (vulkan ? std::strstr(text, "Vulkan") != nullptr :
-                (std::strstr(text, "Direct3D11") || std::strstr(text, "D3D11")));
-            if (!matches) {
-                Unbind();
-                return EGL_BAD_MATCH;
-            }
-            session.rendererChecked = true;
-            LogLine(std::string("[winapk] guest GLES renderer backend=") + session.backend + " name=" + text);
-            SendEmbedEvent(std::string("backend gles-") + session.backend);
+    const EGLint pbAttrs[] = {EGL_WIDTH, w, EGL_HEIGHT, h, EGL_NONE};
+    EGLSurface fresh = g_drv.eglCreatePbufferSurface(g_drv.display, surf.hostConfig, pbAttrs);
+    if (fresh == EGL_NO_SURFACE) {
+        if (rebindHere && surf.hostPbuffer != EGL_NO_SURFACE) {
+            g_drv.eglMakeCurrent(g_drv.display, surf.hostPbuffer, surf.hostPbuffer, t_tls.hostCtx);
+        }
+        return false;
+    }
+    if (surf.hostPbuffer != EGL_NO_SURFACE) {
+        g_drv.eglDestroySurface(g_drv.display, surf.hostPbuffer);
+    }
+    surf.hostPbuffer = fresh;
+    surf.width = w;
+    surf.height = h;
+    if (rebindHere) {
+        EGLSurface hostDraw = surf.hostPbuffer;
+        EGLSurface hostRead = surf.hostPbuffer;
+        if (t_tls.guestDraw != guestSurfToken) {
+            auto dit = g_surfaces.find(t_tls.guestDraw);
+            hostDraw = dit != g_surfaces.end() ? dit->second.hostPbuffer : EGL_NO_SURFACE;
+        }
+        if (t_tls.guestRead != guestSurfToken) {
+            auto rit = g_surfaces.find(t_tls.guestRead);
+            hostRead = rit != g_surfaces.end() ? rit->second.hostPbuffer : EGL_NO_SURFACE;
+        }
+        g_drv.eglMakeCurrent(g_drv.display, hostDraw, hostRead, t_tls.hostCtx);
+    }
+    return true;
+}
+
+// ---- Guest EGL 1.5 + KHR Entry Points ----
+
+EGLint EGLAPIENTRY E_GetError() {
+    const EGLint e = t_tls.eglError;
+    t_tls.eglError = EGL_SUCCESS;
+    return e;
+}
+
+EGLDisplay EGLAPIENTRY E_GetDisplay(EGLNativeDisplayType nativeId) {
+    if (nativeId != EGL_DEFAULT_DISPLAY) {
+        SetEglError(EGL_BAD_PARAMETER);
+        return EGL_NO_DISPLAY;
+    }
+    SetEglError(EGL_SUCCESS);
+    return reinterpret_cast<EGLDisplay>(kLogicalDisplay);
+}
+
+EGLBoolean EGLAPIENTRY E_Initialize(EGLDisplay d, EGLint* major, EGLint* minor) {
+    if (reinterpret_cast<uintptr_t>(d) != kLogicalDisplay) {
+        SetEglError(EGL_BAD_DISPLAY);
+        return EGL_FALSE;
+    }
+    std::string req;
+    {
+        std::lock_guard lock(g_mu);
+        if (g_drv.initRefs > 0 && g_drv.display != EGL_NO_DISPLAY) {
+            ++g_drv.initRefs;
+            if (major) *major = 1;
+            if (minor) *minor = 5;
+            SetEglError(EGL_SUCCESS);
+            return EGL_TRUE;
         }
     }
-    return EGL_SUCCESS;
+    req = QueryGuestGraphicsRequest();
+    std::lock_guard lock(g_mu);
+    if (g_drv.initRefs == 0) {
+        const EGLint rc = InitDriverLocked(req);
+        if (rc != EGL_SUCCESS) {
+            SetEglError(rc);
+            return EGL_FALSE;
+        }
+    } else {
+        ++g_drv.initRefs;
+    }
+    if (major) *major = 1;
+    if (minor) *minor = 5;
+    SetEglError(EGL_SUCCESS);
+    return EGL_TRUE;
 }
 
-/// Returns the only supported logical display, never a Win32 display handle.
-EGLDisplay GetDisplay(void* native) {
-    if (native) { Fail(EGL_BAD_PARAMETER); return EGL_NO_DISPLAY; }
-    return reinterpret_cast<EGLDisplay>(kDisplay);
+EGLBoolean EGLAPIENTRY E_Terminate(EGLDisplay d) {
+    std::lock_guard lock(g_mu);
+    EGLint err = EGL_SUCCESS;
+    if (!CheckDisplayLocked(d, err)) { SetEglError(err); return EGL_FALSE; }
+    if (--g_drv.initRefs <= 0) {
+        ShutdownLocked();
+    }
+    SetEglError(EGL_SUCCESS);
+    return EGL_TRUE;
 }
 
-/// Initializes the admitted profile; the reported EGL level excludes unimplemented 1.5 commands.
-EGLBoolean Initialize(EGLDisplay d, EGLint* major, EGLint* minor) {
-    return Run([=](uint64_t id) {
-        if (reinterpret_cast<uintptr_t>(d) != kDisplay) return EGL_BAD_DISPLAY;
-        auto error = session.owner ? CheckDisplay(d,id) : Start(id);
-        if (error != EGL_SUCCESS) return error;
-        if (major) *major = 1;
-        if (minor) *minor = 4;
-        return EGL_SUCCESS;
-    });
+const char* EGLAPIENTRY E_QueryString(EGLDisplay d, EGLint name) {
+    if (d == EGL_NO_DISPLAY && name == EGL_EXTENSIONS) {
+        SetEglError(EGL_SUCCESS);
+        return "EGL_EXT_client_extensions";
+    }
+    std::lock_guard lock(g_mu);
+    EGLint err = EGL_SUCCESS;
+    if (!CheckDisplayLocked(d, err)) { SetEglError(err); return nullptr; }
+    SetEglError(EGL_SUCCESS);
+    switch (name) {
+        case EGL_VENDOR: return "Windows-ARM64.apk (ANGLE)";
+        case EGL_VERSION: return "1.5 Windows-ARM64.apk";
+        case EGL_CLIENT_APIS: return "OpenGL_ES";
+        case EGL_EXTENSIONS:
+            return "EGL_KHR_create_context EGL_KHR_surfaceless_context "
+                   "EGL_KHR_image_base EGL_KHR_gl_texture_2D_image "
+                   "EGL_KHR_gl_renderbuffer_image EGL_KHR_fence_sync EGL_KHR_wait_sync";
+        default:
+            SetEglError(EGL_BAD_PARAMETER);
+            return nullptr;
+    }
 }
 
-/// Tests the supplied attributes against the single real RGBA8 window configuration.
-EGLBoolean ChooseConfig(EGLDisplay d, const EGLint* attributes, EGLConfig* out, EGLint capacity, EGLint* count) {
-    return Run([=](uint64_t id) {
-        if (auto error = CheckDisplay(d,id); error != EGL_SUCCESS) return error;
-        if (!count || capacity < 0) return EGL_BAD_PARAMETER;
-        bool match = true;
-        if (attributes) {
-            bool end = false;
-            for (int i = 0; i < 32; ++i) {
-                EGLint key = attributes[2*i], actual = 0;
-                if (key == EGL_NONE) { end = true; break; }
-                const EGLint value = attributes[2*i+1];
-                if (!session.eglGetConfigAttrib(session.display, session.config, key, &actual)) return DriverError();
-                if (value == EGL_DONT_CARE) continue;
-                switch (key) {
-                    case EGL_SURFACE_TYPE: match &= (value & ~EGL_WINDOW_BIT) == 0 && (actual & value) == value; break;
-                    case EGL_RENDERABLE_TYPE: match &= (value & ~EGL_OPENGL_ES2_BIT) == 0 && (actual & value) == value; break;
-                    case EGL_RED_SIZE: case EGL_GREEN_SIZE: case EGL_BLUE_SIZE: case EGL_ALPHA_SIZE:
-                    case EGL_DEPTH_SIZE: case EGL_STENCIL_SIZE: match &= actual >= value; break;
-                    default: return EGL_BAD_ATTRIBUTE;
+EGLBoolean EGLAPIENTRY E_BindAPI(EGLenum api) {
+    if (api != EGL_OPENGL_ES_API) { SetEglError(EGL_BAD_PARAMETER); return EGL_FALSE; }
+    SetEglError(EGL_SUCCESS);
+    return EGL_TRUE;
+}
+
+EGLenum EGLAPIENTRY E_QueryAPI() {
+    SetEglError(EGL_SUCCESS);
+    return EGL_OPENGL_ES_API;
+}
+
+EGLBoolean EGLAPIENTRY E_WaitClient() {
+    if (t_tls.hostCtx != EGL_NO_CONTEXT && g_drv.glFinish) g_drv.glFinish();
+    SetEglError(EGL_SUCCESS);
+    return EGL_TRUE;
+}
+
+EGLBoolean EGLAPIENTRY E_WaitGL() { return E_WaitClient(); }
+EGLBoolean EGLAPIENTRY E_WaitNative(EGLint) { SetEglError(EGL_SUCCESS); return EGL_TRUE; }
+
+EGLBoolean EGLAPIENTRY E_ReleaseThread() {
+    std::lock_guard lock(g_mu);
+    if (t_tls.hostCtx != EGL_NO_CONTEXT && g_drv.display != EGL_NO_DISPLAY && g_drv.eglMakeCurrent) {
+        g_drv.eglMakeCurrent(g_drv.display, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
+        auto cit = g_contexts.find(t_tls.guestCtx);
+        if (cit != g_contexts.end() && cit->second.boundThread == t_tls.id) cit->second.boundThread = 0;
+        for (void* st : {t_tls.guestDraw, t_tls.guestRead}) {
+            auto sit = g_surfaces.find(st);
+            if (sit != g_surfaces.end() && sit->second.boundThread == t_tls.id) sit->second.boundThread = 0;
+        }
+        t_tls.hostCtx = EGL_NO_CONTEXT;
+        t_tls.guestCtx = EGL_NO_CONTEXT;
+        t_tls.guestDraw = t_tls.guestRead = EGL_NO_SURFACE;
+    }
+    if (g_drv.eglReleaseThread) g_drv.eglReleaseThread();
+    t_tls.eglError = EGL_SUCCESS;
+    return EGL_TRUE;
+}
+
+EGLBoolean EGLAPIENTRY E_GetConfigs(EGLDisplay d, EGLConfig* configs, EGLint configSize, EGLint* numConfig) {
+    std::lock_guard lock(g_mu);
+    EGLint err = EGL_SUCCESS;
+    if (!CheckDisplayLocked(d, err)) { SetEglError(err); return EGL_FALSE; }
+    if (!numConfig || configSize < 0) { SetEglError(EGL_BAD_PARAMETER); return EGL_FALSE; }
+    constexpr EGLint pbFilter[] = {EGL_SURFACE_TYPE, EGL_PBUFFER_BIT, EGL_NONE};
+    EGLint total = 0;
+    if (!g_drv.eglChooseConfig(g_drv.display, pbFilter, nullptr, 0, &total)) {
+        SetEglError(g_drv.eglGetError());
+        return EGL_FALSE;
+    }
+    if (!configs) {
+        *numConfig = total;
+        SetEglError(EGL_SUCCESS);
+        return EGL_TRUE;
+    }
+    const EGLint cap = std::min(total, configSize);
+    std::vector<EGLConfig> hostCfgs(cap > 0 ? static_cast<size_t>(cap) : 1);
+    EGLint got = 0;
+    if (!g_drv.eglChooseConfig(g_drv.display, pbFilter, hostCfgs.data(), cap, &got)) {
+        SetEglError(g_drv.eglGetError());
+        return EGL_FALSE;
+    }
+    for (EGLint i = 0; i < got; ++i) configs[i] = InternHostConfigLocked(hostCfgs[static_cast<size_t>(i)]);
+    *numConfig = got;
+    SetEglError(EGL_SUCCESS);
+    return EGL_TRUE;
+}
+
+EGLBoolean EGLAPIENTRY E_ChooseConfig(EGLDisplay d, const EGLint* attribList,
+                                      EGLConfig* configs, EGLint configSize, EGLint* numConfig) {
+    std::lock_guard lock(g_mu);
+    EGLint err = EGL_SUCCESS;
+    if (!CheckDisplayLocked(d, err)) { SetEglError(err); return EGL_FALSE; }
+    if (!numConfig || configSize < 0) { SetEglError(EGL_BAD_PARAMETER); return EGL_FALSE; }
+
+    std::vector<EGLint> translated;
+    bool hasSurfaceType = false;
+    if (attribList) {
+        bool terminated = false;
+        for (int i = 0; i < 128; ++i) {
+            const EGLint k = attribList[2 * i];
+            if (k == EGL_NONE) { terminated = true; break; }
+            EGLint v = attribList[2 * i + 1];
+            if (k == 0x3142 /* EGL_RECORDABLE_ANDROID */) continue;
+            if (k == EGL_SURFACE_TYPE) {
+                hasSurfaceType = true;
+                if (v != EGL_DONT_CARE) {
+                    // Unsupported pixmap/multisample-resolve bits return 0 matches cleanly.
+                    if (v & ~(EGL_WINDOW_BIT | EGL_PBUFFER_BIT)) {
+                        *numConfig = 0;
+                        SetEglError(EGL_SUCCESS);
+                        return EGL_TRUE;
+                    }
+                    v = EGL_PBUFFER_BIT; // Virtual window surfaces and pbuffers both use ANGLE pbuffers.
+                }
+            } else if (k == EGL_RENDERABLE_TYPE && v != EGL_DONT_CARE) {
+                if ((v & 0x0040 /* EGL_OPENGL_ES3_BIT_KHR */) && g_drv.maxEsMajor < 3) {
+                    *numConfig = 0;
+                    SetEglError(EGL_SUCCESS);
+                    return EGL_TRUE;
                 }
             }
-            if (!end) return EGL_BAD_ATTRIBUTE;
+            translated.push_back(k);
+            translated.push_back(v);
         }
-        *count = match && (!out || capacity > 0) ? 1 : 0;
-        if (*count && out) *out = session.configId;
-        return EGL_SUCCESS;
-    });
+        if (!terminated) { SetEglError(EGL_BAD_ATTRIBUTE); return EGL_FALSE; }
+    }
+    if (!hasSurfaceType) {
+        translated.push_back(EGL_SURFACE_TYPE);
+        translated.push_back(EGL_PBUFFER_BIT);
+    }
+    translated.push_back(EGL_NONE);
+
+    EGLint total = 0;
+    if (!g_drv.eglChooseConfig(g_drv.display, translated.data(), nullptr, 0, &total)) {
+        const EGLint de = g_drv.eglGetError();
+        SetEglError(de == EGL_SUCCESS ? EGL_BAD_ATTRIBUTE : de);
+        return EGL_FALSE;
+    }
+    if (!configs || configSize == 0 || total == 0) {
+        *numConfig = configs ? 0 : total;
+        if (!configs) *numConfig = total;
+        else if (configSize > 0) *numConfig = 0;
+        SetEglError(EGL_SUCCESS);
+        return EGL_TRUE;
+    }
+    const EGLint cap = std::min(total, configSize);
+    std::vector<EGLConfig> hostCfgs(static_cast<size_t>(cap));
+    EGLint got = 0;
+    if (!g_drv.eglChooseConfig(g_drv.display, translated.data(), hostCfgs.data(), cap, &got)) {
+        const EGLint de = g_drv.eglGetError();
+        SetEglError(de == EGL_SUCCESS ? EGL_BAD_ATTRIBUTE : de);
+        return EGL_FALSE;
+    }
+    for (EGLint i = 0; i < got; ++i) configs[i] = InternHostConfigLocked(hostCfgs[static_cast<size_t>(i)]);
+    *numConfig = got;
+    SetEglError(EGL_SUCCESS);
+    return EGL_TRUE;
 }
 
-/// Creates the one unshared ES2 context and returns an opaque incarnation token.
-EGLContext CreateContext(EGLDisplay d, EGLConfig config, EGLContext share, const EGLint* attrs) {
-    EGLContext result = EGL_NO_CONTEXT;
-    Run([&](uint64_t id) {
-        if (auto error = CheckDisplay(d,id); error != EGL_SUCCESS) return error;
-        if (config != session.configId) return EGL_BAD_CONFIG;
-        if (share || !attrs || attrs[0] != EGL_CONTEXT_CLIENT_VERSION || attrs[1] != 2 || attrs[2] != EGL_NONE)
-            return EGL_BAD_MATCH;
-        if (session.context) return EGL_BAD_ALLOC;
-        session.context = session.eglCreateContext(session.display, session.config, EGL_NO_CONTEXT, attrs);
-        if (!session.context) return DriverError();
-        session.lost = false;
-        result = session.contextId = reinterpret_cast<void*>(nextId++);
-        return EGL_SUCCESS;
-    });
-    return result;
+EGLBoolean EGLAPIENTRY E_GetConfigAttrib(EGLDisplay d, EGLConfig cfg, EGLint attr, EGLint* value) {
+    std::lock_guard lock(g_mu);
+    EGLint err = EGL_SUCCESS;
+    if (!CheckDisplayLocked(d, err)) { SetEglError(err); return EGL_FALSE; }
+    if (!value) { SetEglError(EGL_BAD_PARAMETER); return EGL_FALSE; }
+    auto it = g_configs.find(cfg);
+    if (it == g_configs.end()) { SetEglError(EGL_BAD_CONFIG); return EGL_FALSE; }
+    if (attr == 0x3142 /* EGL_RECORDABLE_ANDROID */) {
+        *value = 1;
+        SetEglError(EGL_SUCCESS);
+        return EGL_TRUE;
+    }
+    if (!g_drv.eglGetConfigAttrib(g_drv.display, it->second.hostConfig, attr, value)) {
+        SetEglError(g_drv.eglGetError());
+        return EGL_FALSE;
+    }
+    if (attr == EGL_SURFACE_TYPE) *value |= (EGL_WINDOW_BIT | EGL_PBUFFER_BIT);
+    else if (attr == EGL_RENDERABLE_TYPE) *value = it->second.renderableMask;
+    SetEglError(EGL_SUCCESS);
+    return EGL_TRUE;
 }
 
-/// Creates the one window surface from a managed native window reference.
-EGLSurface CreateSurface(EGLDisplay d, EGLConfig config, void* native, const EGLint* attrs) {
-    EGLSurface result = EGL_NO_SURFACE;
-    Run([&](uint64_t id) {
-        if (auto error = CheckDisplay(d,id); error != EGL_SUCCESS) return error;
-        if (config != session.configId) return EGL_BAD_CONFIG;
-        if (attrs && attrs[0] != EGL_NONE) return EGL_BAD_ATTRIBUTE;
-        if (session.surfaceId) return EGL_BAD_ALLOC;
-        HWND window;
-        int width, height;
-        if (!ResolveSurface(native, window, width, height) || !RetainSurface(native)) return EGL_BAD_NATIVE_WINDOW;
-        session.native = native;
-        session.window = window;
-        if (auto error = EnsureSurface(0); error != EGL_SUCCESS) { DropSurface(false); return error; }
-        result = session.surfaceId = reinterpret_cast<void*>(nextId++);
-        return EGL_SUCCESS;
-    });
-    return result;
-}
+EGLContext EGLAPIENTRY E_CreateContext(EGLDisplay d, EGLConfig cfg, EGLContext shareCtx, const EGLint* attribList) {
+    std::lock_guard lock(g_mu);
+    EGLint err = EGL_SUCCESS;
+    if (!CheckDisplayLocked(d, err)) { SetEglError(err); return EGL_NO_CONTEXT; }
+    auto cfgIt = g_configs.find(cfg);
+    if (cfgIt == g_configs.end()) { SetEglError(EGL_BAD_CONFIG); return EGL_NO_CONTEXT; }
 
-/// Binds the exact read/draw pair for the guest owner, or unbinds all three handles.
-EGLBoolean MakeCurrent(EGLDisplay d, EGLSurface draw, EGLSurface read, EGLContext context) {
-    return Run([=](uint64_t id) {
-        if (auto error = CheckDisplay(d,id); error != EGL_SUCCESS) return error;
-        if (!draw && !read && !context) return Unbind();
-        if (!context || context != session.contextId) return EGL_BAD_CONTEXT;
-        if (!draw || draw != read || draw != session.surfaceId) return EGL_BAD_SURFACE;
-        return EnsureSurface(id);
-    });
-}
+    EGLContext hostShare = EGL_NO_CONTEXT;
+    if (shareCtx != EGL_NO_CONTEXT) {
+        auto shIt = g_contexts.find(shareCtx);
+        if (shIt == g_contexts.end()) { SetEglError(EGL_BAD_CONTEXT); return EGL_NO_CONTEXT; }
+        hostShare = shIt->second.hostContext;
+    }
 
-/// Presents the bound drawable and records ownership so bitmap painting cannot erase it.
-EGLBoolean Swap(EGLDisplay d, EGLSurface surface) {
-    return Run([=](uint64_t id) {
-        if (auto error = CheckDisplay(d,id); error != EGL_SUCCESS) return error;
-        if (!surface || surface != session.surfaceId || !session.native) return EGL_BAD_SURFACE;
-        if (session.current != id) return EGL_BAD_CURRENT_SURFACE;
-        if (auto error = EnsureSurface(id); error != EGL_SUCCESS) return error;
-        static bool injectedLoss = false;
-        if (!injectedLoss && GetEnvironmentVariableW(L"WINAPK_TEST_EGL_CONTEXT_LOST", nullptr, 0) > 0) {
-            injectedLoss = true;
-            session.lost = true;
-            Unbind();
-            LogLine("GRAPHICS_RENDER_FAILED: guest eglSwapBuffers error=12302 (injected context loss)");
-            return EGL_CONTEXT_LOST;
+    int reqMajor = 1;
+    int reqMinor = 0;
+    std::vector<EGLint> hostAttrs;
+    if (attribList) {
+        bool terminated = false;
+        for (int i = 0; i < 64; ++i) {
+            const EGLint k = attribList[2 * i];
+            if (k == EGL_NONE) { terminated = true; break; }
+            const EGLint v = attribList[2 * i + 1];
+            if (k == EGL_CONTEXT_CLIENT_VERSION) reqMajor = v;
+            else if (k == EGL_CONTEXT_MINOR_VERSION_KHR) reqMinor = v;
+            hostAttrs.push_back(k);
+            hostAttrs.push_back(v);
         }
-        if (IsEmbedded() && session.width > 0 && session.height > 0) {
-            std::vector<uint8_t> pixels(static_cast<size_t>(session.width) * static_cast<size_t>(session.height) * 4);
-            session.glReadPixels(0, 0, session.width, session.height, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
-            HWND resolvedHwnd = nullptr;
-            int rw = 0, rh = 0;
-            SurfaceLayerPlacement placement{0, 0, session.width, session.height, true, false};
-            ResolveSurface(session.native, resolvedHwnd, rw, rh, &placement);
-            const int layerKey = -static_cast<int>(reinterpret_cast<uintptr_t>(session.native));
-            if (!CompositorSubmitSurfaceBytes(session.window, layerKey, pixels.data(),
-                                              static_cast<size_t>(session.width) * 4, session.width, session.height,
-                                              LayerPixels::Rgba8, LayerAlpha::Opaque, true, placement)) {
-                PublishEmbedGlRgba(pixels.data(), session.width, session.height);
+        if (!terminated) { SetEglError(EGL_BAD_ATTRIBUTE); return EGL_NO_CONTEXT; }
+    }
+    hostAttrs.push_back(EGL_NONE);
+
+    if (reqMajor < 1 || reqMajor > g_drv.maxEsMajor || (reqMajor == 3 && reqMinor > 1)) {
+        SetEglError(EGL_BAD_MATCH);
+        return EGL_NO_CONTEXT;
+    }
+
+    EGLContext hostCtx = g_drv.eglCreateContext(g_drv.display, cfgIt->second.hostConfig, hostShare, hostAttrs.data());
+    if (hostCtx == EGL_NO_CONTEXT) {
+        const EGLint de = g_drv.eglGetError();
+        SetEglError(de == EGL_SUCCESS ? EGL_BAD_MATCH : de);
+        return EGL_NO_CONTEXT;
+    }
+    g_drv.lost = false;
+    void* token = reinterpret_cast<void*>(g_nextHandle++);
+    g_contexts[token] = {hostCtx, cfg, reqMajor, 0};
+    SetEglError(EGL_SUCCESS);
+    return token;
+}
+
+EGLBoolean EGLAPIENTRY E_DestroyContext(EGLDisplay d, EGLContext ctx) {
+    std::lock_guard lock(g_mu);
+    EGLint err = EGL_SUCCESS;
+    if (!CheckDisplayLocked(d, err)) { SetEglError(err); return EGL_FALSE; }
+    auto it = g_contexts.find(ctx);
+    if (it == g_contexts.end()) { SetEglError(EGL_BAD_CONTEXT); return EGL_FALSE; }
+    if (it->second.boundThread != 0 && it->second.boundThread != t_tls.id) {
+        SetEglError(EGL_BAD_ACCESS);
+        return EGL_FALSE;
+    }
+    if (t_tls.guestCtx == ctx) {
+        g_drv.eglMakeCurrent(g_drv.display, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
+        t_tls.hostCtx = EGL_NO_CONTEXT;
+        t_tls.guestCtx = EGL_NO_CONTEXT;
+        t_tls.guestDraw = t_tls.guestRead = EGL_NO_SURFACE;
+    }
+    g_drv.eglDestroyContext(g_drv.display, it->second.hostContext);
+    g_contexts.erase(it);
+    SetEglError(EGL_SUCCESS);
+    return EGL_TRUE;
+}
+
+EGLSurface EGLAPIENTRY E_CreateWindowSurface(EGLDisplay d, EGLConfig cfg,
+                                             EGLNativeWindowType nativeWin, const EGLint* attribList) {
+    std::lock_guard lock(g_mu);
+    EGLint err = EGL_SUCCESS;
+    if (!CheckDisplayLocked(d, err)) { SetEglError(err); return EGL_NO_SURFACE; }
+    auto cfgIt = g_configs.find(cfg);
+    if (cfgIt == g_configs.end()) { SetEglError(EGL_BAD_CONFIG); return EGL_NO_SURFACE; }
+    if (attribList) {
+        for (int i = 0; attribList[i] != EGL_NONE; i += 2) {
+            if (attribList[i] != EGL_RENDER_BUFFER && attribList[i] != 0x309D /* EGL_GL_COLORSPACE */) {
+                SetEglError(EGL_BAD_ATTRIBUTE);
+                return EGL_NO_SURFACE;
             }
         }
-        if (!session.eglSwapBuffers(session.display, session.drawable)) {
-            const auto error = DriverError();
-            if (error == EGL_CONTEXT_LOST) Unbind();
-            LogLine("GRAPHICS_RENDER_FAILED: guest eglSwapBuffers error=" + std::to_string(error));
-            return error;
+    }
+
+    void* token = reinterpret_cast<void*>(nativeWin);
+    HWND hwnd = nullptr;
+    int w = 0, h = 0;
+    if (!ResolveSurface(token, hwnd, w, h)) {
+        SetEglError(EGL_BAD_NATIVE_WINDOW);
+        return EGL_NO_SURFACE;
+    }
+    // Reject creating a duplicate live EGLWindowSurface on the exact same ANativeWindow.
+    for (const auto& [sid, existing] : g_surfaces) {
+        if (existing.isWindow && existing.nativeToken == token) {
+            SetEglError(EGL_BAD_ALLOC);
+            return EGL_NO_SURFACE;
         }
-        session.presented = true;
-        return EGL_SUCCESS;
-    });
+    }
+    if (!RetainSurface(token)) {
+        SetEglError(EGL_BAD_NATIVE_WINDOW);
+        return EGL_NO_SURFACE;
+    }
+
+    const int initW = std::max(1, w);
+    const int initH = std::max(1, h);
+    const EGLint pbAttrs[] = {EGL_WIDTH, initW, EGL_HEIGHT, initH, EGL_NONE};
+    EGLSurface pb = g_drv.eglCreatePbufferSurface(g_drv.display, cfgIt->second.hostConfig, pbAttrs);
+    if (pb == EGL_NO_SURFACE) {
+        ReleaseSurface(token);
+        const EGLint de = g_drv.eglGetError();
+        SetEglError(de == EGL_SUCCESS ? EGL_BAD_ALLOC : de);
+        return EGL_NO_SURFACE;
+    }
+
+    void* surfId = reinterpret_cast<void*>(g_nextHandle++);
+    g_surfaces[surfId] = {true, cfgIt->second.hostConfig, pb, token, hwnd, initW, initH, 0, false};
+    SetEglError(EGL_SUCCESS);
+    return surfId;
 }
 
-/// Queries the live surface's client extent, including zero while minimized.
-EGLBoolean QuerySurface(EGLDisplay d, EGLSurface surface, EGLint key, EGLint* value) {
-    return Run([=](uint64_t id) {
-        if (auto error = CheckDisplay(d,id); error != EGL_SUCCESS) return error;
-        if (!value) return EGL_BAD_PARAMETER;
-        HWND window;
-        int w,h;
-        if (!surface || surface != session.surfaceId || !ResolveSurface(session.native, window, w, h)) return EGL_BAD_SURFACE;
-        if (key != EGL_WIDTH && key != EGL_HEIGHT) return EGL_BAD_ATTRIBUTE;
-        *value = key == EGL_WIDTH ? w : h;
-        return EGL_SUCCESS;
-    });
-}
+EGLSurface EGLAPIENTRY E_CreatePbufferSurface(EGLDisplay d, EGLConfig cfg, const EGLint* attribList) {
+    std::lock_guard lock(g_mu);
+    EGLint err = EGL_SUCCESS;
+    if (!CheckDisplayLocked(d, err)) { SetEglError(err); return EGL_NO_SURFACE; }
+    auto cfgIt = g_configs.find(cfg);
+    if (cfgIt == g_configs.end()) { SetEglError(EGL_BAD_CONFIG); return EGL_NO_SURFACE; }
 
-/// Destroys an unbound surface token; detached tokens are accepted for cleanup.
-EGLBoolean DestroySurface(EGLDisplay d, EGLSurface surface) {
-    return Run([=](uint64_t id) {
-        if (auto error = CheckDisplay(d,id); error != EGL_SUCCESS) return error;
-        if (!surface || surface != session.surfaceId) return EGL_BAD_SURFACE;
-        if (session.current) return EGL_BAD_ACCESS;
-        return DropSurface(false);
-    });
-}
-
-/// Destroys an unbound context and invalidates its token.
-EGLBoolean DestroyContext(EGLDisplay d, EGLContext context) {
-    return Run([=](uint64_t id) {
-        if (auto error = CheckDisplay(d,id); error != EGL_SUCCESS) return error;
-        if (!context || context != session.contextId) return EGL_BAD_CONTEXT;
-        if (session.current) return EGL_BAD_ACCESS;
-        if (!session.eglDestroyContext(session.display, session.context)) return DriverError();
-        session.context = EGL_NO_CONTEXT;
-        session.contextId = nullptr;
-        session.lost = false;
-        return EGL_SUCCESS;
-    });
-}
-
-/// Releases all objects in the guest display.
-EGLBoolean Terminate(EGLDisplay d) {
-    return Run([=](uint64_t id) {
-        if (auto error = CheckDisplay(d,id); error != EGL_SUCCESS) return error;
-        return Shutdown();
-    });
-}
-
-/// Reports and clears the calling thread's EGL error.
-EGLint Error() { const auto value = lastError; lastError = EGL_SUCCESS; return value; }
-
-/// Reports bridge-owned strings; no host extensions are forwarded.
-const char* QueryString(EGLDisplay d, EGLint key) {
-    const char* result = nullptr;
-    Run([&](uint64_t id) {
-        if (auto error = CheckDisplay(d,id); error != EGL_SUCCESS) return error;
-        switch (key) {
-            case EGL_VENDOR: result = "Windows-ARM64.apk (ANGLE)"; break;
-            case EGL_CLIENT_APIS: result = "OpenGL_ES"; break;
-            case EGL_VERSION: result = "1.4 Windows-ARM64.apk restricted"; break;
-            case EGL_EXTENSIONS: result = ""; break;
-            default: return EGL_BAD_PARAMETER;
+    EGLint w = 1, h = 1;
+    std::vector<EGLint> pbAttrs;
+    if (attribList) {
+        for (int i = 0; attribList[i] != EGL_NONE; i += 2) {
+            if (attribList[i] == EGL_WIDTH) w = attribList[i + 1];
+            else if (attribList[i] == EGL_HEIGHT) h = attribList[i + 1];
+            pbAttrs.push_back(attribList[i]);
+            pbAttrs.push_back(attribList[i + 1]);
         }
-        return EGL_SUCCESS;
-    });
-    return result;
+    }
+    pbAttrs.push_back(EGL_NONE);
+    if (w < 0 || h < 0) { SetEglError(EGL_BAD_PARAMETER); return EGL_NO_SURFACE; }
+
+    EGLSurface pb = g_drv.eglCreatePbufferSurface(g_drv.display, cfgIt->second.hostConfig, pbAttrs.data());
+    if (pb == EGL_NO_SURFACE) {
+        const EGLint de = g_drv.eglGetError();
+        SetEglError(de == EGL_SUCCESS ? EGL_BAD_ALLOC : de);
+        return EGL_NO_SURFACE;
+    }
+    void* surfId = reinterpret_cast<void*>(g_nextHandle++);
+    g_surfaces[surfId] = {false, cfgIt->second.hostConfig, pb, nullptr, nullptr, w, h, 0, false};
+    SetEglError(EGL_SUCCESS);
+    return surfId;
 }
 
-/// Performs a GL command only with the calling guest's live current context.
-template<class F> void RunGl(F&& f) {
-    const uint64_t id = caller;
-    GLenum error = GL_INVALID_OPERATION;
-    Dispatch([&] {
-        if (session.current != id || !session.native || EnsureSurface(id) != EGL_SUCCESS) return;
-        f();
-        error = GL_NO_ERROR;
-    });
-    if (error && !lastGlError) lastGlError = error;
+EGLBoolean EGLAPIENTRY E_DestroySurface(EGLDisplay d, EGLSurface surf) {
+    HWND dropHwnd = nullptr;
+    int dropKey = 0;
+    {
+        std::lock_guard lock(g_mu);
+        EGLint err = EGL_SUCCESS;
+        if (!CheckDisplayLocked(d, err)) { SetEglError(err); return EGL_FALSE; }
+        auto it = g_surfaces.find(surf);
+        if (it == g_surfaces.end()) { SetEglError(EGL_BAD_SURFACE); return EGL_FALSE; }
+        if (it->second.boundThread != 0) {
+            SetEglError(EGL_BAD_ACCESS);
+            return EGL_FALSE;
+        }
+        if (it->second.hostPbuffer != EGL_NO_SURFACE) {
+            g_drv.eglDestroySurface(g_drv.display, it->second.hostPbuffer);
+        }
+        if (it->second.nativeToken) {
+            dropHwnd = it->second.hwnd;
+            dropKey = -static_cast<int>(reinterpret_cast<uintptr_t>(it->second.nativeToken));
+            ReleaseSurface(it->second.nativeToken);
+        }
+        g_surfaces.erase(it);
+    }
+    if (dropHwnd && dropKey != 0) {
+        CompositorUpdateSurfacePlacement(dropHwnd, dropKey, {}, true);
+        InvalidateRect(dropHwnd, nullptr, FALSE);
+    }
+    SetEglError(EGL_SUCCESS);
+    return EGL_TRUE;
 }
 
-#define VWRAP(name, args, call) \
-    /** Executes the typed guest GL command on its current context. */ \
-    void G_##name args { RunGl([&] { session.name call; }); }
-#define RWRAP(type, name, args, call) \
-    /** Returns the real result of the typed guest GL query. */ \
-    type G_##name args { type result{}; RunGl([&] { result = session.name call; }); return result; }
-GL_VOID(VWRAP)
-GL_RESULT(RWRAP)
-#undef RWRAP
-#undef VWRAP
+EGLBoolean EGLAPIENTRY E_MakeCurrent(EGLDisplay d, EGLSurface draw, EGLSurface read, EGLContext ctx) {
+    std::lock_guard lock(g_mu);
+    EGLint err = EGL_SUCCESS;
+    if (!CheckDisplayLocked(d, err)) { SetEglError(err); return EGL_FALSE; }
 
-/// Returns a queued bridge error or the current context's driver error.
-GLenum GlError() {
-    if (lastGlError) { const auto value = lastGlError; lastGlError = GL_NO_ERROR; return value; }
-    GLenum result = GL_NO_ERROR;
-    const auto id = caller;
-    Dispatch([&] { if (session.current == id) result = session.glGetError(); });
-    return result;
+    if (ctx == EGL_NO_CONTEXT) {
+        if (draw != EGL_NO_SURFACE || read != EGL_NO_SURFACE) {
+            SetEglError(EGL_BAD_MATCH);
+            return EGL_FALSE;
+        }
+        if (t_tls.hostCtx != EGL_NO_CONTEXT) {
+            if (!g_drv.eglMakeCurrent(g_drv.display, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT)) {
+                SetEglError(g_drv.eglGetError());
+                return EGL_FALSE;
+            }
+            auto oldCtx = g_contexts.find(t_tls.guestCtx);
+            if (oldCtx != g_contexts.end() && oldCtx->second.boundThread == t_tls.id) oldCtx->second.boundThread = 0;
+            for (void* st : {t_tls.guestDraw, t_tls.guestRead}) {
+                auto oldSurf = g_surfaces.find(st);
+                if (oldSurf != g_surfaces.end() && oldSurf->second.boundThread == t_tls.id) oldSurf->second.boundThread = 0;
+            }
+            t_tls.hostCtx = EGL_NO_CONTEXT;
+            t_tls.guestCtx = EGL_NO_CONTEXT;
+            t_tls.guestDraw = t_tls.guestRead = EGL_NO_SURFACE;
+        }
+        SetEglError(EGL_SUCCESS);
+        return EGL_TRUE;
+    }
+
+    if (g_drv.lost) { SetEglError(EGL_CONTEXT_LOST); return EGL_FALSE; }
+    auto ctxIt = g_contexts.find(ctx);
+    if (ctxIt == g_contexts.end()) { SetEglError(EGL_BAD_CONTEXT); return EGL_NO_CONTEXT != nullptr ? EGL_FALSE : EGL_FALSE; }
+    if (ctxIt->second.boundThread != 0 && ctxIt->second.boundThread != t_tls.id) {
+        SetEglError(EGL_BAD_ACCESS);
+        return EGL_FALSE;
+    }
+
+    // Surfaceless context (`EGL_KHR_surfaceless_context`): both draw and read are EGL_NO_SURFACE.
+    EGLSurface hostDraw = EGL_NO_SURFACE;
+    EGLSurface hostRead = EGL_NO_SURFACE;
+    GuestSurfaceEntry* drawEntry = nullptr;
+    GuestSurfaceEntry* readEntry = nullptr;
+    if (draw != EGL_NO_SURFACE || read != EGL_NO_SURFACE) {
+        if (draw == EGL_NO_SURFACE || read == EGL_NO_SURFACE) {
+            SetEglError(EGL_BAD_MATCH);
+            return EGL_FALSE;
+        }
+        auto dIt = g_surfaces.find(draw);
+        auto rIt = g_surfaces.find(read);
+        if (dIt == g_surfaces.end() || rIt == g_surfaces.end()) {
+            SetEglError(EGL_BAD_SURFACE);
+            return EGL_FALSE;
+        }
+        drawEntry = &dIt->second;
+        readEntry = &rIt->second;
+        if ((drawEntry->boundThread != 0 && drawEntry->boundThread != t_tls.id) ||
+            (readEntry->boundThread != 0 && readEntry->boundThread != t_tls.id)) {
+            SetEglError(EGL_BAD_ACCESS);
+            return EGL_FALSE;
+        }
+        if (!SyncWindowSurfaceSizeLocked(draw, *drawEntry) ||
+            (read != draw && !SyncWindowSurfaceSizeLocked(read, *readEntry))) {
+            SetEglError(EGL_BAD_SURFACE);
+            return EGL_FALSE;
+        }
+        hostDraw = drawEntry->hostPbuffer;
+        hostRead = readEntry->hostPbuffer;
+    }
+
+    if (!g_drv.eglMakeCurrent(g_drv.display, hostDraw, hostRead, ctxIt->second.hostContext)) {
+        const EGLint de = g_drv.eglGetError();
+        if (de == EGL_CONTEXT_LOST) g_drv.lost = true;
+        SetEglError(de == EGL_SUCCESS ? EGL_BAD_ACCESS : de);
+        return EGL_FALSE;
+    }
+
+    // Clear previous thread bindings before recording the new ones.
+    if (t_tls.guestCtx != EGL_NO_CONTEXT && t_tls.guestCtx != ctx) {
+        auto prevC = g_contexts.find(t_tls.guestCtx);
+        if (prevC != g_contexts.end() && prevC->second.boundThread == t_tls.id) prevC->second.boundThread = 0;
+    }
+    for (void* prevS : {t_tls.guestDraw, t_tls.guestRead}) {
+        if (prevS != EGL_NO_SURFACE && prevS != draw && prevS != read) {
+            auto ps = g_surfaces.find(prevS);
+            if (ps != g_surfaces.end() && ps->second.boundThread == t_tls.id) ps->second.boundThread = 0;
+        }
+    }
+
+    ctxIt->second.boundThread = t_tls.id;
+    if (drawEntry) drawEntry->boundThread = t_tls.id;
+    if (readEntry) readEntry->boundThread = t_tls.id;
+    t_tls.guestCtx = ctx;
+    t_tls.hostCtx = ctxIt->second.hostContext;
+    t_tls.guestDraw = draw;
+    t_tls.guestRead = read;
+    SetEglError(EGL_SUCCESS);
+    return EGL_TRUE;
 }
 
-/// Copies supported driver strings into guest-thread storage, never exposing driver addresses.
-const GLubyte* GlString(GLenum key) {
-    struct Strings { char values[3][512]{}; };
-    thread_local Strings strings;
-    auto* local = &strings;
-    const GLubyte* result = nullptr;
-    RunGl([&] {
-        if (key == GL_EXTENSIONS) { result = reinterpret_cast<const GLubyte*>(""); return; }
-        if (key == GL_VERSION) { result = reinterpret_cast<const GLubyte*>("OpenGL ES 2.0 Windows-ARM64.apk restricted"); return; }
-        const auto* value = session.glGetString(key);
-        if (!value) return;
-        auto& out = local->values[key == GL_VENDOR ? 0 : key == GL_RENDERER ? 1 : 2];
-        std::snprintf(out, sizeof out, "%s", reinterpret_cast<const char*>(value));
-        result = reinterpret_cast<const GLubyte*>(out);
-    });
-    return result;
+EGLContext EGLAPIENTRY E_GetCurrentContext() {
+    SetEglError(EGL_SUCCESS);
+    return t_tls.guestCtx;
 }
 
-using Proc = void (*)();
-Proc GetProc(const char* name);
+EGLSurface EGLAPIENTRY E_GetCurrentSurface(EGLint readdraw) {
+    if (readdraw != EGL_DRAW && readdraw != EGL_READ) {
+        SetEglError(EGL_BAD_PARAMETER);
+        return EGL_NO_SURFACE;
+    }
+    SetEglError(EGL_SUCCESS);
+    return readdraw == EGL_DRAW ? t_tls.guestDraw : t_tls.guestRead;
+}
 
-#define SYMBOL(name, fn) {#name, reinterpret_cast<void*>(&fn)}
-const guest::HostSymbol eglSymbols[] = {
-    SYMBOL(eglGetDisplay, GetDisplay), SYMBOL(eglInitialize, Initialize), SYMBOL(eglChooseConfig, ChooseConfig),
-    SYMBOL(eglCreateWindowSurface, CreateSurface), SYMBOL(eglCreateContext, CreateContext), SYMBOL(eglMakeCurrent, MakeCurrent),
-    SYMBOL(eglSwapBuffers, Swap), SYMBOL(eglQuerySurface, QuerySurface), SYMBOL(eglDestroySurface, DestroySurface),
-    SYMBOL(eglDestroyContext, DestroyContext), SYMBOL(eglTerminate, Terminate), SYMBOL(eglQueryString, QueryString),
-    SYMBOL(eglGetError, Error), SYMBOL(eglGetProcAddress, GetProc),
+EGLDisplay EGLAPIENTRY E_GetCurrentDisplay() {
+    SetEglError(EGL_SUCCESS);
+    return t_tls.guestCtx != EGL_NO_CONTEXT ? reinterpret_cast<EGLDisplay>(kLogicalDisplay) : EGL_NO_DISPLAY;
+}
+
+EGLBoolean EGLAPIENTRY E_QueryContext(EGLDisplay d, EGLContext ctx, EGLint attr, EGLint* value) {
+    std::lock_guard lock(g_mu);
+    EGLint err = EGL_SUCCESS;
+    if (!CheckDisplayLocked(d, err)) { SetEglError(err); return EGL_FALSE; }
+    if (!value) { SetEglError(EGL_BAD_PARAMETER); return EGL_FALSE; }
+    auto it = g_contexts.find(ctx);
+    if (it == g_contexts.end()) { SetEglError(EGL_BAD_CONTEXT); return EGL_FALSE; }
+    if (attr == EGL_CONTEXT_CLIENT_VERSION) {
+        *value = it->second.clientMajor;
+        SetEglError(EGL_SUCCESS);
+        return EGL_TRUE;
+    }
+    if (!g_drv.eglQueryContext(g_drv.display, it->second.hostContext, attr, value)) {
+        SetEglError(g_drv.eglGetError());
+        return EGL_FALSE;
+    }
+    SetEglError(EGL_SUCCESS);
+    return EGL_TRUE;
+}
+
+EGLBoolean EGLAPIENTRY E_QuerySurface(EGLDisplay d, EGLSurface surf, EGLint attr, EGLint* value) {
+    std::lock_guard lock(g_mu);
+    EGLint err = EGL_SUCCESS;
+    if (!CheckDisplayLocked(d, err)) { SetEglError(err); return EGL_FALSE; }
+    if (!value) { SetEglError(EGL_BAD_PARAMETER); return EGL_FALSE; }
+    auto it = g_surfaces.find(surf);
+    if (it == g_surfaces.end()) { SetEglError(EGL_BAD_SURFACE); return EGL_FALSE; }
+
+    if (it->second.isWindow) {
+        HWND hwnd = nullptr;
+        int w = 0, h = 0;
+        if (!ResolveSurface(it->second.nativeToken, hwnd, w, h) || hwnd != it->second.hwnd) {
+            SetEglError(EGL_BAD_SURFACE);
+            return EGL_FALSE;
+        }
+        if (w > 0 && h > 0 && it->second.boundThread == t_tls.id) {
+            SyncWindowSurfaceSizeLocked(surf, it->second);
+        }
+        if (attr == EGL_WIDTH) { *value = w; SetEglError(EGL_SUCCESS); return EGL_TRUE; }
+        if (attr == EGL_HEIGHT) { *value = h; SetEglError(EGL_SUCCESS); return EGL_TRUE; }
+        if (attr == EGL_RENDER_BUFFER) { *value = EGL_BACK_BUFFER; SetEglError(EGL_SUCCESS); return EGL_TRUE; }
+    }
+    if (!g_drv.eglQuerySurface(g_drv.display, it->second.hostPbuffer, attr, value)) {
+        SetEglError(g_drv.eglGetError());
+        return EGL_FALSE;
+    }
+    SetEglError(EGL_SUCCESS);
+    return EGL_TRUE;
+}
+
+EGLBoolean EGLAPIENTRY E_SurfaceAttrib(EGLDisplay d, EGLSurface surf, EGLint attr, EGLint val) {
+    std::lock_guard lock(g_mu);
+    EGLint err = EGL_SUCCESS;
+    if (!CheckDisplayLocked(d, err)) { SetEglError(err); return EGL_FALSE; }
+    auto it = g_surfaces.find(surf);
+    if (it == g_surfaces.end()) { SetEglError(EGL_BAD_SURFACE); return EGL_FALSE; }
+    if (!g_drv.eglSurfaceAttrib(g_drv.display, it->second.hostPbuffer, attr, val)) {
+        SetEglError(g_drv.eglGetError());
+        return EGL_FALSE;
+    }
+    SetEglError(EGL_SUCCESS);
+    return EGL_TRUE;
+}
+
+EGLBoolean EGLAPIENTRY E_BindTexImage(EGLDisplay d, EGLSurface surf, EGLint buffer) {
+    std::lock_guard lock(g_mu);
+    EGLint err = EGL_SUCCESS;
+    if (!CheckDisplayLocked(d, err)) { SetEglError(err); return EGL_FALSE; }
+    auto it = g_surfaces.find(surf);
+    if (it == g_surfaces.end()) { SetEglError(EGL_BAD_SURFACE); return EGL_FALSE; }
+    if (!g_drv.eglBindTexImage(g_drv.display, it->second.hostPbuffer, buffer)) {
+        SetEglError(g_drv.eglGetError());
+        return EGL_FALSE;
+    }
+    SetEglError(EGL_SUCCESS);
+    return EGL_TRUE;
+}
+
+EGLBoolean EGLAPIENTRY E_ReleaseTexImage(EGLDisplay d, EGLSurface surf, EGLint buffer) {
+    std::lock_guard lock(g_mu);
+    EGLint err = EGL_SUCCESS;
+    if (!CheckDisplayLocked(d, err)) { SetEglError(err); return EGL_FALSE; }
+    auto it = g_surfaces.find(surf);
+    if (it == g_surfaces.end()) { SetEglError(EGL_BAD_SURFACE); return EGL_FALSE; }
+    if (!g_drv.eglReleaseTexImage(g_drv.display, it->second.hostPbuffer, buffer)) {
+        SetEglError(g_drv.eglGetError());
+        return EGL_FALSE;
+    }
+    SetEglError(EGL_SUCCESS);
+    return EGL_TRUE;
+}
+
+EGLBoolean EGLAPIENTRY E_SwapInterval(EGLDisplay d, EGLint) {
+    std::lock_guard lock(g_mu);
+    EGLint err = EGL_SUCCESS;
+    if (!CheckDisplayLocked(d, err)) { SetEglError(err); return EGL_FALSE; }
+    SetEglError(EGL_SUCCESS);
+    return EGL_TRUE;
+}
+
+EGLBoolean EGLAPIENTRY E_SwapBuffers(EGLDisplay d, EGLSurface surf) {
+    HWND hwnd = nullptr;
+    int layerKey = 0;
+    int drawW = 0, drawH = 0;
+    int liveW = 0, liveH = 0;
+    EGLSurface hostPbuf = EGL_NO_SURFACE;
+    SurfaceLayerPlacement placement{};
+    bool isWindow = false;
+    bool isD3d11 = false;
+
+    {
+        std::lock_guard lock(g_mu);
+        EGLint err = EGL_SUCCESS;
+        if (!CheckDisplayLocked(d, err)) { SetEglError(err); return EGL_FALSE; }
+        auto it = g_surfaces.find(surf);
+        if (it == g_surfaces.end()) { SetEglError(EGL_BAD_SURFACE); return EGL_FALSE; }
+        if (t_tls.guestDraw != surf || t_tls.hostCtx == EGL_NO_CONTEXT) {
+            SetEglError(EGL_BAD_SURFACE);
+            return EGL_FALSE;
+        }
+        if (g_drv.injectLoss && !g_drv.lossInjected) {
+            g_drv.lossInjected = true;
+            g_drv.lost = true;
+            g_drv.eglMakeCurrent(g_drv.display, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
+            t_tls.hostCtx = EGL_NO_CONTEXT;
+            LogLine("GRAPHICS_RENDER_FAILED: guest eglSwapBuffers error=12302 (injected context loss)");
+            SetEglError(EGL_CONTEXT_LOST);
+            return EGL_FALSE;
+        }
+        if (g_drv.lost) { SetEglError(EGL_CONTEXT_LOST); return EGL_FALSE; }
+
+        isWindow = it->second.isWindow;
+        if (!isWindow) {
+            if (g_drv.glFlush) g_drv.glFlush();
+            SetEglError(EGL_SUCCESS);
+            return EGL_TRUE;
+        }
+        if (!ResolveSurface(it->second.nativeToken, hwnd, liveW, liveH, &placement) ||
+            hwnd != it->second.hwnd || liveW <= 0 || liveH <= 0) {
+            SetEglError(EGL_BAD_SURFACE);
+            return EGL_FALSE;
+        }
+        hostPbuf = it->second.hostPbuffer;
+        drawW = it->second.width;
+        drawH = it->second.height;
+        layerKey = -static_cast<int>(reinterpret_cast<uintptr_t>(it->second.nativeToken));
+        isD3d11 = g_drv.backend && std::strcmp(g_drv.backend, "d3d11") == 0;
+        it->second.presented = true;
+    }
+
+    bool submitted = false;
+    if (isD3d11 && g_drv.eglQuerySurfacePointerANGLE) {
+        void* shareHandle = nullptr;
+        if (g_drv.eglQuerySurfacePointerANGLE(g_drv.display, hostPbuf, EGL_D3D_TEXTURE_2D_SHARE_HANDLE_ANGLE, &shareHandle) && shareHandle) {
+            g_drv.glFinish();
+            submitted = CompositorSubmitSurfaceSharedTexture(hwnd, layerKey, static_cast<HANDLE>(shareHandle),
+                                                             drawW, drawH, LayerAlpha::Opaque, false, placement);
+        }
+    }
+    if (!submitted && drawW > 0 && drawH > 0) {
+        GLint prevFbo = 0;
+        g_drv.glGetIntegerv(GL_FRAMEBUFFER_BINDING, &prevFbo);
+        if (prevFbo != 0) g_drv.glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        std::vector<uint8_t> pixels(static_cast<size_t>(drawW) * static_cast<size_t>(drawH) * 4);
+        g_drv.glReadPixels(0, 0, drawW, drawH, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
+        if (prevFbo != 0) g_drv.glBindFramebuffer(GL_FRAMEBUFFER, static_cast<GLuint>(prevFbo));
+        if (!CompositorSubmitSurfaceBytes(hwnd, layerKey, pixels.data(), static_cast<size_t>(drawW) * 4,
+                                          drawW, drawH, LayerPixels::Rgba8, LayerAlpha::Opaque, true, placement)) {
+            PublishEmbedGlRgba(pixels.data(), drawW, drawH);
+        }
+    }
+    InvalidateRect(hwnd, nullptr, FALSE);
+
+    // If the client area resized since this frame began, renew the Pbuffer for the next frame.
+    if (liveW != drawW || liveH != drawH) {
+        std::lock_guard lock(g_mu);
+        auto it = g_surfaces.find(surf);
+        if (it != g_surfaces.end()) SyncWindowSurfaceSizeLocked(surf, it->second);
+    }
+
+    SetEglError(EGL_SUCCESS);
+    return EGL_TRUE;
+}
+
+// ---- EGLImageKHR & EGLSyncKHR ----
+
+EGLImageKHR EGLAPIENTRY E_CreateImageKHR(EGLDisplay d, EGLContext ctx, EGLenum target,
+                                         EGLClientBuffer buffer, const EGLint* attribList) {
+    std::lock_guard lock(g_mu);
+    EGLint err = EGL_SUCCESS;
+    if (!CheckDisplayLocked(d, err)) { SetEglError(err); return EGL_NO_IMAGE_KHR; }
+    if (!g_drv.eglCreateImageKHR) { SetEglError(EGL_BAD_PARAMETER); return EGL_NO_IMAGE_KHR; }
+    EGLContext hostCtx = EGL_NO_CONTEXT;
+    if (ctx != EGL_NO_CONTEXT) {
+        auto it = g_contexts.find(ctx);
+        if (it == g_contexts.end()) { SetEglError(EGL_BAD_CONTEXT); return EGL_NO_IMAGE_KHR; }
+        hostCtx = it->second.hostContext;
+    }
+    EGLImageKHR img = g_drv.eglCreateImageKHR(g_drv.display, hostCtx, target, buffer, attribList);
+    if (img == EGL_NO_IMAGE_KHR) {
+        SetEglError(g_drv.eglGetError());
+        return EGL_NO_IMAGE_KHR;
+    }
+    void* token = reinterpret_cast<void*>(g_nextHandle++);
+    g_images[token] = img;
+    SetEglError(EGL_SUCCESS);
+    return token;
+}
+
+EGLImage EGLAPIENTRY E_CreateImage15(EGLDisplay d, EGLContext ctx, EGLenum target,
+                                     EGLClientBuffer buffer, const EGLAttrib* attribList) {
+    std::vector<EGLint> attrs32;
+    if (attribList) {
+        for (size_t i = 0; attribList[i] != EGL_NONE; i += 2) {
+            attrs32.push_back(static_cast<EGLint>(attribList[i]));
+            attrs32.push_back(static_cast<EGLint>(attribList[i + 1]));
+        }
+        attrs32.push_back(EGL_NONE);
+    }
+    return E_CreateImageKHR(d, ctx, target, buffer, attribList ? attrs32.data() : nullptr);
+}
+
+EGLBoolean EGLAPIENTRY E_DestroyImageKHR(EGLDisplay d, EGLImageKHR image) {
+    std::lock_guard lock(g_mu);
+    EGLint err = EGL_SUCCESS;
+    if (!CheckDisplayLocked(d, err)) { SetEglError(err); return EGL_FALSE; }
+    auto it = g_images.find(image);
+    if (it == g_images.end()) { SetEglError(EGL_BAD_PARAMETER); return EGL_FALSE; }
+    const EGLBoolean ok = g_drv.eglDestroyImageKHR ? g_drv.eglDestroyImageKHR(g_drv.display, it->second) : EGL_TRUE;
+    g_images.erase(it);
+    SetEglError(ok ? EGL_SUCCESS : g_drv.eglGetError());
+    return ok;
+}
+
+EGLSyncKHR EGLAPIENTRY E_CreateSyncKHR(EGLDisplay d, EGLenum type, const EGLint* attribList) {
+    std::lock_guard lock(g_mu);
+    EGLint err = EGL_SUCCESS;
+    if (!CheckDisplayLocked(d, err)) { SetEglError(err); return EGL_NO_SYNC_KHR; }
+    if (!g_drv.eglCreateSyncKHR) { SetEglError(EGL_BAD_PARAMETER); return EGL_NO_SYNC_KHR; }
+    EGLSyncKHR syn = g_drv.eglCreateSyncKHR(g_drv.display, type, attribList);
+    if (syn == EGL_NO_SYNC_KHR) { SetEglError(g_drv.eglGetError()); return EGL_NO_SYNC_KHR; }
+    void* token = reinterpret_cast<void*>(g_nextHandle++);
+    g_syncs[token] = syn;
+    SetEglError(EGL_SUCCESS);
+    return token;
+}
+
+EGLSync EGLAPIENTRY E_CreateSync15(EGLDisplay d, EGLenum type, const EGLAttrib* attribList) {
+    std::vector<EGLint> attrs32;
+    if (attribList) {
+        for (size_t i = 0; attribList[i] != EGL_NONE; i += 2) {
+            attrs32.push_back(static_cast<EGLint>(attribList[i]));
+            attrs32.push_back(static_cast<EGLint>(attribList[i + 1]));
+        }
+        attrs32.push_back(EGL_NONE);
+    }
+    return E_CreateSyncKHR(d, type, attribList ? attrs32.data() : nullptr);
+}
+
+EGLBoolean EGLAPIENTRY E_DestroySyncKHR(EGLDisplay d, EGLSyncKHR sync) {
+    std::lock_guard lock(g_mu);
+    EGLint err = EGL_SUCCESS;
+    if (!CheckDisplayLocked(d, err)) { SetEglError(err); return EGL_FALSE; }
+    auto it = g_syncs.find(sync);
+    if (it == g_syncs.end()) { SetEglError(EGL_BAD_PARAMETER); return EGL_FALSE; }
+    const EGLBoolean ok = g_drv.eglDestroySyncKHR ? g_drv.eglDestroySyncKHR(g_drv.display, it->second) : EGL_TRUE;
+    g_syncs.erase(it);
+    SetEglError(ok ? EGL_SUCCESS : g_drv.eglGetError());
+    return ok;
+}
+
+EGLint EGLAPIENTRY E_ClientWaitSyncKHR(EGLDisplay d, EGLSyncKHR sync, EGLint flags, EGLTimeKHR timeout) {
+    EGLSyncKHR hostSync = EGL_NO_SYNC_KHR;
+    EGLDisplay hostDpy = EGL_NO_DISPLAY;
+    PFNEGLCLIENTWAITSYNCKHRPROC fn = nullptr;
+    {
+        std::lock_guard lock(g_mu);
+        EGLint err = EGL_SUCCESS;
+        if (!CheckDisplayLocked(d, err)) { SetEglError(err); return EGL_FALSE; }
+        auto it = g_syncs.find(sync);
+        if (it == g_syncs.end() || !g_drv.eglClientWaitSyncKHR) { SetEglError(EGL_BAD_PARAMETER); return EGL_FALSE; }
+        hostSync = it->second;
+        hostDpy = g_drv.display;
+        fn = g_drv.eglClientWaitSyncKHR;
+    }
+    const EGLint rc = fn(hostDpy, hostSync, flags, timeout);
+    SetEglError(rc == EGL_FALSE ? EGL_BAD_PARAMETER : EGL_SUCCESS);
+    return rc;
+}
+
+EGLint EGLAPIENTRY E_WaitSyncKHR(EGLDisplay d, EGLSyncKHR sync, EGLint flags) {
+    std::lock_guard lock(g_mu);
+    EGLint err = EGL_SUCCESS;
+    if (!CheckDisplayLocked(d, err)) { SetEglError(err); return EGL_FALSE; }
+    auto it = g_syncs.find(sync);
+    if (it == g_syncs.end() || !g_drv.eglWaitSyncKHR) { SetEglError(EGL_BAD_PARAMETER); return EGL_FALSE; }
+    const EGLint rc = g_drv.eglWaitSyncKHR(g_drv.display, it->second, flags);
+    SetEglError(rc ? EGL_SUCCESS : g_drv.eglGetError());
+    return rc;
+}
+
+EGLBoolean EGLAPIENTRY E_WaitSync15(EGLDisplay d, EGLSync sync, EGLint flags) {
+    return E_WaitSyncKHR(d, sync, flags) ? EGL_TRUE : EGL_FALSE;
+}
+
+EGLBoolean EGLAPIENTRY E_GetSyncAttribKHR(EGLDisplay d, EGLSyncKHR sync, EGLint attr, EGLint* val) {
+    std::lock_guard lock(g_mu);
+    EGLint err = EGL_SUCCESS;
+    if (!CheckDisplayLocked(d, err)) { SetEglError(err); return EGL_FALSE; }
+    if (!val) { SetEglError(EGL_BAD_PARAMETER); return EGL_FALSE; }
+    auto it = g_syncs.find(sync);
+    if (it == g_syncs.end() || !g_drv.eglGetSyncAttribKHR) { SetEglError(EGL_BAD_PARAMETER); return EGL_FALSE; }
+    const EGLBoolean ok = g_drv.eglGetSyncAttribKHR(g_drv.display, it->second, attr, val);
+    SetEglError(ok ? EGL_SUCCESS : g_drv.eglGetError());
+    return ok;
+}
+
+void (*EGLAPIENTRY E_GetProcAddress(const char* name))();
+
+#define EGL_SYM(name, fn) {#name, reinterpret_cast<void*>(&fn)}
+const guest::HostSymbol kEglSymbols[] = {
+    EGL_SYM(eglGetError, E_GetError),
+    EGL_SYM(eglGetDisplay, E_GetDisplay),
+    EGL_SYM(eglInitialize, E_Initialize),
+    EGL_SYM(eglTerminate, E_Terminate),
+    EGL_SYM(eglQueryString, E_QueryString),
+    EGL_SYM(eglGetConfigs, E_GetConfigs),
+    EGL_SYM(eglChooseConfig, E_ChooseConfig),
+    EGL_SYM(eglGetConfigAttrib, E_GetConfigAttrib),
+    EGL_SYM(eglBindAPI, E_BindAPI),
+    EGL_SYM(eglQueryAPI, E_QueryAPI),
+    EGL_SYM(eglWaitClient, E_WaitClient),
+    EGL_SYM(eglReleaseThread, E_ReleaseThread),
+    EGL_SYM(eglCreateWindowSurface, E_CreateWindowSurface),
+    EGL_SYM(eglCreatePbufferSurface, E_CreatePbufferSurface),
+    EGL_SYM(eglDestroySurface, E_DestroySurface),
+    EGL_SYM(eglQuerySurface, E_QuerySurface),
+    EGL_SYM(eglSurfaceAttrib, E_SurfaceAttrib),
+    EGL_SYM(eglBindTexImage, E_BindTexImage),
+    EGL_SYM(eglReleaseTexImage, E_ReleaseTexImage),
+    EGL_SYM(eglSwapInterval, E_SwapInterval),
+    EGL_SYM(eglCreateContext, E_CreateContext),
+    EGL_SYM(eglDestroyContext, E_DestroyContext),
+    EGL_SYM(eglMakeCurrent, E_MakeCurrent),
+    EGL_SYM(eglGetCurrentContext, E_GetCurrentContext),
+    EGL_SYM(eglGetCurrentSurface, E_GetCurrentSurface),
+    EGL_SYM(eglGetCurrentDisplay, E_GetCurrentDisplay),
+    EGL_SYM(eglQueryContext, E_QueryContext),
+    EGL_SYM(eglWaitGL, E_WaitGL),
+    EGL_SYM(eglWaitNative, E_WaitNative),
+    EGL_SYM(eglSwapBuffers, E_SwapBuffers),
+    EGL_SYM(eglGetProcAddress, E_GetProcAddress),
+    EGL_SYM(eglCreateImageKHR, E_CreateImageKHR),
+    EGL_SYM(eglCreateImage, E_CreateImage15),
+    EGL_SYM(eglDestroyImageKHR, E_DestroyImageKHR),
+    EGL_SYM(eglDestroyImage, E_DestroyImageKHR),
+    EGL_SYM(eglCreateSyncKHR, E_CreateSyncKHR),
+    EGL_SYM(eglCreateSync, E_CreateSync15),
+    EGL_SYM(eglDestroySyncKHR, E_DestroySyncKHR),
+    EGL_SYM(eglDestroySync, E_DestroySyncKHR),
+    EGL_SYM(eglClientWaitSyncKHR, E_ClientWaitSyncKHR),
+    EGL_SYM(eglClientWaitSync, E_ClientWaitSyncKHR),
+    EGL_SYM(eglWaitSyncKHR, E_WaitSyncKHR),
+    EGL_SYM(eglWaitSync, E_WaitSync15),
+    EGL_SYM(eglGetSyncAttribKHR, E_GetSyncAttribKHR),
 };
-#define VSYMBOL(name, args, call) SYMBOL(name, G_##name),
-#define RSYMBOL(type, name, args, call) SYMBOL(name, G_##name),
-const guest::HostSymbol glSymbols[] = {
-    GL_VOID(VSYMBOL) GL_RESULT(RSYMBOL)
-    SYMBOL(glGetError, GlError), SYMBOL(glGetString, GlString),
-};
-#undef RSYMBOL
-#undef VSYMBOL
-#undef SYMBOL
+#undef EGL_SYM
 
-/// Returns only the same fixed guest trampolines admitted as ELF imports.
-Proc GetProc(const char* name) {
-    if (!name || strnlen(name, 128) == 128) return nullptr;
-    for (const auto& entry : eglSymbols) if (!std::strcmp(entry.name,name)) return reinterpret_cast<Proc>(entry.address);
-    for (const auto& entry : glSymbols) if (!std::strcmp(entry.name,name)) return reinterpret_cast<Proc>(entry.address);
-    return nullptr;
+std::vector<guest::HostSymbol> BuildGles2And3SymbolList() {
+    std::vector<guest::HostSymbol> out(std::begin(kAutoGles2And3Symbols), std::end(kAutoGles2And3Symbols));
+    out.push_back({"glGetError", reinterpret_cast<void*>(&G_glGetError)});
+    out.push_back({"glGetString", reinterpret_cast<void*>(&G_glGetString)});
+    out.push_back({"glGetStringi", reinterpret_cast<void*>(&G_glGetStringi)});
+    out.push_back({"glDebugMessageCallback", reinterpret_cast<void*>(&G_glDebugMessageCallback)});
+    out.push_back({"glDebugMessageCallbackKHR", reinterpret_cast<void*>(&G_glDebugMessageCallbackKHR)});
+    out.push_back({"glEGLImageTargetTexture2DOES", reinterpret_cast<void*>(&G_glEGLImageTargetTexture2DOES)});
+    out.push_back({"glEGLImageTargetRenderbufferStorageOES", reinterpret_cast<void*>(&G_glEGLImageTargetRenderbufferStorageOES)});
+    return out;
 }
 
-} // namespace
+std::vector<guest::HostSymbol> BuildGles1SymbolList() {
+    std::vector<guest::HostSymbol> out(std::begin(kAutoGles1Symbols), std::end(kAutoGles1Symbols));
+    out.push_back({"glGetError", reinterpret_cast<void*>(&G_glGetError)});
+    out.push_back({"glGetString", reinterpret_cast<void*>(&G_glGetString)});
+    return out;
+}
+
+void (*EGLAPIENTRY E_GetProcAddress(const char* name))() {
+    if (!name || !*name) return nullptr;
+    static const std::unordered_map<std::string_view, void*> kProcMap = [] {
+        std::unordered_map<std::string_view, void*> m;
+        for (const auto& s : kEglSymbols) m.emplace(s.name, s.address);
+        for (const auto& s : kAutoGles2And3Symbols) m.emplace(s.name, s.address);
+        for (const auto& s : kAutoGles1Symbols) m.emplace(s.name, s.address);
+        m.emplace("glGetError", reinterpret_cast<void*>(&G_glGetError));
+        m.emplace("glGetString", reinterpret_cast<void*>(&G_glGetString));
+        m.emplace("glGetStringi", reinterpret_cast<void*>(&G_glGetStringi));
+        m.emplace("glDebugMessageCallback", reinterpret_cast<void*>(&G_glDebugMessageCallback));
+        m.emplace("glDebugMessageCallbackKHR", reinterpret_cast<void*>(&G_glDebugMessageCallbackKHR));
+        m.emplace("glEGLImageTargetTexture2DOES", reinterpret_cast<void*>(&G_glEGLImageTargetTexture2DOES));
+        m.emplace("glEGLImageTargetRenderbufferStorageOES", reinterpret_cast<void*>(&G_glEGLImageTargetRenderbufferStorageOES));
+        return m;
+    }();
+    auto it = kProcMap.find(name);
+    if (it == kProcMap.end()) return nullptr;
+    return reinterpret_cast<void (*)()>(it->second);
+}
+
+}  // namespace
+
+bool GuestGraphicsActive() {
+    std::lock_guard lock(g_mu);
+    return g_drv.initRefs > 0;
+}
+
+bool GuestGraphicsPresents(HWND window) {
+    (void)window;
+    // Guest EGL window surfaces present via WinApkCompositor, so Paint delegates to CompositorPresentWindow.
+    return false;
+}
+
+void RetireGuestGraphics(HWND window, bool closing) {
+    std::lock_guard lock(g_mu);
+    if (closing) {
+        ShutdownLocked();
+        return;
+    }
+    for (auto& [id, surf] : g_surfaces) {
+        if (surf.isWindow && (!window || surf.hwnd == window)) {
+            if (surf.nativeToken) {
+                const int key = -static_cast<int>(reinterpret_cast<uintptr_t>(surf.nativeToken));
+                CompositorUpdateSurfacePlacement(surf.hwnd, key, {}, true);
+                ReleaseSurface(surf.nativeToken);
+                surf.nativeToken = nullptr;
+            }
+            surf.hwnd = nullptr;
+        }
+    }
+}
 
 void AddGuestGraphicsLibraries(std::vector<guest::BuiltinLibrary>& libraries) {
-    libraries.push_back({"libEGL.so", {std::begin(eglSymbols), std::end(eglSymbols)}, ""});
-    libraries.push_back({"libGLESv2.so", {std::begin(glSymbols), std::end(glSymbols)}, ""});
+    std::vector<guest::HostSymbol> eglSyms(std::begin(kEglSymbols), std::end(kEglSymbols));
+    auto gles1Syms = BuildGles1SymbolList();
+    auto gles2Syms = BuildGles2And3SymbolList();
+    libraries.push_back({"libEGL.so", std::move(eglSyms), ""});
+    libraries.push_back({"libGLESv1_CM.so", std::move(gles1Syms), ""});
+    libraries.push_back({"libGLESv2.so", gles2Syms, ""});
+    libraries.push_back({"libGLESv3.so", std::move(gles2Syms), ""});
 }
 
-bool GuestGraphicsActive() { return session.owner != 0; }
-bool GuestGraphicsPresents(HWND window) { return window == session.window && session.presented; }
-void RetireGuestGraphics(HWND window, bool closing) {
-    if (!session.owner || (session.window && session.window != window)) return;
-    if (closing) Shutdown();
-    else if (session.window == window && session.native) DropSurface(true);
-}
-
-} // namespace winapk::bridge
+}  // namespace winapk::bridge
 #else
 namespace winapk::bridge {
-void AddGuestGraphicsLibraries(std::vector<guest::BuiltinLibrary>&) {}
 bool GuestGraphicsActive() { return false; }
 bool GuestGraphicsPresents(HWND) { return false; }
 void RetireGuestGraphics(HWND, bool) {}
-} // namespace winapk::bridge
+void AddGuestGraphicsLibraries(std::vector<guest::BuiltinLibrary>&) {}
+}  // namespace winapk::bridge
 #endif

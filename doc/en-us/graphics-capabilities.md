@@ -11,7 +11,7 @@ independent; enabling guest native does not enable GLES or guest Vulkan.
 | Host ANGLE/Vulkan on Dozen | PASS; user-approved experiment (ADR-0004) | same Adreno GPU via D3D12, Mesa `26.3.0-devel (git-e3fc7749c6)`, Vulkan `1.2.359`, EGL 1.5 / GLES 2.0; `translated=yes software=no` |
 | Java GLES into ANGLE | PASS (`GLES10/11/20/30/31/32` + `EGL14/15/EGLExt`) | real APK `GLSurfaceView` ES 2.0 & ES 3.0 (VAO/UBO/`glTexStorage2D`/FBO MRT/instancing/blit), worker-thread `EGL14` `SurfaceTexture` (`MacApkGlWindow`), resize, restore, teardown, and explicit ES3-on-Dozen refusal |
 | Managed native window | PASS for the reference profile below | real restricted APK, client extent, replacement and refused references; no drawing |
-| Guest GLES/N2 | PASS for the bounded T11 profile | normal NDK APK; texture/FBO, blended shader, resize, surface replacement, and explicit Vulkan refusal |
+| Guest GLES/N2 | PASS (`libEGL.so` + `libGLESv1_CM/v2/v3.so`) | normal NDK APK (`DT_NEEDED` ES2 + ES3); multi-thread `pthread` `share_context`, `Pbuffer`, `KHR_surfaceless_context`, `EGLImageKHR` (`glEGLImageTargetTexture2DOES`), ES 3.0 VAO on D3D11 + ES 3.0 refusal on Dozen, resize, minimize/restore, surface replacement and explicit Vulkan refusal |
 | Guest Vulkan instance/WSI | PASS for T13.wsi on Dozen | real APK, Android→Win32 surface, actual support/capabilities, resize, replacement and refusal; no drawing |
 | Guest Vulkan transfer-clear | PASS for the bounded T13 profile on Dozen | real guest device/queue, command buffer and swapchain; three presents across resize |
 | Guest Vulkan transfer buffer | PASS for the bounded T13 profile on Dozen | coherent allocation and GPU fill, exact 16-word readback and lifecycle refusals |
@@ -115,33 +115,30 @@ identity and spent/unknown tokens in one APK process with CheckJNI.
 
 ## Guest EGL/GLES profile
 
-With `--native=restricted` and an enabled `--graphics` backend, a plain `SurfaceView` can
-back one guest EGL display/config/context/window surface. These are bridge tokens; their
-driver handles stay on the Win32 message thread. The guest thread owns the logical binding,
-and commands run synchronously on the message thread without holding a registry lock.
-A resized attachment renews the native drawable, not the guest context; an invalidated
-attachment cannot swap or be bound again. Guest EGL and Java EGL cannot own ANGLE at the
-same time. Guest Vulkan uses separate dispatch and ownership.
+With `--native=restricted` and an enabled `--graphics` backend, logical `libEGL.so`,
+`libGLESv1_CM.so`, `libGLESv2.so` and `libGLESv3.so` (`guest_graphics.cpp`,
+`guest_gles_autogen.inc`) expose EGL 1.5 (`EGL_KHR_create_context`,
+`EGL_KHR_surfaceless_context`, `EGL_KHR_image_base`, `EGL_KHR_gl_texture_2D_image`,
+`EGL_KHR_gl_renderbuffer_image`, `EGL_KHR_fence_sync`, `EGL_KHR_wait_sync`) and 505 GLES
+1.0/1.1/2.0/3.0/3.1/3.2 + OES/EXT/KHR entry points. Guest threads execute GLES commands directly on
+the calling thread against ANGLE without serializing onto the Win32 message thread, supporting
+multiple `EGLContext`s, `share_context` across render and IO worker `pthread`s,
+`eglCreatePbufferSurface`, surfaceless `eglMakeCurrent` and `EGLImageKHR` texture handoff.
 
-The logical `libEGL.so` and `libGLESv2.so` expose a fixed set of ES2 and window EGL
-commands only. `eglGetProcAddress` returns a bridge entry from the same table or null.
-No extensions are advertised; ES3 contexts, pbuffer/surfaceless contexts, multiple
-displays, custom native displays and shared contexts are unsupported. The reported 1.4/ES2
-version strings identify the profile; they are not conformance claims. Calls require a
-running window message loop, and display ownership cannot transfer between guest threads.
-At a minimized, zero-size managed surface, the bridge refuses swap with `EGL_BAD_SURFACE`.
-On restore, the fixture draws and reads back with the same guest context, surface and program
-before exercising resize and replacement. This is not real context loss or a stability run.
-T11 keeps its original three process launches. The first extended run observed one Vulkan
-swap failure after resize/replacement; the reruns passed. Driver swap errors now log the EGL
-error code, rather than losing it behind a numeric fixture step.
+Guest window surfaces (`ANativeWindow*`) are backed by dynamically resized ANGLE Pbuffers and
+composited in Z-order by `WinApkCompositor` (zero-copy `EGL_D3D_TEXTURE_2D_SHARE_HANDLE_ANGLE` on
+D3D11, FBO-0 RGBA8 transfer on Vulkan), working identically in standalone windows and `--embed`
+panes. Host WSI extensions (`eglCreatePlatformWindowSurface`) and unknown extensions remain null.
+Minimized (`0x0`) and retired surfaces refuse `eglSwapBuffers` with `EGL_BAD_SURFACE`.
 
-`test.ps1 -Suite GraphicsGuest` runs one API-30 APK against explicit hardware D3D11 and
-Vulkan/Dozen, plus one launch with the Vulkan ICD hidden only from the child. It checks
-exact RGBA8 texture upload via an FBO, blended triangle readback (1–2 bytes of tolerance), retention of
-the same context on resize and surface replacement, an extension-free view, proc identity,
-and invalid native window, ES3, stale/current surface and unavailable backend errors.
-The app sees `EGL_NOT_INITIALIZED` when explicit Vulkan fails; it can close normally.
+`test.ps1 -Suite GraphicsGuest` runs an API-30 NDK APK (`DT_NEEDED` `libandroid.so`, `libEGL.so`,
+`libGLESv2.so`, `libGLESv3.so`) against explicit hardware D3D11, explicit Vulkan/Dozen, and a child
+with Vulkan hidden. It verifies a background `pthread_create` IO worker uploading an RGBA8 texture
+through a `share_context` + Pbuffer + surfaceless binding + `EGLImageKHR` /
+`glEGLImageTargetTexture2DOES` consumed by the main context, GLES 3.0 (`#version 300 es` / VAO) on
+D3D11 and honest ES 3.0 `EGL_BAD_MATCH` refusal on Dozen's ES 2.0 backend, blended triangle
+readback, minimize/restore, resize (`360x720` → `424x752`), surface replacement, and explicit
+unavailable refusal (`EGL_NOT_INITIALIZED`).
 
 ## Guest Vulkan instance and WSI increment
 

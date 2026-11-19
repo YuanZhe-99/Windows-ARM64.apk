@@ -1,5 +1,5 @@
 @{
     Fixtures = @(
-        @{ Source = 'gles.c'; Name = 'libguestgles.so'; Links = @(); AndroidLibraries = @('android', 'EGL', 'GLESv2') }
+        @{ Source = 'gles.c'; Name = 'libguestgles.so'; Links = @(); AndroidLibraries = @('android', 'EGL', 'GLESv2', 'GLESv3') }
     )
 }
