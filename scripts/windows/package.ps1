@@ -78,9 +78,9 @@ foreach ($file in 'android-framework.jar','macapk-loader.jar','bcprov-jdk18on-1.
 }
 $skikoDir = Join-Path $build 'bin\skia'
 if (Test-Path -LiteralPath (Join-Path $skikoDir 'skiko-windows-arm64.dll')) {
-    Copy-Payload $skikoDir 'skiko-windows-arm64.dll' 'bin\skiko-windows-arm64.dll'
+    Copy-Payload $skikoDir 'skiko-windows-arm64.dll' 'bin\skia\skiko-windows-arm64.dll'
     if (Test-Path -LiteralPath (Join-Path $skikoDir 'icudtl.dat')) {
-        Copy-Payload $skikoDir 'icudtl.dat' 'bin\icudtl.dat'
+        Copy-Payload $skikoDir 'icudtl.dat' 'bin\skia\icudtl.dat'
     }
 }
 foreach ($module in 'java_base_patch','jdk_unsupported_patch') {

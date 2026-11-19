@@ -3985,3 +3985,53 @@ func CloseDoc() string { return In(i18n.Locale()).CloseDoc() }
 func (msgs Messages) CloseDoc() string {
 	return Catalog.Format(msgs.locale, "CloseDoc", nil)
 }
+
+// SignedUpdates says "Signed app updates"
+// in the language the app shows.
+func SignedUpdates() string { return In(i18n.Locale()).SignedUpdates() }
+
+// SignedUpdates says "Signed app updates"
+// in the language of msgs.
+func (msgs Messages) SignedUpdates() string {
+	return Catalog.Format(msgs.locale, "SignedUpdates", nil)
+}
+
+// SignedUpdatesHint says "Checks GitHub Releases for a newer Windows-ARM64.apk build signed with the project's Ed25519 update key."
+// in the language the app shows.
+func SignedUpdatesHint() string { return In(i18n.Locale()).SignedUpdatesHint() }
+
+// SignedUpdatesHint says "Checks GitHub Releases for a newer Windows-ARM64.apk build signed with the project's Ed25519 update key."
+// in the language of msgs.
+func (msgs Messages) SignedUpdatesHint() string {
+	return Catalog.Format(msgs.locale, "SignedUpdatesHint", nil)
+}
+
+// CheckUpdates says "Check for updates"
+// in the language the app shows.
+func CheckUpdates() string { return In(i18n.Locale()).CheckUpdates() }
+
+// CheckUpdates says "Check for updates"
+// in the language of msgs.
+func (msgs Messages) CheckUpdates() string {
+	return Catalog.Format(msgs.locale, "CheckUpdates", nil)
+}
+
+// InstallUpdate says "Install {version} & restart"
+// in the language the app shows.
+func InstallUpdate(version string) string { return In(i18n.Locale()).InstallUpdate(version) }
+
+// InstallUpdate says "Install {version} & restart"
+// in the language of msgs.
+func (msgs Messages) InstallUpdate(version string) string {
+	return Catalog.Format(msgs.locale, "InstallUpdate", map[string]any{"version": version})
+}
+
+// AppUpToDate says "Windows-ARM64.apk {version} is up to date."
+// in the language the app shows.
+func AppUpToDate(version string) string { return In(i18n.Locale()).AppUpToDate(version) }
+
+// AppUpToDate says "Windows-ARM64.apk {version} is up to date."
+// in the language of msgs.
+func (msgs Messages) AppUpToDate(version string) string {
+	return Catalog.Format(msgs.locale, "AppUpToDate", map[string]any{"version": version})
+}

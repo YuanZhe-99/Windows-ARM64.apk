@@ -394,5 +394,10 @@
   "OpenAsPaneSub": "In the main window",
   "OpenBesideSub": "Split the current pane",
   "OpenInWindowSub": "Separate window on the taskbar",
-  "CloseDoc": "Close"
+  "CloseDoc": "Close",
+  "SignedUpdates": "Signed app updates",
+  "SignedUpdatesHint": "Checks GitHub Releases for a newer Windows-ARM64.apk build signed with the project's Ed25519 update key.",
+  "CheckUpdates": "Check for updates",
+  "InstallUpdate": "Install {version} & restart",
+  "AppUpToDate": "Windows-ARM64.apk {version} is up to date."
 }

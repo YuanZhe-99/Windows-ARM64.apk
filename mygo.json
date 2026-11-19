@@ -3,11 +3,18 @@
   "identifier": "com.yuanzhe.windows-arm64-apk",
   "version": "0.1.0",
   "copyright": "Copyright (C) 2026 YuanZhe",
+  "license": "AGPL-3.0-or-later",
   "main": "./cmd/windows-arm64-apk",
   "out": "build/app",
   "i18n": {
     "dir": "locales",
     "source": "en"
+  },
+  "updates": {
+    "publicKey": "GgkfMbVtLon4pHJr9uqjpbgnJl181wtNVYAiapWXsfA=",
+    "github": "YuanZhe-99/Windows-ARM64.apk",
+    "changelog": "doc/en-us/version-history.md",
+    "deltas": 0
   },
   "description": "Run Android apps as native Windows 11 ARM64 processes"
 }

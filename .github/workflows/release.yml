@@ -1,0 +1,121 @@
+# Publishes a v* tag as a GitHub release: native Windows 11 ARM64 per-user NSIS installer, portable
+# bundle ZIP, complete corresponding AGPL-3.0 source archive, SHA256SUMS and, when
+# MYGO_UPDATER_PRIVATE_KEY is configured, the Ed25519-signed MyGo update archive + manifest.
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  version:
+    name: Tag matches the version
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Compare
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME#v}"
+          go=$(sed -n 's/^const Version = "\(.*\)"$/\1/p' internal/version/version.go)
+          json=$(jq -r .version mygo.json)
+          echo "tag $tag, internal/version $go, mygo.json $json"
+          [[ "$tag" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::tag $GITHUB_REF_NAME is not vX.Y.Z"; exit 1; }
+          [[ "$tag" == "$go" && "$tag" == "$json" ]] || { echo "::error::tag, internal/version and mygo.json disagree"; exit 1; }
+
+  build:
+    needs: version
+    uses: ./.github/workflows/build.yml
+    with:
+      package: true
+    secrets:
+      MYGO_UPDATER_PRIVATE_KEY: ${{ secrets.MYGO_UPDATER_PRIVATE_KEY }}
+
+  publish:
+    name: Publish release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          sparse-checkout: doc/en-us/version-history.md
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: package-ARM64
+          path: release
+
+      - name: Verify and checksum
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          for req in \
+            "windows-arm64-apk-setup-$version-arm64.exe" \
+            "Windows-ARM64.apk-$version-arm64.zip" \
+            "Windows-ARM64.apk-$version-arm64-source.zip"; do
+            [ -f "release/$req" ] || { echo "::error::missing $req"; exit 1; }
+          done
+
+          if [ -f "release/update-windows-arm64.json" ]; then
+            [ -f "release/windows-arm64-apk-$version-windows-arm64.tar.gz" ] || {
+              echo "::error::update-windows-arm64.json present without signed archive"; exit 1;
+            }
+            echo "SIGNED_UPDATE=1" >> "$GITHUB_ENV"
+          else
+            echo "SIGNED_UPDATE=0" >> "$GITHUB_ENV"
+          fi
+
+          (cd release && sha256sum -- * > SHA256SUMS && cat SHA256SUMS)
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          if [ "$SIGNED_UPDATE" = "1" ]; then
+            update_note="Installed copies can check for and install Ed25519-signed updates on demand from **Settings → About → Updates** (\`update-windows-arm64.json\`)."
+            flags=(--latest)
+            title="Windows-ARM64.apk $version (Experimental Windows 11 ARM64)"
+          else
+            update_note="This build carries no signed update manifest (\`MYGO_UPDATER_PRIVATE_KEY\` was not supplied)."
+            flags=(--prerelease)
+            title="Windows-ARM64.apk $version (Unsigned experimental build)"
+          fi
+
+          cat > notes.md <<EOF
+          **Experimental native Windows 11 ARM64 build.** Windows-ARM64.apk $version runs selected Android APKs as native Windows 11 ARM64 processes (no emulator, VM, WSA or WSL), based on [Mac.apk](https://github.com/kksimp/Mac.apk).
+
+          - **Per-user installer:** \`windows-arm64-apk-setup-$version-arm64.exe\` (native ARM64 front end + \`winapk\` runtime, Skia D3D12, Android Framework JARs and AOSP platform resources).
+          - **Portable bundle:** \`Windows-ARM64.apk-$version-arm64.zip\`.
+          - **Complete corresponding source (AGPL-3.0):** \`Windows-ARM64.apk-$version-arm64-source.zip\`.
+
+          The binaries are not Authenticode code-signed, so Windows SmartScreen warns on the first run; verify downloads against \`SHA256SUMS\`.
+
+          $update_note
+          EOF
+
+          sed -i 's/^          //' notes.md
+          section=$(awk -v v="## $version" 'index($0, v) == 1 { f = 1; next } /^## / { f = 0 } f' doc/en-us/version-history.md)
+          [ -n "$section" ] || { echo "::error::doc/en-us/version-history.md has no section for $version"; exit 1; }
+          printf '\n## In this version\n%s\n' "$section" >> notes.md
+
+          gh release create "$GITHUB_REF_NAME" release/* --verify-tag "${flags[@]}" \
+            --title "$title" --notes-file notes.md

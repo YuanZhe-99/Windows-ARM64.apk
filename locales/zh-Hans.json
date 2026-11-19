@@ -394,5 +394,10 @@
   "OpenAsPaneSub": "在主窗口内打开",
   "OpenBesideSub": "拆分当前窗格",
   "OpenInWindowSub": "任务栏上的独立窗口",
-  "CloseDoc": "关闭"
+  "CloseDoc": "关闭",
+  "SignedUpdates": "签名应用更新",
+  "SignedUpdatesHint": "从 GitHub Releases 检查并验证使用项目 Ed25519 更新密钥签名的新版 Windows-ARM64.apk。",
+  "CheckUpdates": "检查更新",
+  "InstallUpdate": "安装 {version} 并重启",
+  "AppUpToDate": "当前已是最新版本（{version}）。"
 }

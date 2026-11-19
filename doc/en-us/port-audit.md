@@ -156,18 +156,19 @@ What the N0 loader (`runtime/guest/loader`, [native-profiles.md](native-profiles
 - **The Java side needs no change to compile** on the Windows ARM64 JDK; its platform coupling is
   at run time.
 
-## Next
+## Current implementation summary
 
-P2's profile N0 is done (G2). P3 now has a separate T08 thread foundation (managed pthreads,
-errno, keys/destructors, C emulated TLS and untimed mutex/condition synchronization), implemented under `runtime/guest/bionic` rather
-than porting Darwin's shim. T07 adds dependency/constructor transactions and guest dl APIs under
-`runtime/guest/loader` and `runtime/guest/bionic`; T08 now also covers private-heap memory/strings,
-mapped files/time and guest-PC fault diagnostics. A small Android-ABI helper keeps restricted
-formatting/va_list entirely guest-side; fixed byte logs reach the host. P3's declared C/Bionic
-scope now includes logical system libraries, validated import versions and real CRT lifetime
-records, tested with a normally linked NDK C fixture. P4 now passes G3 for the declared subset
-([native-profiles.md](native-profiles.md)), including APK library redirects, the real Activity
-matrix and a CFG-enabled build. Next are P5/P6 graphics, with the vendor-Vulkan path blocked
-as described above. P1's open items are a density
-change while an app runs and the host natives an app may need next (`NativeOs`, host fonts); the
-interface's switch from `winapk.Mock` to `winapk run` belongs to P7 (`PLAN.md` §14).
+P2's profile N0 is done (G2). P3 (`runtime/guest/bionic`) implements managed pthreads, errno,
+keys/destructors, C emulated TLS, untimed mutex/condition synchronization, private-heap
+memory/strings, LP64 integer/env/process helpers, mapped files/time, guest-PC fault diagnostics, and
+logical system libraries (`libc.so`, `libdl.so`, `liblog.so`) with an Android-ABI formatting helper.
+P4 passes G3 for the declared subset ([native-profiles.md](native-profiles.md)), including APK
+library redirects, DirectByteBuffer/Critical/reflected field-method JNI entries, the real Activity
+matrix and a CFG-enabled build. P5/P6 bounded ANGLE GLES and Vulkan WSI/transfer/graphics-pipeline/callback
+profiles pass on Adreno 8cx Gen 3 + Mesa Dozen (`translated=yes`, ADR-0004; vendor ICD `BLOCKED`).
+P7 delivers the complete MyGo front end wired to `winapk.Runtime` (`--embed`), unified ARM64 bundle
++ NSIS + GitHub Actions `windows-11-arm` CI/Release workflows ([ci.md](ci.md)), ANGLE linked-dependency
+notices, and the verified 30-minute T14 stability baseline. P8 delivers `NativeOs` (including
+`liblzma` `.xz` decoding), Win32/isolated clipboard, DirectWrite CJK host fonts, `/proc` synthesis,
+dynamic `WM_DPICHANGED`, 43-method WASAPI `NativeAudio` with live endpoint rebind, and hardware
+Direct3D 12 Skia AGSL/RenderEffect (`T15`).

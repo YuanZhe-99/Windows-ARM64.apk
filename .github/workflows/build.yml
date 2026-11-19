@@ -1,0 +1,181 @@
+# Builds and tests Windows-ARM64.apk natively on Windows 11 ARM64 (`windows-11-arm`); with `package`,
+# also builds the self-contained per-user NSIS installer, portable ZIP, AGPL-3.0 source snapshot and,
+# when `MYGO_UPDATER_PRIVATE_KEY` is supplied, the Ed25519-signed MyGo update archive + manifest.
+name: Build
+
+on:
+  workflow_call:
+    inputs:
+      package:
+        description: Build, verify and upload the Windows ARM64 installer, portable bundle, source archive and signed update.
+        type: boolean
+        default: false
+    secrets:
+      MYGO_UPDATER_PRIVATE_KEY:
+        description: Ed25519 private key signing the MyGo update archive and manifest (release.yml only).
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  windows-arm64:
+    name: Windows 11 ARM64
+    runs-on: windows-11-arm
+    timeout-minutes: 120
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      DEPS: ${{ github.workspace }}\.dev\deps
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+
+      - name: Host diagnostics
+        run: |
+          $arch = [Runtime.InteropServices.RuntimeInformation]::OSArchitecture
+          Write-Host "OS: $((Get-CimInstance Win32_OperatingSystem).Caption) ($([Environment]::OSVersion.Version)), Arch: $arch"
+          if ($arch -ne 'Arm64') { throw "Expected native Arm64 runner, got $arch" }
+          go version
+
+      - name: Cache keys
+        id: keys
+        run: |
+          function ShortHash([string]$s) {
+            [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($s))).Substring(0, 16).ToLower()
+          }
+          $lockRaw = Get-Content build-lock.json -Raw
+          $vcpkgRaw = Get-Content macapk/runtime/platform/windows/vcpkg.json -Raw
+          $bootHash = (Get-FileHash scripts/windows/ci-bootstrap.ps1).Hash
+          "deps=winapk-deps-arm64-$(ShortHash "$bootHash|$lockRaw")" >> $env:GITHUB_OUTPUT
+          "vcpkg=winapk-vcpkg-arm64-$(ShortHash "$vcpkgRaw|$lockRaw")" >> $env:GITHUB_OUTPUT
+
+      - name: Restore SDK/JDK cache
+        id: deps-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            .dev/deps
+            build/windows-arm64/framework-res
+            build/windows-arm64/deps/skia
+            build/windows-arm64/deps/angle
+          key: ${{ steps.keys.outputs.deps }}
+
+      - name: Restore vcpkg cache
+        id: vcpkg-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: build/windows-arm64/vcpkg_installed
+          key: ${{ steps.keys.outputs.vcpkg }}
+
+      - name: Bootstrap toolchains
+        run: ./scripts/windows/ci-bootstrap.ps1 -Prefix $env:DEPS
+
+      - name: Go and MyGo checks
+        run: |
+          $bad = gofmt -l cmd internal tools
+          if ($bad) { $bad; throw 'gofmt reported unformatted files' }
+          go vet ./...;             if ($LASTEXITCODE) { throw 'go vet failed' }
+          go test ./internal/version ./internal/gui; if ($LASTEXITCODE) { throw 'go test failed' }
+          $env:CGO_ENABLED = '0'
+          go test ./internal/version ./internal/gui; if ($LASTEXITCODE) { throw 'CGO_ENABLED=0 go test failed' }
+          Remove-Item env:CGO_ENABLED -ErrorAction SilentlyContinue
+          go tool mygo vet .;       if ($LASTEXITCODE) { throw 'mygo vet failed' }
+          go tool mygo i18n check;  if ($LASTEXITCODE) { throw 'mygo i18n check failed' }
+          go run ./tools/checkdocs; if ($LASTEXITCODE) { throw 'checkdocs failed' }
+
+      - name: Build runtime (All + Release Host)
+        run: |
+          ./scripts/windows/build.ps1 -Configuration Debug -Component All
+          ./scripts/windows/build.ps1 -Configuration Release -Component Host
+
+      - name: Save SDK/JDK cache
+        if: steps.deps-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            .dev/deps
+            build/windows-arm64/framework-res
+            build/windows-arm64/deps/skia
+            build/windows-arm64/deps/angle
+          key: ${{ steps.keys.outputs.deps }}
+
+      - name: Save vcpkg cache
+        if: steps.vcpkg-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: build/windows-arm64/vcpkg_installed
+          key: ${{ steps.keys.outputs.vcpkg }}
+
+      - name: Native ARM64 headless runtime suites
+        run: |
+          foreach ($s in 'Host', 'Native', 'Bionic', 'Jni', 'DexJob') {
+            Write-Host "=== Running suite: $s ==="
+            ./scripts/windows/test.ps1 -Suite $s
+            if ($LASTEXITCODE) { throw "Suite $s failed" }
+          }
+
+      - name: Package installer, bundle, source archive and signed update
+        if: inputs.package
+        env:
+          MYGO_UPDATER_PRIVATE_KEY: ${{ secrets.MYGO_UPDATER_PRIVATE_KEY }}
+        run: |
+          . ./scripts/windows/common.ps1
+          $version = (Get-Content mygo.json -Raw | ConvertFrom-Json).version
+          ./scripts/windows/stage-app-resources.ps1 -Configuration Release
+          try {
+            go tool mygo build -platform windows/arm64
+            if ($LASTEXITCODE) { throw 'mygo build failed' }
+          } finally {
+            ./scripts/windows/stage-app-resources.ps1 -Clean
+          }
+
+          $bundleZip = (./scripts/windows/package.ps1 -Configuration Release -Target Bundle | Select-Object -Last 1)
+          if (-not $bundleZip -or -not (Test-Path -LiteralPath $bundleZip)) { throw 'package.ps1 did not emit bundle ZIP' }
+          $pkgDir = Split-Path -Parent $bundleZip
+          $sourceZip = Join-Path $pkgDir "Windows-ARM64.apk-$version-arm64-source.zip"
+          if (-not (Test-Path -LiteralPath $sourceZip)) { throw "Missing source archive: $sourceZip" }
+
+          # Verify every packaged PE is native ARM64 (0xAA64)
+          $appOut = Join-Path $PWD 'build\app\windows-arm64'
+          if ((Get-PeMachine (Join-Path $appOut 'Windows-ARM64.apk.exe')) -ne 'ARM64') {
+            throw 'Windows-ARM64.apk.exe is not ARM64'
+          }
+          $setupExe = Join-Path $appOut "windows-arm64-apk-setup-$version-arm64.exe"
+          if (-not (Test-Path -LiteralPath $setupExe)) { throw "Missing NSIS installer: $setupExe" }
+
+          $relDir = Join-Path $PWD 'build\release'
+          Remove-Item -LiteralPath $relDir -Recurse -Force -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Force $relDir | Out-Null
+          Copy-Item -LiteralPath $setupExe -Destination $relDir
+          Copy-Item -LiteralPath $bundleZip -Destination $relDir
+          Copy-Item -LiteralPath $sourceZip -Destination $relDir
+          $installPs1 = Join-Path $appOut 'install.ps1'
+          if (Test-Path -LiteralPath $installPs1) { Copy-Item -LiteralPath $installPs1 -Destination $relDir }
+
+          $updArchive = Join-Path $appOut "windows-arm64-apk-$version-windows-arm64.tar.gz"
+          $updManifest = Join-Path $appOut 'update-windows-arm64.json'
+          if ([bool]$env:MYGO_UPDATER_PRIVATE_KEY) {
+            if (-not (Test-Path -LiteralPath $updArchive) -or -not (Test-Path -LiteralPath $updManifest)) {
+              throw 'MYGO_UPDATER_PRIVATE_KEY was set, but signed update archive or manifest was not produced'
+            }
+            Copy-Item -LiteralPath $updArchive -Destination $relDir
+            Copy-Item -LiteralPath $updManifest -Destination $relDir
+          }
+          Get-ChildItem -LiteralPath $relDir | Select-Object Name, Length
+
+      - name: Upload release artifacts
+        if: inputs.package
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: package-ARM64
+          path: build/release/
+          if-no-files-found: error
+          retention-days: 7

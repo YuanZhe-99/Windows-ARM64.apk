@@ -2,7 +2,7 @@
 
 | 平台 | 状态 |
 |---|---|
-| Windows 11 ARM64 | G0–G3 在本机为已声明的 Java/N0/C/JNI profile 通过，包含真实 hello-jni Activity 矩阵及独立启用 CFG 的回归。原生默认关闭（强制执行 `--profile=N0|N1|N2`）。T11 GLES 与 T13 Vulkan 图形管线/图像/回调/WSI 夹具在本机 Adreno 8cx Gen 3 + Dozen 的声明范围内通过；厂商原生 Vulkan ICD 为 `BLOCKED`，验证层与长期 T14 压测仍为 `NOT_RUN`。MyGo 前端已按 `design/` 完成并接入 `winapk.Runtime`（`--embed` 共享内存帧与双工 IPC）。 |
+| Windows 11 ARM64 | G0–G3 在本机为已声明的 Java/N0/C/JNI profile 通过，包含真实 hello-jni Activity 矩阵及独立启用 CFG 的回归。原生默认关闭（强制执行 `--profile=N0|N1|N2`）。T14 通过 20 次冷/热启动、100 次 resize/最小化恢复循环与完整 30 分钟连续稳定性运行。P8 宿主服务（`NativeOs`、剪贴板、DirectWrite 中日韩字体、`/proc`、动态 DPI）、WASAPI `NativeAudio` 与 Skia Direct3D 12 AGSL/RenderEffect（`T15`，11/11）通过。T11 GLES 与 T13 Vulkan 图形管线/图像/回调/WSI/设备丢失夹具在本机 Adreno 8cx Gen 3 + Dozen 的声明范围内通过；厂商原生 Vulkan ICD 为 `BLOCKED`，`VK_LAYER_KHRONOS_validation` 仍为 `NOT_RUN`。MyGo 前端已按 `design/` 完成并接入 `winapk.Runtime`，配备一体化 ARM64 实验包、NSIS 安装包及 GitHub Actions `windows-11-arm` 持续集成/发布工作流。 |
 | Windows 11 x64 | 不是目标平台；只可承载构建工具和解析测试。 |
 | macOS（Apple Silicon） | 上游 Mac.apk 的平台；已引入为 `macapk/`，当前在 `3f35611`；尚未在此运行 macOS 构建或 smoke（`NOT_RUN`）。 |
 
@@ -324,4 +324,4 @@ DEX 转换器在创建进程时原子加入随启动器退出的 Job Object。`D
 - `CMakeLists.txt`、`AppClassLoader` 与 `native_sqlite.cpp` 改动后的 macOS 构建和 smoke：NOT_RUN（这里没有 Mac）；该分支只在 `WIN32` 下返回，Java 检查在未设置 `winapk.guestNative` 时不起作用，`_WIN32` 之外的 CoreFoundation 辅助函数没有改变。
 - DPI：应用的 density 在启动时固定。把窗口移到另一缩放的显示器，或在运行中改变缩放，窗口会调整尺寸以保持其点数（`WM_DPICHANGED`），但应用保持最初的 density：NOT_RUN，也尚未作为 Android 的配置变更处理。
 - 输入范围（`PLAN.md` §8.4）：一个指针（鼠标；没有多点触控或捏合），映射的按键，以及经 WM_CHAR / `--embed` 文本提交到达的任何字符。输入法的组字在输入过程中不显示在输入框里，只在提交时落入，与 macOS 相同；候选窗口在 Windows 默认的位置。未运行真实的输入法会话。
-- 验证覆盖范围：单台 Windows 11 ARM64 机器；30 分钟 T14 长期压测、`VK_LAYER_KHRONOS_validation`、厂商 ARM64 原生 Vulkan ICD 及公开分发前的 ANGLE 链接许可审核仍待完成。
+- 验证覆盖范围：单台物理 Windows 11 ARM64 机器（`t14-30min-baseline.json`：20 次启动——冷启动 2657.6 ms、DEX 转换 281 ms、热启动 p50 1850 ms / p95 2065.2 ms；100 次 resize/最小化恢复循环；1800 秒连续运行后预热后 commit 356,640 → 359,476 KB、句柄 361 → 359、线程 19 → 15 且正常退出码 0）。P8 宿主服务（`HostServices` 4/4 通过）、WASAPI 音频与实时默认设备重绑（`Audio` 3/3 通过）以及硬件 Direct3D 12 Skia AGSL/RenderEffect（`Agsl` `T15` 3/3 通过，全部 11 项上游像素契约）均已在本机验证。`VK_LAYER_KHRONOS_validation`（`NOT_RUN`）、厂商原生 ARM64 Vulkan ICD（8cx Gen 3 上为 `BLOCKED`）、macOS smoke（`NOT_RUN`）及第二台设备复验仍开放。

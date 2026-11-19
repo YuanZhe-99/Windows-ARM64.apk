@@ -44,6 +44,7 @@ about to change, verify against the code, then fix the docs in the same commit.
 | Reused third-party code, licenses and obligations | `doc/en-us/third-party.md` |
 | What is implemented and verified per platform, with gate status | `doc/en-us/platform-notes.md` |
 | Environment, commands, dev loop | `doc/en-us/development.md` |
+| GitHub Actions CI, `windows-11-arm` build and signed releases | `doc/en-us/ci.md` |
 | English→Chinese terminology | `doc/en-us/translation-guide.md` |
 | Past releases and the upstream versions they used | `doc/en-us/version-history.md` |
 | Per-package and per-module roles | `doc/en-us/functions/INDEX.md` |
@@ -232,8 +233,9 @@ change.
   environment, copy GPU drivers or install anything silently. The one thing it installs is its own
   private Java runtime, when none is found, in its own folder and with the person seeing it, and
   it may keep that runtime updated (verified like the first download) while that setting is on;
-  never the system's Java, `PATH` or environment. The app itself never updates on its own
-  (`PLAN.md` §2.4).
+  never the system's Java, `PATH` or environment. The app itself never updates silently in the
+  background (`PLAN.md` §2.4); installed NSIS builds check for and apply Ed25519-signed updates
+  (`updates.publicKey` in `mygo.json`) only when the person asks in Settings → About → Updates.
 - **Never claim more than was verified;** each layer (A Java MVP, B Native PoC, C Graphics PoC,
   D experimental release) is reported on its own, and macOS regressions not run are `NOT_RUN`.
 
@@ -320,7 +322,7 @@ model that did the work.
 ## Remotes and secrets
 
 - `origin` → `<local_gitea_address>` (private Gitea)
-- `github` → not configured yet; the user names the public repository when it is created.
+- `github` → `git@github.com:YuanZhe-99/Windows-ARM64.apk.git`
 
 Determine the repository path from the runtime workspace; do not hardcode a machine-specific
 absolute path here.

@@ -1,5 +1,6 @@
 /build/
 /.mygo/
+/resources/windows-arm64/
 mygo_windows_*.syso
 /.dev/
 # Runtime build trees (CMake) and package staging

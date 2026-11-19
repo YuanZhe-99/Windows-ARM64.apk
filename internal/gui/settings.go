@@ -1,10 +1,12 @@
 package gui
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
@@ -518,10 +520,71 @@ func (a *App) aboutPage(c *ui.Context) {
 		})
 	})
 	section(c, L.Updates(), func(r *rows) {
+		if mygo.Updater.Enabled() {
+			r.row(c, "ab-updates", icInfo, L.SignedUpdates(), L.SignedUpdatesHint(), func() {
+				if a.appUpdate != nil {
+					if primary(c, "ab-update-install", L.InstallUpdate(a.appUpdate.Version), nil).Disabled(a.appUpdateBusy).Clicked() {
+						a.installAppUpdate()
+					}
+				} else {
+					if button(c, "ab-update-check", L.CheckUpdates(), nil).Disabled(a.appUpdateBusy).Clicked() {
+						a.checkAppUpdate()
+					}
+				}
+				if button(c, "ab-releases", L.Releases(), icWindow).Clicked() {
+					a.openURL(sourceURL + "/releases")
+				}
+			})
+			return
+		}
 		r.row(c, "ab-updates", icInfo, L.NoAutoUpdates(), L.NoAutoUpdatesHint(), func() {
 			if button(c, "ab-releases", L.Releases(), icWindow).Clicked() {
 				a.openURL(sourceURL + "/releases")
 			}
+		})
+	})
+}
+
+func (a *App) checkAppUpdate() {
+	if a.appUpdateBusy {
+		return
+	}
+	a.appUpdateBusy = true
+	a.async(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		defer cancel()
+		upd, err := mygo.Updater.Check(ctx)
+		a.later(func() {
+			a.appUpdateBusy = false
+			if err != nil {
+				a.setToast(L.ToastFailed())
+				return
+			}
+			a.appUpdate = upd
+			if upd == nil {
+				a.setToast(L.AppUpToDate(version.Version))
+			}
+		})
+	})
+}
+
+func (a *App) installAppUpdate() {
+	if a.appUpdateBusy || a.appUpdate == nil {
+		return
+	}
+	upd := a.appUpdate
+	a.appUpdateBusy = true
+	a.async(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+		defer cancel()
+		err := upd.Install(ctx, nil)
+		a.later(func() {
+			a.appUpdateBusy = false
+			if err != nil {
+				a.setToast(L.ToastFailed())
+				return
+			}
+			mygo.App.Relaunch()
 		})
 	})
 }

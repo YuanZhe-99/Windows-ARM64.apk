@@ -391,7 +391,7 @@ P5a 固定 ANGLE `801a1a5f6e00ed0028937067b7663fd7053bff31`，ARM64 源码构建
 - [x] 原生 Windows 测试程序创建 Win32 窗口、EGL display/context/surface，通过 ANGLE/Vulkan（Dozen）及 D3D11 绘制图案。
 - [x] 宿主验证记录实际 renderer/backend、GPU、驱动和 EGL/GLES capabilities，见双语图形能力文档。
 - [x] Java `GLSurfaceView` 在 Vulkan 不可用时，`auto` 选择经测试的 D3D11；显式 Vulkan 不回退。
-- [ ] Windows DLL 搜索路径与包内依赖确定，不依赖开发机 PATH 中偶然存在的 DLL。
+- [x] Windows DLL 搜索路径与包内依赖确定，不依赖开发机 PATH 中偶然存在的 DLL（`SetDefaultDllDirectories` 与 `LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_SYSTEM32`）。
 
 ### 12.2 P5b：接通 Framework 和客体 ABI
 
@@ -440,26 +440,26 @@ Vulkan GPU 命令和 SPIR-V 原则上交给 Windows 原生驱动；本层负责�
 
 ### 13.3 Android Surface → Win32 Surface
 
-- [ ] guest 枚举 `VK_KHR_android_surface`，host 请求 `VK_KHR_win32_surface`；实例创建时转换扩展列表并验证依赖。
-- [ ] 只有 Surface 桥已经可用时才向 guest 宣告 Android Surface 扩展。
+- [x] guest 枚举 `VK_KHR_android_surface`，host 请求 `VK_KHR_win32_surface`；实例创建时转换扩展列表并验证依赖。
+- [x] 只有 Surface 桥已经可用时才向 guest 宣告 Android Surface 扩展。
 - [x] 从 guest `ANativeWindow` 查找受管理的 `HWND`/`HINSTANCE`，构造 `VkWin32SurfaceCreateInfoKHR`。
 - [x] 保持 `ANativeWindow` acquire/release、HWND 与 `VkSurfaceKHR` 的独立生命周期，验证换挂载后失效。
 - [x] 查询实际 surface/queue family 的 present 支持，不沿用 Android 默认呈现假设。
-- [ ] 处理 surface formats、present modes、extent、DPI、最小化的零尺寸和窗口重新创建。
-- [ ] 正确处理 `VK_ERROR_OUT_OF_DATE_KHR`、`VK_SUBOPTIMAL_KHR`、`VK_ERROR_SURFACE_LOST_KHR` 和 device lost。
-- [ ] 重建交换链时等待正确的在途资源，避免销毁仍被 GPU 使用的对象。
-- [ ] 消息泵保持响应；不在持有 JVM/渲染关键锁时阻塞等待窗口线程。
+- [x] 处理 surface formats、present modes、extent、DPI、最小化的零尺寸和窗口重新创建。
+- [x] 正确处理 `VK_ERROR_OUT_OF_DATE_KHR`、`VK_SUBOPTIMAL_KHR`、`VK_ERROR_SURFACE_LOST_KHR` 和 device lost。
+- [x] 重建交换链时等待正确的在途资源，避免销毁仍被 GPU 使用的对象。
+- [x] 消息泵保持响应；不在持有 JVM/渲染关键锁时阻塞等待窗口线程。
 
 Win32 Vulkan WSI 可能通过窗口消息进行同步，消息线程被阻塞会导致呈现相关死锁。[vkCreateWin32SurfaceKHR 规范](https://docs.vulkan.org/refpages/latest/refpages/source/vkCreateWin32SurfaceKHR.html)
 
 ### 13.4 扩展与 AHardwareBuffer
 
-- [ ] 分开维护 host 扩展、guest 已实现扩展和可翻译扩展表。
-- [ ] 按需转换 `pNext` 链；对兼容层无法处理的已请求结构明确失败，不随意截断链。
-- [ ] MVP 不暴露 `VK_ANDROID_external_memory_android_hardware_buffer`，也不伪造 AHardwareBuffer 成功。
-- [ ] Android native fence fd、sync fd、DMA-BUF 等不能当作 Windows HANDLE 直接传递。
-- [ ] 后续 AHardwareBuffer 互操作需要独立设计格式、usage、外部格式、handle 所有权、同步和进程范围。
-- [ ] 不将 ANGLE 的私有 VkDevice 与应用 VkDevice 默认视为同一资源域。
+- [x] 分开维护 host 扩展、guest 已实现扩展和可翻译扩展表。
+- [x] 按需转换 `pNext` 链；对兼容层无法处理的已请求结构明确失败，不随意截断链。
+- [x] MVP 不暴露 `VK_ANDROID_external_memory_android_hardware_buffer`，也不伪造 AHardwareBuffer 成功。
+- [x] Android native fence fd、sync fd、DMA-BUF 等不能当作 Windows HANDLE 直接传递。
+- [x] 后续 AHardwareBuffer 互操作需要独立设计格式、usage、外部格式、handle 所有权、同步和进程范围。
+- [x] 不将 ANGLE 的私有 VkDevice 与应用 VkDevice 默认视为同一资源域。
 
 Android Surface 是 `ANativeWindow` 对应的图形端点；AHardwareBuffer 扩展还涉及导入/导出与格式语义，两者不能等同于普通 Win32 窗口句柄。[Android Surface](https://docs.vulkan.org/refpages/latest/refpages/source/VK_KHR_android_surface.html)、[AHardwareBuffer 扩展](https://docs.vulkan.org/refpages/latest/refpages/source/VK_ANDROID_external_memory_android_hardware_buffer.html)
 
@@ -484,7 +484,7 @@ Android Surface 是 `ANativeWindow` 对应的图形端点；AHardwareBuffer 扩�
 - [x] CLI 的 DEX 转换子进程在创建时进入随启动器退出的 Job Object；转换失败保留退出码及 Win32 阶段诊断，`DexJob` 验证强制退出时回收。
 - [x] 前端启动器管理每 APK 的运行时进程（`winapk run --embed` 共享内存帧与双工管道控制，不重启切换窗格与独立窗口）。
 - [x] 在含空格/中文的解压路径和全新数据/配置根目录用已有依赖执行 T14.package；打包不下载。
-- [ ] 公开分发前完成许可审核，含 ANGLE 实际链接依赖；本地包已有许可证、notices、源码快照和哈希。
+- [x] 公开分发前完成许可审核，含 ANGLE 实际链接依赖与 Skia/liblzma 声明；本地包与 NSIS 安装包已有许可证、notices、源码快照和哈希。
 - [x] 不注册默认 APK 打开程序，不自动修改全局环境。
 
 ### 14.2 日志与错误模型
@@ -694,15 +694,15 @@ $zip = .\scripts\windows\package.ps1
 - [x] G1：真实纯 Java APK 的界面、输入与持久化通过。
 - [x] G2：N0 ELF 与 ABI 测试在 ARM64 真机通过。
 - [x] G3：受支持 N1 的 Bionic/TLS/JNI 测试通过，限制明确。
-- [ ] G4：guest GLES 与 guest Vulkan 路径分别通过，不用宿主样例代替。
-- [ ] G5：干净环境实验包、文档、日志和兼容性报告完成。
-- [ ] 产品显示名称为 `Windows-ARM64.apk`；MyGo 前端按设计 Agent 参考 Kyokai 的方案实现，App 在主窗口窗格内和独立窗口中均可打开、交互及关闭。
-- [ ] 所有未实现能力有明确错误或准确的 capability 值。
-- [ ] macOS 回归状态如实记录；未跑的检查标为 `NOT_RUN`。
-- [ ] 源码、测试、构建说明、第三方 notices 和实验限制一并交付。
+- [ ] G4：guest GLES 与 guest Vulkan 路径分别通过，不用宿主样例代替（本机 Adreno 8cx Gen 3 + Dozen 受限子集已分别通过；厂商原生 ARM64 Vulkan ICD 为 `BLOCKED`，验证层为 `NOT_RUN`）。
+- [x] G5：干净环境实验包、NSIS 安装包、GitHub Actions `windows-11-arm` 自动构建与签名发布工作流、30 分钟 T14 稳定性基线、文档、日志和兼容性报告完成（明确标注单机覆盖）。
+- [x] 产品显示名称为 `Windows-ARM64.apk`；MyGo 前端按设计 Agent 参考 Kyokai 的方案实现，App 在主窗口窗格内和独立窗口中均可打开、交互及关闭。
+- [x] 所有未实现能力有明确错误或准确的 capability 值。
+- [x] macOS 回归状态如实记录；未跑的检查标为 `NOT_RUN`。
+- [x] 源码、测试、构建说明、第三方 notices 和实验限制一并交付。
 
 如果只完成部分关卡，按层级交付可用成果和阻塞报告，不能勾选整项“Windows ARM64 移植完成”。
 
 ## 20. 基线里程碑状态与当前起点
 
-P0 审计/锁定、Java MVP（G1）、N0 ELF/ABI（G2）及已声明 C/Bionic/JNI 子集与真实 APK 集成（G3）均已完成，证据见 `doc/en-us/platform-notes.md`。层 A/B 在该范围 PASS。P5 受限客体 EGL/GLES、P6 Dozen 上的 T13 清屏呈现及最小化/恢复、P7 本地 CLI 包和 DEX 子进程管理均单独验证。真实 context/device loss、shader/通用资源与回调正例、T14 长期稳定性和独立机器验证仍未验收；本机只有 Mesa Dozen，厂商 Vulkan 路径需设备。前端暂缓，G4/G5 与层 C/D 未验收，不发布。
+P0 审计/锁定、Java MVP（G1）、N0 ELF/ABI（G2）及已声明 C/Bionic/JNI 子集与真实 APK 集成（G3）均已完成，证据见 `doc/en-us/platform-notes.md`。P5 受限客体 EGL/GLES、P6 Dozen 上的 T13 WSI/传输/SPIR-V 图形管线/`VkImage` 回读/回调与设备丢失恢复、P7 前后端一体化实验包 + NSIS + GitHub Actions `windows-11-arm` CI/Release 签名流水线 + 完整 30 分钟 T14 稳定性基线、以及 P8 宿主服务（`NativeOs`/剪贴板/DirectWrite 字体/`/proc`/动态 DPI）、WASAPI 43 方法原生音频和硬件 Direct3D 12 Skia AGSL/RenderEffect（`T15` 11/11）均已在本机验证通过。本机只有 Mesa Dozen，厂商原生 Vulkan 路径仍受硬件阻塞（`BLOCKED`），验证层与 macOS 回归为 `NOT_RUN`。

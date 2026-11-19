@@ -121,7 +121,8 @@ function Find-Kotlinc {
     foreach ($k in @($env:KOTLIN_HOME, (Join-Path $studio 'plugins\Kotlin\kotlinc'))) {
         if (-not $k -or -not (Test-Path (Join-Path $k 'bin\kotlinc.bat'))) { continue }
         $have = (Get-Content (Join-Path $k 'build.txt') -ErrorAction SilentlyContinue | Select-Object -First 1)
-        if ($have -ne $want) { throw "$k is kotlinc $have; the fixtures need $want (build-lock.json)" }
+        $majorVer = $lock.guest.kotlinc.version -replace '\s*\(.*\)$', ''
+        if ($have -ne $want -and $have -ne $majorVer) { throw "$k is kotlinc $have; the fixtures need $want (build-lock.json)" }
         return $k
     }
     throw 'No Kotlin compiler found: install Android Studio or set KOTLIN_HOME (see scripts/windows/check-requirements.ps1)'
@@ -153,7 +154,11 @@ function Invoke-InDevShell($Vs, [string[]]$Command) {
         if ($LASTEXITCODE -ne 0) { throw 'vcvarsall.bat arm64 failed' }
         $script:devEnv = @{}
         foreach ($l in $lines) { if ($l -match '^([^=]+)=(.*)$') { $script:devEnv[$Matches[1]] = $Matches[2] } }
-        $script:devEnv['PATH'] = (Join-Path $Vs.Root 'VC\Tools\Llvm\ARM64\bin') + ';' + $script:devEnv['PATH']
+        $llvmDirs = @(
+            (Join-Path $Vs.Root 'VC\Tools\Llvm\ARM64\bin'),
+            (Join-Path $env:ProgramFiles 'LLVM\bin')
+        ) | Where-Object { Test-Path $_ }
+        if ($llvmDirs) { $script:devEnv['PATH'] = ($llvmDirs -join ';') + ';' + $script:devEnv['PATH'] }
     }
     $saved = @{}
     foreach ($k in $script:devEnv.Keys) {

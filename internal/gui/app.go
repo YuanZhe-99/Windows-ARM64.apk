@@ -78,6 +78,8 @@ type App struct {
 	codeBytes      int64
 	appDataBytes   map[string]int64
 	checkedUpdate  bool
+	appUpdate      *mygo.Update
+	appUpdateBusy  bool
 }
 
 // docViewState displays a local license or third-party notice file in a sheet.

@@ -1,0 +1,22 @@
+# Checks every push and pull request natively on GitHub's Windows 11 ARM64 runner (`windows-11-arm`):
+# the Go/MyGo/i18n/docs checks of AGENTS.md, the native ARM64 runtime + Java/Skia/ELF build, and the
+# headless native ARM64 verification suites. Desktop/GPU window suites run on physical ARM64 hardware
+# (see doc/en-us/ci.md and doc/en-us/platform-notes.md).
+name: CI
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    uses: ./.github/workflows/build.yml

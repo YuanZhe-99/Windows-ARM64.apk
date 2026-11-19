@@ -220,7 +220,7 @@ func TestRealRuntimeEmbed(t *testing.T) {
 	}
 
 	glesApk := filepath.Join("..", "..", "tests", "fixtures", "hello-guest-gles.apk")
-	if _, err := os.Stat(glesApk); err == nil {
+	if _, err := os.Stat(glesApk); err == nil && rep.Machine.AngleArm64 {
 		glesFirst := make(chan *image.RGBA, 1)
 		glesDone := make(chan State, 1)
 		gp, err := rt.Launch(LaunchSpec{

@@ -150,15 +150,16 @@ N0 加载器（`runtime/guest/loader`，[native-profiles.md](native-profiles.md)
 - **Windows 和 SDK 都不带 Vulkan 头文件**：它们按锁定的基线从 vcpkg 获取（仅构建时使用）。
 - **Java 侧不需修改即可编译**于 Windows ARM64 JDK；它的平台耦合在运行时。
 
-## 下一步
+## 当前实现总结
 
-P2 的 profile N0 已完成（G2）。P3 现有独立 T08 线程基础（受管理 pthread、errno、key/析构、C 仿真 TLS 与无超时 mutex/condition 同步），
-实现于 `runtime/guest/bionic`，不移植 Darwin shim。T07 在 `runtime/guest/loader` 和 `runtime/guest/bionic`
-新增依赖/构造事务与客体 dl API；T08 现已覆盖私有堆内存/字符串、映射文件/时间和客体 PC 故障诊断。
-小型 Android ABI 辅助库把受限格式化/va_list 完全保留在客体侧，固定字节日志进入宿主。
-P3 已声明的 C/Bionic 范围现已包含逻辑系统库、经验证的导入版本及真实 CRT 生命周期记录，
-通过普通 NDK 链接的 C 夹具验证。P4 现已在声明的子集通过 G3
-（[native-profiles.md](native-profiles.md)），包含 APK 库重定向、真实 Activity 矩阵及启用 CFG 的构建。
-下一步为 P5/P6 图形；厂商 Vulkan 路径的阻塞如前文所述。P1 尚未完成的是
-应用运行中的 density 变化，以及应用接下来可能需要的宿主 native（`NativeOs`、宿主字体）；界面从 `winapk.Mock` 切换到
-`winapk run` 属于 P7（`PLAN.md` §14）。
+P2 的 profile N0 已完成（G2）。P3（`runtime/guest/bionic`）实现了受管理 pthread、errno、key/析构、C 仿真
+TLS、无超时 mutex/condition 同步、私有堆内存/字符串、LP64 整数/环境变量/进程辅助函数、映射文件/时间、客体 PC
+故障诊断，以及带 Android ABI 格式化辅助库的逻辑系统库（`libc.so`、`libdl.so`、`liblog.so`）。P4 在声明子集通过
+G3（[native-profiles.md](native-profiles.md)），包含 APK 库重定向、DirectByteBuffer/Critical/反射字段与方法
+JNI 入口、真实 Activity 矩阵及启用 CFG 的构建。P5/P6 受限 ANGLE GLES 与 Vulkan
+WSI/传输/图形管线/回调 profile 在本机 Adreno 8cx Gen 3 + Mesa Dozen（`translated=yes`，ADR-0004；厂商原生
+ICD 为 `BLOCKED`）上通过。P7 完成接入真实 `winapk.Runtime`（`--embed`）的 MyGo 前端、一体化 ARM64 实验包 +
+NSIS 安装包 + GitHub Actions `windows-11-arm` 持续集成与签名发布工作流（[ci.md](ci.md)）、ANGLE 链接依赖声明审核，以及完整
+30 分钟 T14 稳定性基线验收。P8 完成 `NativeOs`（含 `liblzma` `.xz` 解压）、Win32/测试隔离剪贴板、
+DirectWrite 中日韩宿主字体、`/proc` 合成、动态 `WM_DPICHANGED`、支持默认设备切换重绑的 43 方法 WASAPI
+`NativeAudio`，以及硬件 Direct3D 12 Skia AGSL/RenderEffect（`T15`）。
