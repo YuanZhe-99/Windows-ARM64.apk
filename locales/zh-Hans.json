@@ -210,7 +210,7 @@
   "DontAskAgain": "不再询问",
   "StopAndClose": "{count, plural, other {停止 # 个应用并关闭}}",
   "RemoveTitle": "移除 {app}？",
-  "RemoveBody": "如果它已打开，会先停止，然后从应用库中移除。APK 文件保留在原处。",
+  "RemoveBody": "如果应用正在运行会先停止，随后从应用库移除，并删除由 Windows-ARM64.apk 复制保存的 APK。你在原位置保留的 APK 文件不会被删除。",
   "Remove": "移除",
   "PageGeneral": "常规",
   "PageRuntime": "运行时",
@@ -404,5 +404,12 @@
   "InstallUpdate": "安装 {version} 并重启",
   "AppUpToDate": "当前已是最新版本（{version}）。",
   "VulkanTranslatedNote": "当前电脑没有原生厂商 Vulkan 驱动，Vulkan 模式经由 Windows Dozen 转换层运行（仅支持 OpenGL ES 2.0）；运行 Flutter 与 3D 应用推荐使用“自动”或 Direct3D 11（原生硬件 OpenGL ES 3.0）。",
-  "SwitchProfileN2Retry": "启用 Profile N2 并重新打开"
+  "SwitchProfileN2Retry": "启用 Profile N2 并重新打开",
+  "RemoveKeepData": "暂时保留应用数据（只删除 APK）",
+  "RemoveKeepDataHint": "应用保存的数据会暂时保留在本地文件夹中。之后重新安装该 APK 时，可以继续使用原有数据。",
+  "RemoveDeleteData": "同时删除 APK 和全部应用数据",
+  "RemoveDeleteDataHint": "同时永久删除该应用保存的数据（{size}）和转换缓存，删除后无法恢复。",
+  "RemoveDeleteDataHintEmpty": "同时永久删除该应用的所有已保存数据与转换缓存，删除后无法恢复。",
+  "RemoveAPKOnly": "只删 APK",
+  "RemoveAndDeleteData": "删除 APK 和数据"
 }

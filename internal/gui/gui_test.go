@@ -1,6 +1,7 @@
 package gui
 
 import (
+	"errors"
 	"image"
 	"image/color"
 	"image/png"
@@ -107,6 +108,9 @@ func TestScreensRender(t *testing.T) {
 			a.launch(a.entry("com.example.noteslite"), false, false)
 			a.confirm = confirmState{open: true, kind: confirmClose}
 		}, L.Messages.DontAskAgain},
+		{"remove-confirm", true, true, func(a *App) {
+			a.openRemoveConfirm("com.example.noteslite")
+		}, L.Messages.RemoveKeepData},
 		{"runtime-install", false, true, func(a *App) {
 			a.install = installState{running: true, shown: true, step: winapk.StepDownload, frac: 0.4}
 		}, L.Messages.GettingJava},
@@ -518,5 +522,189 @@ func TestSurfaceBitmapAndPointerForwarding(t *testing.T) {
 	}
 	if fc.rec.xs[0] <= 0 || fc.rec.xs[0] >= 360 || fc.rec.ys[0] <= 0 || fc.rec.ys[0] >= 720 {
 		t.Fatalf("mapped DIP (%v, %v) out of 360x720 phone bounds", fc.rec.xs[0], fc.rec.ys[0])
+	}
+}
+
+type launchRecordClient struct {
+	*winapk.Mock
+	specs []winapk.LaunchSpec
+}
+
+func (c *launchRecordClient) Launch(spec winapk.LaunchSpec, report func(winapk.State)) (winapk.Process, error) {
+	c.specs = append(c.specs, spec)
+	return c.Mock.Launch(spec, report)
+}
+
+// TestCopyAPKToAppDataAndUninstallModes verifies that added (and legacy-migrated)
+// APKs are copied into AppData, survive deletion of the original download, and
+// respect both Keep-data and Delete-all removal choices.
+func TestCopyAPKToAppDataAndUninstallModes(t *testing.T) {
+	cfgDir := t.TempDir()
+	dataDir := t.TempDir()
+	srcDir := t.TempDir()
+	srcAPK := filepath.Join(srcDir, "SampleApp.apk")
+	if err := os.WriteFile(srcAPK, []byte("PK\x03\x04sample-apk-v1"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	lc := &launchRecordClient{Mock: winapk.NewMock(true, 0)}
+	h := &harness{q: make(chan func(), 256)}
+	h.a = New(lc, cfgDir, false)
+	h.a.later = func(fn func()) { h.q <- fn }
+	h.a.async = func(fn func()) { fn() }
+	pr := h.a.Prefs()
+	pr.AppData = dataDir
+	h.a.setPrefs(pr)
+	h.a.Start()
+	h.settle()
+
+	// 1. Add APK -> copied to <AppData>\apks\<package>.apk.
+	h.a.inspect(srcAPK)
+	h.settle()
+	h.a.addEntry(false)
+	h.settle()
+
+	const pkg = "com.example.sampleapp"
+	e := h.a.entry(pkg)
+	if e == nil {
+		t.Fatal("added entry missing")
+	}
+	managed, err := winapk.ManagedAPKPath(dataDir, pkg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if e.APK.Path != managed {
+		t.Fatalf("entry APK.Path = %q, want managed %q", e.APK.Path, managed)
+	}
+	if b, err := os.ReadFile(managed); err != nil || string(b) != "PK\x03\x04sample-apk-v1" {
+		t.Fatalf("managed copy = (%q, %v)", b, err)
+	}
+
+	// 2. Delete original download -> check() does not mark missing and Launch uses managed copy.
+	if err := os.Remove(srcAPK); err != nil {
+		t.Fatal(err)
+	}
+	h.a.check()
+	h.settle()
+	if h.a.missing[e.APK.Path] || len(h.a.missing) != 0 {
+		t.Fatalf("unexpected missing entries after deleting original APK: %+v", h.a.missing)
+	}
+	h.a.launch(e, false, false)
+	h.settle()
+	if len(lc.specs) != 1 || lc.specs[0].Path != managed {
+		t.Fatalf("Launch specs = %+v, want Path=%q", lc.specs, managed)
+	}
+	if h.a.open[pkg] == nil || h.a.open[pkg].state.Phase != winapk.Running {
+		t.Fatalf("app not running from managed APK: %+v", h.a.open[pkg])
+	}
+
+	// Create saved app data & converted code so removal modes can be verified.
+	pkgDataDir := winapk.AppDataDir(dataDir, pkg)
+	pkgCodeDir := filepath.Join(dataDir, "code", pkg)
+	if err := os.MkdirAll(pkgDataDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(pkgCodeDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	savedFile := filepath.Join(pkgDataDir, "prefs.xml")
+	if err := os.WriteFile(savedFile, []byte("<map/>"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(pkgCodeDir, "classes.jar"), []byte("jar"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	// 3. Remove confirmation defaults to Keep data; removing deletes only the managed APK.
+	h.a.openRemoveConfirm(pkg)
+	h.settle()
+	if !h.a.confirm.keepData {
+		t.Fatal("expected confirmRemove to default to keepData=true")
+	}
+	tt := ui.NewTester(h.a.view, 1280, 820)
+	tt.Frame()
+	tt.Frame()
+	if !tt.HasText(L.RemoveKeepData()) || !tt.HasText(L.RemoveDeleteData()) || !tt.HasText(L.RemoveAPKOnly()) {
+		t.Fatal("remove confirmation did not render both keep/delete choices")
+	}
+	h.a.confirm = confirmState{}
+	h.a.removeEntry(pkg, true)
+	h.settle()
+
+	if h.a.entry(pkg) != nil {
+		t.Fatal("entry stayed in library after remove")
+	}
+	if _, err := os.Stat(managed); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("managed APK still present after remove: %v", err)
+	}
+	if b, err := os.ReadFile(savedFile); err != nil || string(b) != "<map/>" {
+		t.Fatalf("saved app data was lost on keep-data remove: (%q, %v)", b, err)
+	}
+
+	// 4. Reinstalling the APK restores access to the preserved app data, then Delete-all clears everything.
+	reinstallAPK := filepath.Join(srcDir, "SampleApp.apk")
+	if err := os.WriteFile(reinstallAPK, []byte("PK\x03\x04sample-apk-v2"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	h.a.inspect(reinstallAPK)
+	h.settle()
+	h.a.addEntry(true)
+	h.settle()
+	if b, err := os.ReadFile(managed); err != nil || string(b) != "PK\x03\x04sample-apk-v2" {
+		t.Fatalf("reinstalled managed copy = (%q, %v)", b, err)
+	}
+	if _, err := os.Stat(savedFile); err != nil {
+		t.Fatalf("preserved saved data missing after reinstall: %v", err)
+	}
+
+	h.a.openRemoveConfirm(pkg)
+	h.settle()
+	h.a.confirm.keepData = false
+	tt.Frame()
+	if !tt.HasText(L.RemoveAndDeleteData()) {
+		t.Fatal("delete-all button text missing when keepData=false")
+	}
+	h.a.confirm = confirmState{}
+	h.a.removeEntry(pkg, false)
+	h.settle()
+
+	if _, err := os.Stat(managed); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("managed APK still present after delete-all: %v", err)
+	}
+	if _, err := os.Stat(pkgDataDir); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("app data dir still present after delete-all: %v", err)
+	}
+	if _, err := os.Stat(pkgCodeDir); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("converted code dir still present after delete-all: %v", err)
+	}
+	if _, err := os.Stat(reinstallAPK); err != nil {
+		t.Fatalf("external user APK must never be deleted: %v", err)
+	}
+
+	// 5. Pre-existing external entry in library.json migrates automatically on check().
+	legacyAPK := filepath.Join(srcDir, "LegacyApp.apk")
+	if err := os.WriteFile(legacyAPK, []byte("PK\x03\x04legacy"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	const legacyPkg = "com.example.legacy"
+	h.a.library = append(h.a.library, h.a.newEntry(winapk.APK{
+		Path: legacyAPK, Package: legacyPkg, Label: "Legacy", Verdict: winapk.CanRun,
+	}))
+	h.a.check()
+	h.settle()
+	legacyManaged, err := winapk.ManagedAPKPath(dataDir, legacyPkg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := h.a.entry(legacyPkg).APK.Path; got != legacyManaged {
+		t.Fatalf("legacy entry APK.Path after check = %q, want %q", got, legacyManaged)
+	}
+	if err := os.Remove(legacyAPK); err != nil {
+		t.Fatal(err)
+	}
+	h.a.check()
+	h.settle()
+	if len(h.a.missing) != 0 {
+		t.Fatalf("migrated legacy entry reported missing: %+v", h.a.missing)
 	}
 }

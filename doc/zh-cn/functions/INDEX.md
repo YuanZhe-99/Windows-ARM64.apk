@@ -7,7 +7,7 @@
 |---|---|---|
 | `cmd/windows-arm64-apk` | 界面的入口，默认连接 `winapk.Runtime`（`WINAPK_DEMO=1` 使用 `winapk.Mock`） | `main` |
 | `internal/gui` | 界面（[gui.md](../gui.md)）：主窗口、窗格和组、应用窗口、面板、设置、诊断 | `App`、`New`、`view`、`launch`、`group`、`showTab` |
-| `internal/winapk` | 运行时 ↔ 前端契约：真实 `winapk.exe` 客户端、`--embed` 共享内存帧/IPC 监管、私有 ARM64 OpenJDK 21 安装器、存储辅助函数及 `Mock` | `Client`、`Runtime`、`Process`、`Report`、`APK`、`State`、`InstallJava`、`MoveDataDir`、`Mock` |
+| `internal/winapk` | 运行时 ↔ 前端契约：真实 `winapk.exe` 客户端、`--embed` 共享内存帧/IPC 监管、私有 ARM64 OpenJDK 21 安装器、存储辅助函数及 `Mock` | `Client`、`Runtime`、`Process`、`Report`、`APK`、`State`、`InstallJava`、`CopyAPK`、`MoveDataDir`、`Mock` |
 | `locales` | 界面的 ARB 目录（en、zh-Hans）及生成的访问函数 | `en.json` |
 | `macapk/runtime/platform/windows` | Windows ARM64 宿主：`winapk.exe`（`doctor`、`inspect`、`run`、`dex`）、APK/ARSC/ELF 静态读取器、JVM 和 Vulkan 探测、`windows.cmake`、`vcpkg.json`、`winapk.manifest` | `wmain`、`Run`、`ConvertDex`、`StageCode`、`BuildId`、`InspectApk`、`ResolveResources`、`InspectArm64Elf`、`FindJvm`、`CreateJvm`、`ProbeVulkan` |
 | `macapk/runtime/platform/windows/src/bridge` | `winapk-bridge.dll`：Java 宿主 native、窗口/输入/呈现、`--embed` 共享内存/管道 IPC、SQLite 及进程私有受限客体命名空间 | `winapk_bridge_register`、`winapk_bridge_connect_embed`、`RegisterGuest`、`GuestRuntime`、`Open`、`BindExports`、`RunOnUi`、`PresentBitmap` |

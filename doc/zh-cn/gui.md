@@ -35,9 +35,11 @@ MyGo 前端（`cmd/windows-arm64-apk`、`internal/gui`），按 `design/` 中的
   重新启动应用。
 - **它的屏幕。** 应用打开时以及屏幕变化时（旋转、新的屏幕尺寸、适应窗格和它的窗口的空间变化），都会
   被告知屏幕尺寸。独立窗口按应用的屏幕尺寸打开，旋转时随之转向。
-- **添加 APK。** 添加 APK…（Ctrl+O）、把 `.apk` 拖到主窗口的任何位置，或在命令行或第二次启动时给出一个
-  APK，都会打开“添加应用”；不会把 Windows-ARM64.apk 注册为 `.apk` 文件的打开方式。APK 不在原处的应用
-  显示找不到文件和查找…，读取选中的文件并保留应用的设置。
+- **添加与移除 APK。** 添加 APK…（Ctrl+O）、把 `.apk` 拖到主窗口的任何位置，或在命令行或第二次启动时给出一个
+  APK，都会打开“添加应用”；不会把 Windows-ARM64.apk 注册为 `.apk` 文件的打开方式。添加应用时会把 APK 复制到
+  `<AppData>\apks\<package>.apk`，删除或移动原文件也不会影响后续打开（应用库中已有的条目只要原文件可读也会自动复制过去）。
+  移除应用时可选择暂时保留数据（只删除复制保存的 APK，之后重装可恢复使用）或同时删除 APK 与应用数据及转换缓存；Windows-ARM64.apk 之外的原始 APK 不会被删除。
+  已保存的 APK 缺失时会显示找不到文件和查找…，读取并复制选中的文件且保留应用设置。
 - **按键。** Ctrl+O 添加 APK，Ctrl+W 关闭焦点窗格（主页保留），Ctrl+, 打开设置，Esc 是焦点应用的返回。
   主窗口的标题是焦点窗格的名称。
 - **关闭主窗口**会停止窗格中的应用。开启“先询问”时，对话框列出哪些会停止、哪些继续运行，并有
@@ -51,7 +53,7 @@ MyGo 前端（`cmd/windows-arm64-apk`、`internal/gui`），按 `design/` 中的
 | 应用详情 | 在这里能用的、上次的失败、打开方式、屏幕尺寸、移除应用…；高级：原生代码关闭或受限及 profile（使用默认、N0、N1、N2）、图形 |
 | 设置 | 常规（新应用的打开方式、关闭主窗口、先询问、应用数据的打开文件夹和移动…、语言、外观）；运行时（使用哪个 Java 运行时、更新 / 重新安装、保持最新、默认图形、默认原生执行 profile）；关于 |
 | 获取 Java 运行时 | 未找到时窗格上方的卡片，以及逐步的对话框（下载、检查、安装、测试），可隐藏和取消 |
-| 确认 | 有窗格应用时关闭主窗口；移除应用 |
+| 确认 | 有窗格应用时关闭主窗口；移除应用（选择暂时保留应用数据只删 APK，或同时删除） |
 
 诊断是一个窗格：这台电脑（`doctor` 报告，示例数据上有示例横幅）和应用日志：每个应用自 Windows-ARM64.apk 启动以来最近的十次运行（何时开始、如何结束），所选运行的日志
 及其错误类别，只显示错误和警告、复制日志和保存以提交错误报告…。窗格关闭后，运行的日志仍然保留。
@@ -79,7 +81,7 @@ MyGo 前端（`cmd/windows-arm64-apk`、`internal/gui`），按 `design/` 中的
 | `Process.Stop`、`Kill`、`Back`、`Resize`、输入 | 通过双工管道发送优雅 `stop`（`WM_CLOSE`）、立即 `Kill`、`back`、以 DIP 计的 `resize` 以及 `pointer`、`wheel`、`key`、`text`，不耦合 Win32 线程输入队列 |
 | `Process.Reattach(window)` | 返回 `true`：前端在窗格与独立窗口之间移动 `*ui.Bitmap` 画面，无需重启运行时进程 |
 | `InstallJava(ctx, dir, progress)` / `CheckJavaUpdate` | 通过 HTTPS 下载 Microsoft Build of OpenJDK 21 ARM64，校验 SHA-256 及 `0xAA64` PE `jvm.dll`，解压到 `dir`，切换前执行 `winapk doctor` 自检，并在空闲时检查更新的 `21.x` 摘要 |
-| 存储辅助函数 | `AppDataSize`、`TotalAppDataSize`、`ConvertedCodeSize`、`ClearAppData`、`ClearAppArtifacts`、`ClearConvertedCode` 与 `MoveDataDir` 管理 `<AppData>\android`、`code` 和 `logs` |
+| 存储辅助函数 | `ManagedAPKPath`、`CopyAPK`、`RemoveManagedAPK`、`AppDataSize`、`TotalAppDataSize`、`ConvertedCodeSize`、`ClearAppData`、`ClearAppArtifacts`、`ClearConvertedCode` 与 `MoveDataDir` 管理 `<AppData>\android`、`apks`、`code` 和 `logs` |
 
 ## 示例数据
 

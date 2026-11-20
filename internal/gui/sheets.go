@@ -294,10 +294,18 @@ func (a *App) addEntry(open bool) {
 		}
 	}
 	if old := a.entry(apk.Package); old != nil {
+		delete(a.missing, old.APK.Path)
 		if e.Graphics == "" {
 			e.Graphics = old.Graphics
 		}
 		e.Screen, e.Added = old.Screen, old.Added
+		if !a.demo && apk.SHA256 != "" && apk.SHA256 == old.APK.SHA256 {
+			if managed, err := winapk.ManagedAPKPath(a.appDataDir(), apk.Package); err == nil && samePath(old.APK.Path, managed) {
+				if _, err := os.Stat(managed); err == nil {
+					e.APK.Path = managed
+				}
+			}
+		}
 		*old = *e
 		e = old
 	} else {
@@ -306,6 +314,7 @@ func (a *App) addEntry(open bool) {
 	a.saveLibrary()
 	delete(a.missing, e.APK.Path)
 	a.add = addState{}
+	a.stageAPK(e)
 	if open {
 		a.launch(e, e.InWindow, false)
 	}
@@ -462,7 +471,7 @@ func (a *App) detailsView(c *ui.Context) {
 									})
 								}
 								if dangerButton(c, "det-remove", L.RemoveApp()).Clicked() {
-									a.confirm = confirmState{open: true, kind: confirmRemove, id: e.ID}
+									a.openRemoveConfirm(e.ID)
 								}
 							})
 						})
@@ -638,11 +647,19 @@ const (
 // confirmState is a confirmation while open: closing the main window with
 // apps in panes, or removing an app.
 type confirmState struct {
-	open    bool
-	kind    confirmKind
-	id      string
-	closing bool // the window closes now, without asking again
-	dontAsk bool
+	open     bool
+	kind     confirmKind
+	id       string
+	closing  bool // the window closes now, without asking again
+	dontAsk  bool
+	keepData bool // for confirmRemove: keep app data when deleting the managed APK
+}
+
+// openRemoveConfirm opens the remove confirmation dialog defaulting to keeping
+// saved app data while refreshing per-app storage sizes.
+func (a *App) openRemoveConfirm(id string) {
+	a.confirm = confirmState{open: true, kind: confirmRemove, id: id, keepData: true}
+	a.refreshStorage()
 }
 
 // confirmDialog asks before what can't be undone (design/
@@ -653,13 +670,14 @@ func (a *App) confirmDialog(c *ui.Context) {
 	}
 	p := pal(c)
 	title := L.CloseTitle()
+	var removeEntry *entry
 	if a.confirm.kind == confirmRemove {
-		e := a.entry(a.confirm.id)
-		if e == nil {
+		removeEntry = a.entry(a.confirm.id)
+		if removeEntry == nil {
 			a.confirm = confirmState{}
 			return
 		}
-		title = L.RemoveTitle(e.APK.Label)
+		title = L.RemoveTitle(removeEntry.APK.Label)
 	}
 	ui.DialogBase(c.Key("confirm"), &a.confirm.open, func(backdrop, panel ui.Element) {
 		backdrop.Background(p.scrim)
@@ -667,16 +685,67 @@ func (a *App) confirmDialog(c *ui.Context) {
 			ui.Text(c, title).FontSize(18).FontWeight(600).Level(1)
 			if a.confirm.kind == confirmRemove {
 				muted(c, L.RemoveBody(), fontBody).Wrap()
+				delHint := L.RemoveDeleteDataHintEmpty()
+				if sz := a.appDataBytes[removeEntry.ID]; sz > 0 {
+					delHint = L.RemoveDeleteDataHint(mib(sz))
+				}
+				choices := []struct {
+					key, title, hint string
+					keep             bool
+				}{
+					{"rm-keep-data", L.RemoveKeepData(), L.RemoveKeepDataHint(), true},
+					{"rm-del-data", L.RemoveDeleteData(), delHint, false},
+				}
+				ui.Column(c).FillWidth().Border(1, p.border).Radius(radiusCard).Padding(4).Gap(4).Children(func() {
+					for _, ch := range choices {
+						on := a.confirm.keepData == ch.keep
+						card := ui.ButtonBase(c.Key(ch.key)).FillWidth().Padding(8, 10).Radius(radiusCtl).Selected(on).Label(ch.title)
+						if on {
+							card.Background(p.tint)
+						} else if card.Hovered() {
+							card.Background(p.subtle)
+						}
+						card.Children(func() {
+							ui.Row(c).FillWidth().Gap(10).AlignItems(ui.Start).Children(func() {
+								ringCol := p.muted
+								if on {
+									ringCol = p.accent
+								}
+								ui.Box(c).Size(16, 16).Radius(8).Border(1.5, ringCol).Center().Margin(2, 0, 0, 0).Shrink(0).Children(func() {
+									if on {
+										ui.Box(c).Size(8, 8).Radius(4).Background(p.accent)
+									}
+								})
+								ui.Column(c).Grow(1).MinWidth(0).Gap(1).Children(func() {
+									ui.Text(c, ch.title).FontSize(13).FontWeight(600).TextColor(p.text)
+									muted(c, ch.hint, fontSmall).Wrap()
+								})
+							})
+						})
+						if card.Clicked() && a.confirm.keepData != ch.keep {
+							a.confirm.keepData = ch.keep
+						}
+					}
+				})
 				ui.Row(c).FillWidth().Gap(8).Children(func() {
 					ui.Spacer(c)
 					if button(c, "rm-cancel", L.Cancel(), nil).Clicked() {
 						a.confirm = confirmState{}
 					}
-					if primary(c, "rm-ok", L.Remove(), nil).Clicked() {
-						id := a.confirm.id
-						a.confirm = confirmState{}
-						a.details.open = false
-						a.removeEntry(id)
+					if a.confirm.keepData {
+						if primary(c, "rm-ok", L.RemoveAPKOnly(), nil).Clicked() {
+							id := a.confirm.id
+							a.confirm = confirmState{}
+							a.details.open = false
+							a.removeEntry(id, true)
+						}
+					} else {
+						if dangerButton(c, "rm-ok", L.RemoveAndDeleteData()).Clicked() {
+							id := a.confirm.id
+							a.confirm = confirmState{}
+							a.details.open = false
+							a.removeEntry(id, false)
+						}
 					}
 				})
 				return

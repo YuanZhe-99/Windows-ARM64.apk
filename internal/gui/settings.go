@@ -256,7 +256,7 @@ func (a *App) generalPage(c *ui.Context) {
 				a.openPath(dir)
 			}
 			running := len(a.paneApps())+len(a.windowApps()) > 0
-			b := button(c, "set-data-move", L.Move(), nil).Disabled(running)
+			b := button(c, "set-data-move", L.Move(), nil).Disabled(running || len(a.staging) > 0)
 			if running {
 				b.Tooltip(L.MoveNeedsStopped())
 			}
@@ -342,6 +342,24 @@ func (a *App) chooseAppData() {
 			pr := a.prefs
 			pr.AppData = dst
 			a.setPrefs(pr)
+			changed := false
+			for _, e := range a.library {
+				if e.APK.Package == "" {
+					continue
+				}
+				oldManaged, err1 := winapk.ManagedAPKPath(oldDir, e.APK.Package)
+				newManaged, err2 := winapk.ManagedAPKPath(dst, e.APK.Package)
+				if err1 == nil && err2 == nil && samePath(e.APK.Path, oldManaged) {
+					if _, err := os.Stat(newManaged); err == nil {
+						delete(a.missing, e.APK.Path)
+						e.APK.Path = newManaged
+						changed = true
+					}
+				}
+			}
+			if changed {
+				a.saveLibrary()
+			}
 			a.refreshStorage()
 		})
 	})

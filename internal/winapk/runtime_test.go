@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"image"
 	"net/http"
@@ -43,11 +44,31 @@ func TestStorageAndJavaInstall(t *testing.T) {
 	if got := ConvertedCodeSize(src); got != 8192 {
 		t.Fatalf("ConvertedCodeSize = %d, want 8192", got)
 	}
+	extDir := t.TempDir()
+	extAPK := filepath.Join(extDir, "notes.apk")
+	if err := os.WriteFile(extAPK, []byte("PK\x03\x04dummy-apk-payload"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	managedAPK, err := CopyAPK(src, "com.example.notes", extAPK)
+	if err != nil {
+		t.Fatalf("CopyAPK: %v", err)
+	}
+	// Copying the managed path to itself is a safe no-op.
+	if same, err := CopyAPK(src, "com.example.notes", managedAPK); err != nil || same != managedAPK {
+		t.Fatalf("CopyAPK(self) = (%q, %v), want %q", same, err, managedAPK)
+	}
+	// Deleting the original external APK and clearing converted code leaves the managed APK intact.
+	if err := os.Remove(extAPK); err != nil {
+		t.Fatal(err)
+	}
 	if err := ClearConvertedCode(src); err != nil {
 		t.Fatal(err)
 	}
 	if got := ConvertedCodeSize(src); got != 0 {
 		t.Fatalf("ConvertedCodeSize after clear = %d, want 0", got)
+	}
+	if b, err := os.ReadFile(managedAPK); err != nil || string(b) != "PK\x03\x04dummy-apk-payload" {
+		t.Fatalf("managed APK after ClearConvertedCode = (%q, %v)", b, err)
 	}
 	dst := t.TempDir()
 	if err := MoveDataDir(src, dst); err != nil {
@@ -55,6 +76,31 @@ func TestStorageAndJavaInstall(t *testing.T) {
 	}
 	if got := AppDataSize(dst, "com.example.notes"); got != 4096 {
 		t.Fatalf("AppDataSize after move = %d, want 4096", got)
+	}
+	movedAPK, err := ManagedAPKPath(dst, "com.example.notes")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(movedAPK); err != nil {
+		t.Fatalf("managed APK missing after MoveDataDir: %v", err)
+	}
+	if err := RemoveManagedAPK(dst, "com.example.notes"); err != nil {
+		t.Fatalf("RemoveManagedAPK: %v", err)
+	}
+	if _, err := os.Stat(movedAPK); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("managed APK still exists after RemoveManagedAPK: %v", err)
+	}
+	if got := AppDataSize(dst, "com.example.notes"); got != 4096 {
+		t.Fatalf("AppDataSize changed after RemoveManagedAPK = %d, want 4096", got)
+	}
+	if _, err := CopyAPK(dst, "com.example.notes", movedAPK); err == nil {
+		t.Fatal("expected error copying missing APK")
+	}
+	if err := ClearAppArtifacts(dst, "com.example.notes"); err != nil {
+		t.Fatalf("ClearAppArtifacts: %v", err)
+	}
+	if got := AppDataSize(dst, "com.example.notes"); got != 0 {
+		t.Fatalf("AppDataSize after ClearAppArtifacts = %d, want 0", got)
 	}
 
 	// Build a minimal synthetic ZIP whose jvm.dll header carries ARM64 (0xAA64) or x64 (0x8664).

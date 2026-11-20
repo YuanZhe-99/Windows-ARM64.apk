@@ -26,7 +26,7 @@ MyGo 前端在手机式窗格或独立窗口中打开每个应用，每个 APK �
 
 ## 项目状态
 
-版本 0.1.1 为当前 Windows 11 ARM64 实验版构建。在 [platform-notes.md](platform-notes.md) 记录的 Windows 11 ARM64 机器上：
+版本 0.1.2 为当前 Windows 11 ARM64 实验版构建。在 [platform-notes.md](platform-notes.md) 记录的 Windows 11 ARM64 机器上：
 G0–G3 已对 Java/Kotlin APK、N0 ELF/ABI、已声明 C/Bionic 子集与 `hello-jni` Activity 矩阵（含独立启用 CFG
 的构建）验证通过；T14 完成 20 次冷/热启动、100 次 resize/最小化恢复循环及完整 30 分钟连续稳定性运行；MyGo
 前端已按全部 17 张 `design/` 设计稿完成并接入真实 `winapk` 运行时（`--embed` 共享内存帧与双工 IPC）；P8

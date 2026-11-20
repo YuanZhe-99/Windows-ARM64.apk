@@ -45,10 +45,15 @@ package `internal/winapk`. By default it connects to `winapk.Runtime`; `WINAPK_D
 - **Its screen.** The app is told its screen's size when it opens and whenever it changes:
   rotating, a new screen size, or the room of Fit the pane and of its window. A window of its own
   opens at the app's screen size and turns with it when rotated.
-- **Adding APKs.** Add APK… (Ctrl+O), dropping an `.apk` anywhere on the main window, or naming
-  one on the command line or to a second launch opens Add an app; nothing registers
-  Windows-ARM64.apk for `.apk` files. An app whose APK is no longer where it was shows File not
-  found and Locate…, which reads the file chosen and keeps the app's settings.
+- **Adding and removing APKs.** Add APK… (Ctrl+O), dropping an `.apk` anywhere on the main window,
+  or naming one on the command line or to a second launch opens Add an app; nothing registers
+  Windows-ARM64.apk for `.apk` files. Adding an app copies its APK into
+  `<AppData>\apks\<package>.apk` so deleting or moving the original file does not break future
+  launches (and existing library entries are copied there automatically when readable). Removing an
+  app lets you either keep its saved data (deleting only the copied APK so reinstalling later
+  restores it) or delete both the APK and its app data and converted code; the original APK outside
+  Windows-ARM64.apk is never deleted. An app whose stored APK is missing shows File not found and
+  Locate…, which reads and copies the file chosen while keeping the app's settings.
 - **Keys.** Ctrl+O adds an APK, Ctrl+W closes the pane in focus (Home stays), Ctrl+, opens
   Settings, Esc is Back for the app in focus. The main window's title names the pane in focus.
 - **Closing the main window** stops the apps in panes. With Ask first on, a dialog lists which
@@ -63,7 +68,7 @@ package `internal/winapk`. By default it connects to `winapk.Runtime`; `WINAPK_D
 | App details | What works here, the last failure, Opens, Screen size, Remove app…; Advanced: native code Off or Restricted with the profile (Use the default, N0, N1, N2), Graphics |
 | Settings | General (how new apps open, closing the main window, Ask first, App data with Open folder and Move…, language, appearance); Runtime (which Java runtime, Update / Reinstall, Keep it up to date, default graphics, default native profile); About |
 | Getting the Java runtime | The card above the panes while none is found, and the step-by-step dialog (download, check, install, test) with Hide and Cancel |
-| Confirmations | Closing the main window with apps in panes; removing an app |
+| Confirmations | Closing the main window with apps in panes; removing an app (keep app data and remove only the APK, or delete both) |
 
 Diagnostics is a pane: This PC (the `doctor` report, with the demo banner on sample data) and App
 logs: each app's last ten runs since Windows-ARM64.apk started (when, and how each ended), the
@@ -94,7 +99,7 @@ one per-APK runtime process (`winapk run --embed <token>`).
 | `Process.Stop`, `Kill`, `Back`, `Resize`, input | Sends graceful `stop` (`WM_CLOSE`), immediate `Kill`, `back`, `resize` in DIPs, and `pointer`, `wheel`, `key`, `text` over the duplex pipe without coupling Win32 thread input queues |
 | `Process.Reattach(window)` | Returns `true`: the front end moves the `*ui.Bitmap` surface between a pane and a standalone window without restarting the runtime process |
 | `InstallJava(ctx, dir, progress)` / `CheckJavaUpdate` | Downloads Microsoft Build of OpenJDK 21 ARM64 over HTTPS, verifies its SHA-256 and `0xAA64` PE `jvm.dll`, extracts into `dir`, runs `winapk doctor` before swapping in, and checks for newer `21.x` digests when idle |
-| Storage helpers | `AppDataSize`, `TotalAppDataSize`, `ConvertedCodeSize`, `ClearAppData`, `ClearAppArtifacts`, `ClearConvertedCode` and `MoveDataDir` manage `<AppData>\android`, `code` and `logs` |
+| Storage helpers | `ManagedAPKPath`, `CopyAPK`, `RemoveManagedAPK`, `AppDataSize`, `TotalAppDataSize`, `ConvertedCodeSize`, `ClearAppData`, `ClearAppArtifacts`, `ClearConvertedCode` and `MoveDataDir` manage `<AppData>\android`, `apks`, `code` and `logs` |
 
 ## Sample data
 

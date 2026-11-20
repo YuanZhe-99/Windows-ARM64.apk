@@ -210,7 +210,7 @@
   "DontAskAgain": "Don't ask again",
   "StopAndClose": "{count, plural, one {Stop # app and close} other {Stop # apps and close}}",
   "RemoveTitle": "Remove {app}?",
-  "RemoveBody": "It stops if it's open and leaves the library. The APK file stays where it is.",
+  "RemoveBody": "It stops if it's open, leaves the library, and deletes the APK copy saved by Windows-ARM64.apk. Your original APK file stays where it is.",
   "Remove": "Remove",
   "PageGeneral": "General",
   "PageRuntime": "Runtime",
@@ -404,5 +404,12 @@
   "InstallUpdate": "Install {version} & restart",
   "AppUpToDate": "Windows-ARM64.apk {version} is up to date.",
   "VulkanTranslatedNote": "This PC has no native GPU Vulkan driver — Vulkan runs through Windows' Dozen translation layer (OpenGL ES 2.0 only). Automatic or Direct3D 11 uses native hardware OpenGL ES 3.0 and is recommended for Flutter and 3D apps.",
-  "SwitchProfileN2Retry": "Use Profile N2 & reopen"
+  "SwitchProfileN2Retry": "Use Profile N2 & reopen",
+  "RemoveKeepData": "Keep app data (remove APK only)",
+  "RemoveKeepDataHint": "Keeps this app's saved data on your PC. Reinstalling the same APK later brings your data back.",
+  "RemoveDeleteData": "Delete APK and all app data",
+  "RemoveDeleteDataHint": "Also permanently deletes this app's saved data ({size}) and converted code. This can't be undone.",
+  "RemoveDeleteDataHintEmpty": "Also permanently deletes any saved data and converted code for this app. This can't be undone.",
+  "RemoveAPKOnly": "Remove APK",
+  "RemoveAndDeleteData": "Delete APK & data"
 }

@@ -96,18 +96,102 @@ func ConvertedCodeSize(root string) int64 {
 	return dirSize(filepath.Join(root, "code"))
 }
 
+func validPackage(pkg string) bool {
+	return pkg != "" && !strings.ContainsAny(pkg, `/\:`) && !strings.Contains(pkg, "..")
+}
+
+// ManagedAPKPath returns the managed APK copy path (`<root>/apks/<pkg>.apk`) for pkg.
+// Returns: the destination APK path, or an error when pkg is invalid.
+func ManagedAPKPath(root, pkg string) (string, error) {
+	if !validPackage(pkg) {
+		return "", errors.New("winapk: invalid package name")
+	}
+	if root == "" {
+		root = DefaultDataDir()
+	}
+	return filepath.Join(root, "apks", pkg+".apk"), nil
+}
+
+// CopyAPK copies srcPath atomically into `<root>/apks/<pkg>.apk` so deleting or
+// moving the original file does not break future launches.
+// Side effects: creates `<root>/apks` and atomically replaces the managed APK via a temporary file.
+func CopyAPK(root, pkg, srcPath string) (string, error) {
+	dst, err := ManagedAPKPath(root, pkg)
+	if err != nil {
+		return "", err
+	}
+	if strings.EqualFold(filepath.Clean(srcPath), filepath.Clean(dst)) {
+		fi, err := os.Stat(dst)
+		if err != nil {
+			return "", err
+		}
+		if fi.IsDir() {
+			return "", errors.New("winapk: managed APK path is a directory")
+		}
+		return dst, nil
+	}
+	in, err := os.Open(srcPath)
+	if err != nil {
+		return "", err
+	}
+	defer in.Close()
+	dir := filepath.Dir(dst)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return "", err
+	}
+	tmp, err := os.CreateTemp(dir, pkg+".*.tmp")
+	if err != nil {
+		return "", err
+	}
+	tmpName := tmp.Name()
+	cleanup := true
+	defer func() {
+		if cleanup {
+			_ = os.Remove(tmpName)
+		}
+	}()
+	if _, err := io.Copy(tmp, in); err != nil {
+		_ = tmp.Close()
+		return "", err
+	}
+	if err := tmp.Close(); err != nil {
+		return "", err
+	}
+	if err := os.Rename(tmpName, dst); err != nil {
+		return "", err
+	}
+	cleanup = false
+	return dst, nil
+}
+
+// RemoveManagedAPK deletes `<root>/apks/<pkg>.apk` if present, leaving any external
+// original APK file and saved Android app data untouched.
+func RemoveManagedAPK(root, pkg string) error {
+	dst, err := ManagedAPKPath(root, pkg)
+	if err != nil {
+		return err
+	}
+	if err := os.Remove(dst); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return nil
+}
+
 // ClearAppData removes pkg's saved Android data folder under root.
 // Side effects: deletes `<root>/android/data/data/<pkg>` when pkg is a safe package name.
 func ClearAppData(root, pkg string) error {
-	if pkg == "" || strings.ContainsAny(pkg, `/\:`) || strings.Contains(pkg, "..") {
+	if !validPackage(pkg) {
 		return errors.New("winapk: invalid package name")
 	}
 	return os.RemoveAll(AppDataDir(root, pkg))
 }
 
-// ClearAppArtifacts removes both saved data and converted code for pkg when removing an app.
+// ClearAppArtifacts removes saved data, converted code and the managed APK copy for pkg.
 func ClearAppArtifacts(root, pkg string) error {
 	if err := ClearAppData(root, pkg); err != nil {
+		return err
+	}
+	if err := RemoveManagedAPK(root, pkg); err != nil {
 		return err
 	}
 	if root == "" {
@@ -128,7 +212,7 @@ func ClearConvertedCode(root string) error {
 	return os.MkdirAll(code, 0o700)
 }
 
-// MoveDataDir migrates `android`, `code` and `logs` from src to dst when no apps are running.
+// MoveDataDir migrates `android`, `apks`, `code` and `logs` from src to dst when no apps are running.
 // Side effects: copies across volumes when os.Rename cannot move directly, then removes src's moved subtrees.
 func MoveDataDir(src, dst string) error {
 	if src == "" {
@@ -145,7 +229,7 @@ func MoveDataDir(src, dst string) error {
 	if err := os.MkdirAll(dstClean, 0o700); err != nil {
 		return err
 	}
-	for _, sub := range []string{"android", "code", "logs"} {
+	for _, sub := range []string{"android", "apks", "code", "logs"} {
 		from := filepath.Join(srcClean, sub)
 		if _, err := os.Stat(from); errors.Is(err, os.ErrNotExist) {
 			continue

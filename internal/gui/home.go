@@ -348,7 +348,7 @@ func (a *App) rowMenu(m *ui.Menu, e *entry) {
 	}
 	m.Separator()
 	if m.Item(L.RemoveFromLibrary()).Icon(miTrash).Danger().Chosen() {
-		a.confirm = confirmState{open: true, kind: confirmRemove, id: e.ID}
+		a.openRemoveConfirm(e.ID)
 	}
 }
 

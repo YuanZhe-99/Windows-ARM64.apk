@@ -47,6 +47,8 @@ type App struct {
 
 	// missing are the library's APK files not found at the last check.
 	missing  map[string]bool
+	staging  map[string]stageJob
+	stageSeq map[string]uint64
 	report   winapk.Report
 	checked  time.Time
 	checking bool
@@ -80,6 +82,12 @@ type App struct {
 	checkedUpdate  bool
 	appUpdate      *mygo.Update
 	appUpdateBusy  bool
+}
+
+// stageJob tracks one background CopyAPK operation for an entry ID.
+type stageJob struct {
+	seq  uint64
+	done chan struct{}
 }
 
 // docViewState displays a local license or third-party notice file in a sheet.
@@ -219,6 +227,7 @@ func New(rt winapk.Client, dir string, demo bool) *App {
 	a := &App{
 		rt: rt, dir: dir, demo: demo, ctx: ctx, cancel: cancel,
 		open: map[string]*session{}, runs: map[string][]*session{},
+		staging: map[string]stageJob{}, stageSeq: map[string]uint64{},
 		sizes: map[string]size{}, appDataBytes: map[string]int64{},
 	}
 	a.later = a.onMain
@@ -381,22 +390,68 @@ func (a *App) Start() { a.check() }
 // Stop ends the background work.
 func (a *App) Stop() { a.cancel() }
 
-// check runs the runtime's doctor and shows its report.
+// check runs the runtime's doctor, migrates readable external APKs into AppData
+// storage, and refreshes missing-file state.
 func (a *App) check() {
 	if a.checking {
 		return
 	}
 	a.checking = true
 	home := a.prefs.JavaHome
-	var paths []string
+	demo := a.demo
+	dataDir := a.appDataDir()
+	type checkItem struct {
+		id, pkg, path string
+		staging       bool
+	}
+	items := make([]checkItem, 0, len(a.library))
 	for _, e := range a.library {
-		paths = append(paths, e.APK.Path)
+		_, st := a.staging[e.ID]
+		items = append(items, checkItem{id: e.ID, pkg: e.APK.Package, path: e.APK.Path, staging: st})
 	}
 	a.async(func() {
 		r, err := a.rt.Doctor(a.ctx, home)
+		migrated := map[string]string{}
+		paths := make([]string, 0, len(items))
+		for _, it := range items {
+			if it.staging {
+				continue
+			}
+			p := it.path
+			if !demo && it.pkg != "" && p != "" && !strings.HasPrefix(p, "sample:") {
+				if managed, merr := winapk.ManagedAPKPath(dataDir, it.pkg); merr == nil && !samePath(p, managed) {
+					if _, serr := os.Stat(p); serr == nil {
+						if dst, cerr := winapk.CopyAPK(dataDir, it.pkg, p); cerr == nil {
+							migrated[it.id] = dst
+							p = dst
+						}
+					} else if _, merr2 := os.Stat(managed); merr2 == nil {
+						migrated[it.id] = managed
+						p = managed
+					}
+				}
+			}
+			paths = append(paths, p)
+		}
 		gone := missingFiles(paths)
 		a.later(func() {
 			a.checking = false
+			changed := false
+			for _, it := range items {
+				dst, ok := migrated[it.id]
+				if !ok {
+					continue
+				}
+				if e := a.entry(it.id); e != nil && e.APK.Path == it.path {
+					if _, st := a.staging[it.id]; !st {
+						e.APK.Path = dst
+						changed = true
+					}
+				}
+			}
+			if changed {
+				a.saveLibrary()
+			}
 			a.missing = gone
 			if err != nil {
 				a.report = winapk.Report{}
@@ -421,6 +476,68 @@ func (a *App) check() {
 			}
 		})
 	})
+}
+
+func samePath(a, b string) bool {
+	if a == "" || b == "" {
+		return false
+	}
+	return strings.EqualFold(filepath.Clean(a), filepath.Clean(b))
+}
+
+// stageAPK copies e's APK into `<AppData>\apks\<package>.apk` off the UI thread
+// so deleting or moving the original file does not break future launches.
+func (a *App) stageAPK(e *entry) chan struct{} {
+	if a.demo || e == nil || e.APK.Package == "" || e.APK.Path == "" || strings.HasPrefix(e.APK.Path, "sample:") {
+		return nil
+	}
+	dataDir := a.appDataDir()
+	managed, err := winapk.ManagedAPKPath(dataDir, e.APK.Package)
+	if err != nil {
+		return nil
+	}
+	srcPath := e.APK.Path
+	if cur, ok := a.staging[e.ID]; !ok || cur.done == nil {
+		if samePath(srcPath, managed) {
+			return nil
+		}
+	}
+	id := e.ID
+	pkg := e.APK.Package
+	prev := a.staging[id].done
+	a.stageSeq[id]++
+	seq := a.stageSeq[id]
+	ch := make(chan struct{})
+	a.staging[id] = stageJob{seq: seq, done: ch}
+	a.async(func() {
+		defer close(ch)
+		if prev != nil {
+			<-prev
+		}
+		dst, err := winapk.CopyAPK(dataDir, pkg, srcPath)
+		a.later(func() {
+			if cur, ok := a.staging[id]; ok && cur.seq == seq {
+				delete(a.staging, id)
+			}
+			en := a.entry(id)
+			if en == nil {
+				if a.stageSeq[id] == seq {
+					_ = winapk.RemoveManagedAPK(dataDir, pkg)
+				}
+				return
+			}
+			if err != nil {
+				return
+			}
+			if a.stageSeq[id] == seq && en.APK.Path == srcPath {
+				en.APK.Path = dst
+				delete(a.missing, srcPath)
+				a.saveLibrary()
+				a.refreshStorage()
+			}
+		})
+	})
+	return ch
 }
 
 // missingFiles are the APK files of paths no longer where they were; the
@@ -489,7 +606,6 @@ func (a *App) launch(e *entry, inWindow, beside bool) {
 	if gfx == "" {
 		gfx = "auto"
 	}
-	sw, sh := screenSize(e, false, size{360, 720})
 	s := &session{
 		id: e.ID, state: winapk.State{Phase: winapk.Starting}, started: time.Now(),
 		native: e.Native, profile: a.profile(e), reqGfx: gfx,
@@ -499,23 +615,71 @@ func (a *App) launch(e *entry, inWindow, beside bool) {
 	if len(a.runs[e.ID]) > maxRuns {
 		a.runs[e.ID] = a.runs[e.ID][:maxRuns]
 	}
+	a.details.open = false
+	if inWindow {
+		a.newAppWindow(s)
+	} else {
+		a.showTab(appTab(e.ID), beside)
+	}
+	waitCh := a.staging[e.ID].done
+	if waitCh == nil {
+		waitCh = a.stageAPK(e)
+	}
+	if waitCh == nil {
+		a.startRuntime(e, s)
+		return
+	}
+	id := e.ID
+	a.async(func() {
+		select {
+		case <-waitCh:
+		case <-a.ctx.Done():
+			return
+		}
+		a.later(func() {
+			if a.open[id] != s {
+				return
+			}
+			cur := a.entry(id)
+			if cur == nil {
+				return
+			}
+			a.startRuntime(cur, s)
+		})
+	})
+}
+
+func (a *App) startRuntime(e *entry, s *session) {
+	id := e.ID
+	if !a.demo && e.APK.Path != "" && !strings.HasPrefix(e.APK.Path, "sample:") {
+		if _, err := os.Stat(e.APK.Path); err != nil {
+			if a.missing == nil {
+				a.missing = map[string]bool{}
+			}
+			a.missing[e.APK.Path] = true
+			a.closeApp(id)
+			a.locate(e)
+			return
+		}
+	}
+	sw, sh := screenSize(e, false, size{360, 720})
 	var dataDir string
 	if !a.demo {
 		dataDir = a.appDataDir()
 	}
 	spec := winapk.LaunchSpec{
 		Path: e.APK.Path, JavaHome: a.prefs.JavaHome, DataDir: dataDir,
-		Native: e.Native, Graphics: gfx, Width: int(sw), Height: int(sh), Window: inWindow,
+		Native: e.Native, Graphics: s.reqGfx, Width: int(sw), Height: int(sh), Window: s.win != nil,
 	}
 	if e.Native == winapk.NativeRestricted {
 		spec.Profile = a.profile(e)
 	}
-	id := e.ID
 	proc, err := a.rt.Launch(spec, func(st winapk.State) {
 		a.later(func() { a.setState(id, s, st) })
 	})
 	if err != nil {
-		s.state = winapk.State{Phase: winapk.Failed, Category: "DEPENDENCY_MISSING", Log: []string{err.Error()}}
+		st := winapk.State{Phase: winapk.Failed, Category: "DEPENDENCY_MISSING", Log: []string{err.Error()}}
+		a.setState(id, s, st)
 	} else if proc != nil {
 		proc.SetFrameHandler(func(rgba *image.RGBA) {
 			a.later(func() {
@@ -526,12 +690,6 @@ func (a *App) launch(e *entry, inWindow, beside bool) {
 		})
 	}
 	s.proc = proc
-	a.details.open = false
-	if inWindow {
-		a.newAppWindow(s)
-		return
-	}
-	a.showTab(appTab(id), beside)
 }
 
 // setState keeps a process's new state; a start that failed stays on its
@@ -646,11 +804,49 @@ func (a *App) toPane(id string) {
 	a.Focus()
 }
 
-// removeEntry takes an app out of the library, closing it first.
-func (a *App) removeEntry(id string) {
+// removeEntry stops an app, removes it from the library and deletes its
+// managed APK copy in AppData; when keepData is false it also clears all saved
+// app data and converted code for that package.
+func (a *App) removeEntry(id string, keepData bool) {
+	e := a.entry(id)
+	if e == nil {
+		return
+	}
+	pkg := e.APK.Package
+	apkPath := e.APK.Path
+	demo := a.demo
+	dataDir := a.appDataDir()
+	hadLiveProc := a.open[id] != nil && a.open[id].live()
+	waitStage := a.staging[id].done
+	a.stageSeq[id]++
+	delete(a.staging, id)
+
 	a.closeApp(id)
-	a.library = slices.DeleteFunc(a.library, func(e *entry) bool { return e.ID == id })
+	a.library = slices.DeleteFunc(a.library, func(x *entry) bool { return x.ID == id })
+	delete(a.missing, apkPath)
 	a.saveLibrary()
+	if !keepData {
+		delete(a.appDataBytes, id)
+	}
+	if !demo && pkg != "" {
+		a.async(func() {
+			if waitStage != nil {
+				<-waitStage
+			}
+			cleanup := func() error {
+				if keepData {
+					return winapk.RemoveManagedAPK(dataDir, pkg)
+				}
+				return winapk.ClearAppArtifacts(dataDir, pkg)
+			}
+			err := cleanup()
+			for i := 0; err != nil && hadLiveProc && i < 20; i++ {
+				time.Sleep(100 * time.Millisecond)
+				err = cleanup()
+			}
+			a.later(func() { a.refreshStorage() })
+		})
+	}
 }
 
 // openPath opens a folder in Explorer.
@@ -679,5 +875,5 @@ func (a *App) appDataDir() string {
 	if a.prefs.AppData != "" {
 		return a.prefs.AppData
 	}
-	return filepath.Join(os.Getenv("LOCALAPPDATA"), "Windows-ARM64.apk", "Apps")
+	return winapk.DefaultDataDir()
 }

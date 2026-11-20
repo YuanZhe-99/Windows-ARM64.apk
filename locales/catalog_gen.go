@@ -2136,11 +2136,11 @@ func (msgs Messages) RemoveTitle(app string) string {
 	return Catalog.Format(msgs.locale, "RemoveTitle", map[string]any{"app": app})
 }
 
-// RemoveBody says "It stops if it's open and leaves the library. The APK file stays where it is."
+// RemoveBody says "It stops if it's open, leaves the library, and deletes the APK copy saved by Windows-ARM64.apk. Your original APK fil…"
 // in the language the app shows.
 func RemoveBody() string { return In(i18n.Locale()).RemoveBody() }
 
-// RemoveBody says "It stops if it's open and leaves the library. The APK file stays where it is."
+// RemoveBody says "It stops if it's open, leaves the library, and deletes the APK copy saved by Windows-ARM64.apk. Your original APK fil…"
 // in the language of msgs.
 func (msgs Messages) RemoveBody() string {
 	return Catalog.Format(msgs.locale, "RemoveBody", nil)
@@ -4084,4 +4084,74 @@ func SwitchProfileN2Retry() string { return In(i18n.Locale()).SwitchProfileN2Ret
 // in the language of msgs.
 func (msgs Messages) SwitchProfileN2Retry() string {
 	return Catalog.Format(msgs.locale, "SwitchProfileN2Retry", nil)
+}
+
+// RemoveKeepData says "Keep app data (remove APK only)"
+// in the language the app shows.
+func RemoveKeepData() string { return In(i18n.Locale()).RemoveKeepData() }
+
+// RemoveKeepData says "Keep app data (remove APK only)"
+// in the language of msgs.
+func (msgs Messages) RemoveKeepData() string {
+	return Catalog.Format(msgs.locale, "RemoveKeepData", nil)
+}
+
+// RemoveKeepDataHint says "Keeps this app's saved data on your PC. Reinstalling the same APK later brings your data back."
+// in the language the app shows.
+func RemoveKeepDataHint() string { return In(i18n.Locale()).RemoveKeepDataHint() }
+
+// RemoveKeepDataHint says "Keeps this app's saved data on your PC. Reinstalling the same APK later brings your data back."
+// in the language of msgs.
+func (msgs Messages) RemoveKeepDataHint() string {
+	return Catalog.Format(msgs.locale, "RemoveKeepDataHint", nil)
+}
+
+// RemoveDeleteData says "Delete APK and all app data"
+// in the language the app shows.
+func RemoveDeleteData() string { return In(i18n.Locale()).RemoveDeleteData() }
+
+// RemoveDeleteData says "Delete APK and all app data"
+// in the language of msgs.
+func (msgs Messages) RemoveDeleteData() string {
+	return Catalog.Format(msgs.locale, "RemoveDeleteData", nil)
+}
+
+// RemoveDeleteDataHint says "Also permanently deletes this app's saved data ({size}) and converted code. This can't be undone."
+// in the language the app shows.
+func RemoveDeleteDataHint(size string) string { return In(i18n.Locale()).RemoveDeleteDataHint(size) }
+
+// RemoveDeleteDataHint says "Also permanently deletes this app's saved data ({size}) and converted code. This can't be undone."
+// in the language of msgs.
+func (msgs Messages) RemoveDeleteDataHint(size string) string {
+	return Catalog.Format(msgs.locale, "RemoveDeleteDataHint", map[string]any{"size": size})
+}
+
+// RemoveDeleteDataHintEmpty says "Also permanently deletes any saved data and converted code for this app. This can't be undone."
+// in the language the app shows.
+func RemoveDeleteDataHintEmpty() string { return In(i18n.Locale()).RemoveDeleteDataHintEmpty() }
+
+// RemoveDeleteDataHintEmpty says "Also permanently deletes any saved data and converted code for this app. This can't be undone."
+// in the language of msgs.
+func (msgs Messages) RemoveDeleteDataHintEmpty() string {
+	return Catalog.Format(msgs.locale, "RemoveDeleteDataHintEmpty", nil)
+}
+
+// RemoveAPKOnly says "Remove APK"
+// in the language the app shows.
+func RemoveAPKOnly() string { return In(i18n.Locale()).RemoveAPKOnly() }
+
+// RemoveAPKOnly says "Remove APK"
+// in the language of msgs.
+func (msgs Messages) RemoveAPKOnly() string {
+	return Catalog.Format(msgs.locale, "RemoveAPKOnly", nil)
+}
+
+// RemoveAndDeleteData says "Delete APK & data"
+// in the language the app shows.
+func RemoveAndDeleteData() string { return In(i18n.Locale()).RemoveAndDeleteData() }
+
+// RemoveAndDeleteData says "Delete APK & data"
+// in the language of msgs.
+func (msgs Messages) RemoveAndDeleteData() string {
+	return Catalog.Format(msgs.locale, "RemoveAndDeleteData", nil)
 }
