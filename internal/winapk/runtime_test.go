@@ -321,4 +321,89 @@ func TestRealRuntimeEmbed(t *testing.T) {
 		_ = vp.Stop()
 		<-vkDone
 	}
+
+	// GPU-P6: verify live pane <-> standalone `Reattach` and landscape rotation `Resize`
+	// on both `d3d11` and `vulkan` GPU backends without restarting the runtime process.
+	javaGlesApk := filepath.Join("..", "..", "tests", "fixtures", "hello-gles.apk")
+	if _, err := os.Stat(javaGlesApk); err == nil && rep.Machine.AngleArm64 {
+		for _, backend := range []string{"d3d11", "vulkan"} {
+			if backend == "vulkan" && (rep.Machine.VulkanLoader != "available" || !rep.Machine.Win32Surface) {
+				continue
+			}
+			portraitMatched := make(chan struct{}, 1)
+			landscapeMatched := make(chan struct{}, 1)
+			done := make(chan State, 1)
+			p, err := rt.Launch(LaunchSpec{
+				Path:     javaGlesApk,
+				DataDir:  t.TempDir(),
+				Native:   NativeOff,
+				Graphics: backend,
+				Width:    360,
+				Height:   720,
+			}, func(s State) {
+				if s.Phase == Stopped || s.Phase == Failed {
+					select {
+					case done <- s:
+					default:
+					}
+				}
+			})
+			if err != nil {
+				t.Fatalf("Launch hello-gles (%s): %v", backend, err)
+			}
+			p.SetFrameHandler(func(img *image.RGBA) {
+				w, h := img.Rect.Dx(), img.Rect.Dy()
+				left := img.RGBAAt(w/4, h/2)
+				right := img.RGBAAt(3*w/4, h/2)
+				// `hello-gles` clears left half to (64, 128, 191) and right half to (191, 64, 128).
+				if absDiff(int(left.R), 64) <= 6 && absDiff(int(left.G), 128) <= 6 && absDiff(int(left.B), 191) <= 6 &&
+					absDiff(int(right.R), 191) <= 6 && absDiff(int(right.G), 64) <= 6 && absDiff(int(right.B), 128) <= 6 {
+					if w == 360 && h == 720 {
+						select {
+						case portraitMatched <- struct{}{}:
+						default:
+						}
+					} else if w == 720 && h == 360 {
+						select {
+						case landscapeMatched <- struct{}{}:
+						default:
+						}
+					}
+				}
+			})
+			timer := time.NewTimer(15 * time.Second)
+			select {
+			case <-portraitMatched:
+			case st := <-done:
+				timer.Stop()
+				t.Fatalf("hello-gles (%s) ended before portrait frame: %s (%s)", backend, st.Phase, st.Category)
+			case <-timer.C:
+				_ = p.Kill()
+				t.Fatalf("hello-gles (%s) timed out waiting for portrait frame", backend)
+			}
+			timer.Stop()
+
+			if !p.Reattach(true) || !p.Reattach(false) {
+				_ = p.Kill()
+				t.Fatalf("hello-gles (%s) Reattach roundtrip failed", backend)
+			}
+			if err := p.Resize(720, 360); err != nil {
+				_ = p.Kill()
+				t.Fatalf("hello-gles (%s) Resize(720,360): %v", backend, err)
+			}
+			rotTimer := time.NewTimer(10 * time.Second)
+			select {
+			case <-landscapeMatched:
+			case st := <-done:
+				rotTimer.Stop()
+				t.Fatalf("hello-gles (%s) ended during rotation: %s (%s)", backend, st.Phase, st.Category)
+			case <-rotTimer.C:
+				_ = p.Kill()
+				t.Fatalf("hello-gles (%s) timed out waiting for rotated 720x360 frame", backend)
+			}
+			rotTimer.Stop()
+			_ = p.Stop()
+			<-done
+		}
+	}
 }

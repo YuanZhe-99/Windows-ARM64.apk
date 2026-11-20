@@ -18,6 +18,8 @@ param(
     [int]$LaunchCount = 20,
     [int]$ResizeMinimizeCycles = 100,
     [int]$EnduranceSeconds = 60,
+    [int]$GpuCycles = 30,
+    [int]$GpuEnduranceSeconds = 15,
     [string]$ReportPath = ''
 )
 Set-StrictMode -Version Latest
@@ -244,6 +246,101 @@ try {
 
 $frameP50 = Get-Percentile $frameIntervals.ToArray() 0.50
 $frameP95 = Get-Percentile $frameIntervals.ToArray() 0.95
+
+# 3. GPU dual-backend (D3D11 + Vulkan) resize/rotation + minimize/restore + endurance gate (GPU-P6)
+$glesApk = Join-Path $repo 'tests\fixtures\hello-gles.apk'
+$doctorJson = & $WinApkExe doctor --json | ConvertFrom-Json
+$gpuReports = [ordered]@{}
+
+if (Test-Path -LiteralPath $glesApk) {
+    $gpuBackends = @('d3d11')
+    if ($doctorJson.graphics.vulkanLoader -eq 'available' -and $doctorJson.graphics.win32SurfaceExtension) {
+        $gpuBackends += 'vulkan'
+    }
+    foreach ($backend in $gpuBackends) {
+        $gpuData = Join-Path $work "gpu-$backend-data"
+        $gpuLog = Join-Path $work "gpu-$backend.log"
+        $effGpuEndurance = if ($EnduranceSeconds -ge 1800) { 1800 } else { $GpuEnduranceSeconds }
+        Write-Step "T14.gpu.${backend}: running $GpuCycles resize/rotation/minimize cycles + ${effGpuEndurance}s GPU endurance"
+
+        $gp = Start-Process -FilePath $WinApkExe -ArgumentList @(
+            'run', "`"$glesApk`"", '--native=off', "--graphics=$backend",
+            '--data-dir', "`"$gpuData`"", '--java-home', "`"$jdk`"", '--size', '360x720'
+        ) -RedirectStandardError $gpuLog -RedirectStandardOutput "$gpuLog.out" -PassThru -NoNewWindow
+
+        $gWarmCommit = 0L; $gFinalCommit = 0L; $gWarmHandles = 0; $gFinalHandles = 0
+        $gOk = $false
+        try {
+            $gh = Find-WindowByPid $gp.Id 'Hello GLES' 30 $gp
+            $gFirst = Wait-LogMatch $gpuLog 'T10\.java: PASS frame=1 contexts=1' 30 $gp
+            if ($gh -ne [IntPtr]::Zero -and $gFirst) {
+                for ($w = 0; $w -lt 6; $w++) {
+                    $portrait = ($w % 2) -eq 0
+                    $cw = if ($portrait) { 380 } else { 720 }
+                    $ch = if ($portrait) { 740 } else { 380 }
+                    [void][WinApkStabWin]::SetWindowPos($gh, [IntPtr]::Zero, 0, 0, $cw, $ch, 0x0016)
+                    Start-Sleep -Milliseconds 35
+                }
+                $gp.Refresh()
+                $gWarmCommit = [long]($gp.PrivateMemorySize64 / 1KB)
+                $gWarmHandles = $gp.HandleCount
+
+                $gLoopOk = $true
+                for ($c = 0; $c -lt $GpuCycles; $c++) {
+                    if ($gp.HasExited) { $gLoopOk = $false; break }
+                    $rot = ($c % 3) -eq 0
+                    $cw = if ($rot) { 700 + ($c % 4) * 16 } else { 360 + ($c % 4) * 20 }
+                    $ch = if ($rot) { 380 + ($c % 3) * 16 } else { 700 + ($c % 3) * 20 }
+                    [void][WinApkStabWin]::SetWindowPos($gh, [IntPtr]::Zero, 0, 0, $cw, $ch, 0x0016)
+                    if (($c % 6) -eq 0) {
+                        [void][WinApkStabWin]::PostMessageW($gh, 0x0112, [IntPtr]0xF020, [IntPtr]0)
+                        Start-Sleep -Milliseconds 25
+                        [void][WinApkStabWin]::PostMessageW($gh, 0x0112, [IntPtr]0xF120, [IntPtr]0)
+                    }
+                    Start-Sleep -Milliseconds 25
+                }
+
+                $gEndSw = [Diagnostics.Stopwatch]::StartNew()
+                $gtick = 0
+                while ($gEndSw.Elapsed.TotalSeconds -lt $effGpuEndurance) {
+                    if ($gp.HasExited) { $gLoopOk = $false; break }
+                    $cw = 380 + (($gtick % 2) * 16)
+                    $ch = 720 + (($gtick % 2) * 16)
+                    [void][WinApkStabWin]::SetWindowPos($gh, [IntPtr]::Zero, 0, 0, $cw, $ch, 0x0016)
+                    $gtick++
+                    Start-Sleep -Milliseconds 250
+                }
+
+                $gp.Refresh()
+                $gFinalCommit = [long]($gp.PrivateMemorySize64 / 1KB)
+                $gFinalHandles = $gp.HandleCount
+                [void][WinApkStabWin]::PostMessageW($gh, 0x0010, [IntPtr]::Zero, [IntPtr]::Zero)
+                $gClean = $gp.WaitForExit(15000) -and ($gp.ExitCode -eq 0)
+                $gTxt = Read-SharedLog $gpuLog
+                $gCommitDelta = $gFinalCommit - $gWarmCommit
+                $gHandleDelta = $gFinalHandles - $gWarmHandles
+                $gOk = $gLoopOk -and $gClean -and ($gCommitDelta -lt 131072) -and ($gHandleDelta -lt 300) -and
+                    ($gTxt -notmatch 'GRAPHICS_RENDER_FAILED|FATAL ERROR in native method')
+                Check-Stab "T14.gpu.$backend" $gOk "cycles=$GpuCycles endurance=${effGpuEndurance}s commit=${gWarmCommit}->${gFinalCommit}KB (delta=${gCommitDelta}KB) handles=${gWarmHandles}->${gFinalHandles} cleanExit=$gClean"
+                $gpuReports[$backend] = [ordered]@{
+                    cycles = $GpuCycles
+                    enduranceSeconds = $effGpuEndurance
+                    warmupCommitKB = $gWarmCommit
+                    finalCommitKB = $gFinalCommit
+                    warmupHandles = $gWarmHandles
+                    finalHandles = $gFinalHandles
+                    passed = $gOk
+                }
+            } else {
+                Check-Stab "T14.gpu.$backend" $false 'GPU window or initial frame did not appear'
+            }
+        } finally {
+            if (-not $gp.HasExited) { $gp.Kill(); $gp.WaitForExit() }
+            $gp.Dispose()
+        }
+    }
+}
+
 $report = [ordered]@{
     timestampUtc = [DateTime]::UtcNow.ToString('o')
     winapk = $WinApkExe
@@ -265,6 +362,7 @@ $report = [ordered]@{
         warmup = [ordered]@{ rssKB = $warmupRssKB; commitKB = $warmupCommitKB; handles = $warmupHandles; threads = $warmupThreads }
         final = [ordered]@{ rssKB = $finalRssKB; commitKB = $finalCommitKB; handles = $finalHandles; threads = $finalThreads }
     }
+    gpu = $gpuReports
     samples = $samples
     passed = ($failed -eq 0)
 }

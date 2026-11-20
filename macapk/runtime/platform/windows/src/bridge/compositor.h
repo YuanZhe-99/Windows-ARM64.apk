@@ -61,6 +61,16 @@ bool CompositorSubmitSurfaceSharedTexture(HWND hwnd, int layerKey, HANDLE dxgiSh
                                           int w, int h, LayerAlpha alpha, bool bottomUp,
                                           const SurfaceLayerPlacement& placement);
 
+/// Submits or updates a `SurfaceView` / Skia D3D12 layer by zero-copy GPU copy from a DXGI NT
+/// shared handle (`ID3D12Device::CreateSharedHandle` opened via `ID3D11Device1::OpenSharedResource1`).
+bool CompositorSubmitSurfaceSharedNtHandle(HWND hwnd, int layerKey, HANDLE ntSharedHandle,
+                                           int w, int h, LayerAlpha alpha, bool bottomUp,
+                                           const SurfaceLayerPlacement& placement);
+
+/// Composites `hwnd`'s active layer stack into an offscreen `w`×`h` RGBA8 target and reads back
+/// top-down `0xAABBGGRR` bytes (`w * h * 4`) for headless interop verification (`T15`).
+bool CompositorReadbackRgba(HWND hwnd, uint8_t* dstRgba, int w, int h);
+
 /// Updates placement/visibility of an existing `SurfaceView` layer, or removes it when `drop`.
 void CompositorUpdateSurfacePlacement(HWND hwnd, int layerKey, const SurfaceLayerPlacement& placement, bool drop);
 

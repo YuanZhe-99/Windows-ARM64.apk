@@ -173,5 +173,12 @@ System32 `vulkan-1.dll` 暴露 290+ 个 Vulkan 1.0–1.3 核心、晋升及 KHR/
 `DirectContextKt._nMakeDirect3D` 接入 Skiko `0.150.2`（`skiko-windows-arm64.dll`，`ARM64` PE）。
 `MacApkSkia` 保持 Java2D Canvas + GPU 着色器/滤镜 + 显式直通 alpha 回读的分工（`PLAN.md` §15），在本机报告
 `Direct3D12: Qualcomm(R) Adreno(TM) 8cx Gen 3`，并通过 `AgslSmokeWindows`（`T15`，`test.ps1 -Suite Agsl`）
-的全部 11 项像素契约。当 `skiko-windows-arm64.dll` 或 Direct3D 12 不可用（`WINAPK_DISABLE_SKIA=1`）时，
-`MacApkSkia.ensureLoaded()` 显式抛出 `GRAPHICS_CAPABILITY_MISSING`，绝不静默回退为无效果的 CPU 渲染。
+的全部 11 项像素契约。此外，`NativeSkiaD3D12.presentSharedLayer` 与 `CompositorSubmitSurfaceSharedNtHandle`
+（`compositor.cpp`，GPU-P6）通过 DXGI NT 共享句柄（`D3D12_HEAP_FLAG_SHARED` + `ID3D12Device::CreateSharedHandle` →
+`ID3D11Device1::OpenSharedResource1`）将 Skia Direct3D 12 渲染结果直接接入 `WinApkCompositor`，并由
+`AgslSmokeWindows` 端到端回读验证；`NativeCocoa.presentFrame`（`window.cpp`）按行对比脏矩形边界，自动跳过未变化帧
+（`PRESENT_ELIDED_IDENTICAL`）并仅向 D3D11 提交实际变化子区域。`TestRealRuntimeEmbed` 与 `test.ps1 -Suite Stability`
+（`T14.gpu.d3d11`、`T14.gpu.vulkan`）对 `d3d11` 与 `vulkan` 双后端同时验证窗格 ↔ 独立窗口热切换（`Reattach`）、
+竖屏 ↔ 横屏动态旋转缩放（`Resize`）、最小化/恢复循环及预热后内存/句柄平稳性。当 `skiko-windows-arm64.dll` 或
+Direct3D 12 不可用（`WINAPK_DISABLE_SKIA=1`）时，`MacApkSkia.ensureLoaded()` 显式抛出
+`GRAPHICS_CAPABILITY_MISSING`，绝不静默回退为无效果的 CPU 渲染。

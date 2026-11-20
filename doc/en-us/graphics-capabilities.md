@@ -199,6 +199,15 @@ software WARP adapters by default) and binds Skiko `0.150.2` (`skiko-windows-arm
 PE) via `DirectContextKt._nMakeDirect3D`. `MacApkSkia` retains the Java2D Canvas + GPU shader /
 filter + explicit straight-alpha readback architecture (`PLAN.md` §15), reporting
 `Direct3D12: Qualcomm(R) Adreno(TM) 8cx Gen 3` and passing all 11 pixel contracts of
-`AgslSmokeWindows` (`T15`, `test.ps1 -Suite Agsl`). When `skiko-windows-arm64.dll` or Direct3D 12
-is unavailable (`WINAPK_DISABLE_SKIA=1`), `MacApkSkia.ensureLoaded()` fails explicitly with
-`GRAPHICS_CAPABILITY_MISSING` and never falls back silently to unfiltered CPU rendering.
+`AgslSmokeWindows` (`T15`, `test.ps1 -Suite Agsl`). In addition, `NativeSkiaD3D12.presentSharedLayer`
+and `CompositorSubmitSurfaceSharedNtHandle` (`compositor.cpp`, GPU-P6) connect Skia's Direct3D 12
+surfaces to `WinApkCompositor` across a DXGI NT shared handle (`D3D12_HEAP_FLAG_SHARED` +
+`ID3D12Device::CreateSharedHandle` → `ID3D11Device1::OpenSharedResource1`), verified end-to-end in
+`AgslSmokeWindows`, while `NativeCocoa.presentFrame` (`window.cpp`) diffs dirty bounds row-by-row,
+elides unchanged frames (`PRESENT_ELIDED_IDENTICAL`), and uploads only the changed sub-box to D3D11.
+`TestRealRuntimeEmbed` and `test.ps1 -Suite Stability` (`T14.gpu.d3d11`, `T14.gpu.vulkan`) verify
+live pane ↔ standalone `Reattach`, portrait ↔ landscape `Resize`, minimize/restore cycles and flat
+post-warmup commit/handle counts across both `d3d11` and `vulkan` backends. When
+`skiko-windows-arm64.dll` or Direct3D 12 is unavailable (`WINAPK_DISABLE_SKIA=1`),
+`MacApkSkia.ensureLoaded()` fails explicitly with `GRAPHICS_CAPABILITY_MISSING` and never falls back
+silently to unfiltered CPU rendering.

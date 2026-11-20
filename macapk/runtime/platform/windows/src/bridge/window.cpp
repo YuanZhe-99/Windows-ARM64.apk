@@ -32,6 +32,7 @@
 #include <shellscalingapi.h>
 #include <windowsx.h>
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
@@ -1070,8 +1071,9 @@ void JNICALL PresentBitmap(JNIEnv* env, jclass, jintArray argb, jint w, jint h) 
     if (targetHwnd) InvalidateRect(targetHwnd, nullptr, FALSE);
 }
 
-/// Dirty-rect UI frame present (`NativeCocoa.presentFrame`), forwarding changed sub-rectangles
-/// directly to `WinApkCompositor` when dimensions match.
+/// Dirty-rect UI frame present (`NativeCocoa.presentFrame`), diffing `[left, top, right, bottom)`
+/// against `v->pixels`, eliding identical frames (`PRESENT_ELIDED_IDENTICAL = 2`), and uploading
+/// only the tight changed bounding box to `WinApkCompositor`.
 jint JNICALL PresentFrame(JNIEnv* env, jclass, jintArray argb, jint w, jint h,
                           jint left, jint top, jint right, jint bottom, jint flags) {
     View* v = g_current;
@@ -1080,24 +1082,64 @@ jint JNICALL PresentFrame(JNIEnv* env, jclass, jintArray argb, jint w, jint h,
     for (auto& [hwnd, win] : g_windows) if (win->content == v) { targetHwnd = hwnd; break; }
 
     const bool forceFull = (flags & 1) != 0;
+    bool elided = false;
     {
         std::lock_guard<std::mutex> lock(v->mu);
         const bool sameSize = v->frameW == w && v->frameH == h && v->pixels.size() == static_cast<size_t>(w) * h;
-        v->pixels.resize(static_cast<size_t>(w) * h);
-        env->GetIntArrayRegion(argb, 0, w * h, reinterpret_cast<jint*>(v->pixels.data()));
-        v->frameW = w;
-        v->frameH = h;
+        int dx = 0, dy = 0, dw = 0, dh = 0;
 
-        const int dx = (!forceFull && sameSize) ? std::max<int>(0, left) : 0;
-        const int dy = (!forceFull && sameSize) ? std::max<int>(0, top) : 0;
-        const int dw = (!forceFull && sameSize && right > dx) ? std::min<int>(w, right) - dx : 0;
-        const int dh = (!forceFull && sameSize && bottom > dy) ? std::min<int>(h, bottom) - dy : 0;
-        const bool composited = targetHwnd && CompositorSubmitUiArgb(targetHwnd, v->pixels.data(), w, h, dx, dy, dw, dh);
-        if (IsEmbedded()) {
-            if (!GuestGraphicsActive() && !GuestVulkanOwnsWindow()) SendEmbedEvent("backend java2d");
-            if (!composited) PublishEmbedArgb(v->pixels.data(), w, h);
+        if (!sameSize || forceFull) {
+            v->pixels.resize(static_cast<size_t>(w) * h);
+            env->GetIntArrayRegion(argb, 0, w * h, reinterpret_cast<jint*>(v->pixels.data()));
+            v->frameW = w;
+            v->frameH = h;
+        } else {
+            const int bx0 = std::clamp<int>(left, 0, w);
+            const int by0 = std::clamp<int>(top, 0, h);
+            const int bx1 = std::clamp<int>(right, bx0, w);
+            const int by1 = std::clamp<int>(bottom, by0, h);
+            if (bx1 <= bx0 || by1 <= by0) {
+                elided = true;
+            } else {
+                const auto* incoming = static_cast<const uint32_t*>(env->GetPrimitiveArrayCritical(argb, nullptr));
+                if (!incoming) return 0;
+                int minX = bx1, minY = by1, maxX = bx0, maxY = by0;
+                for (int y = by0; y < by1; ++y) {
+                    const size_t rowOff = static_cast<size_t>(y) * static_cast<size_t>(w);
+                    const uint32_t* srcRow = incoming + rowOff;
+                    uint32_t* dstRow = v->pixels.data() + rowOff;
+                    if (std::memcmp(srcRow + bx0, dstRow + bx0, static_cast<size_t>(bx1 - bx0) * 4) == 0) continue;
+                    if (y < minY) minY = y;
+                    maxY = y + 1;
+                    int rowFirst = bx0;
+                    while (rowFirst < bx1 && srcRow[rowFirst] == dstRow[rowFirst]) ++rowFirst;
+                    int rowLast = bx1;
+                    while (rowLast > rowFirst && srcRow[rowLast - 1] == dstRow[rowLast - 1]) --rowLast;
+                    if (rowFirst < minX) minX = rowFirst;
+                    if (rowLast > maxX) maxX = rowLast;
+                    std::memcpy(dstRow + rowFirst, srcRow + rowFirst, static_cast<size_t>(rowLast - rowFirst) * 4);
+                }
+                env->ReleasePrimitiveArrayCritical(argb, const_cast<uint32_t*>(incoming), JNI_ABORT);
+                if (minX >= maxX || minY >= maxY) {
+                    elided = true;
+                } else {
+                    dx = minX;
+                    dy = minY;
+                    dw = maxX - minX;
+                    dh = maxY - minY;
+                }
+            }
+        }
+
+        if (!elided) {
+            const bool composited = targetHwnd && CompositorSubmitUiArgb(targetHwnd, v->pixels.data(), w, h, dx, dy, dw, dh);
+            if (IsEmbedded()) {
+                if (!GuestGraphicsActive() && !GuestVulkanOwnsWindow()) SendEmbedEvent("backend java2d");
+                if (!composited) PublishEmbedArgb(v->pixels.data(), w, h);
+            }
         }
     }
+    if (elided) return 2; // PRESENT_ELIDED_IDENTICAL
     if (targetHwnd) InvalidateRect(targetHwnd, nullptr, FALSE);
     return 1; // PRESENT_PUBLISHED
 }

@@ -738,5 +738,5 @@ P0 审计/锁定、Java MVP（G1）、N0 ELF/ABI（G2）及已声明 C/Bionic/JN
 - [x] 补齐 Bionic / ELF Loader：`STT_OBJECT` 数据符号 `dlsym`、`RTLD_DEFAULT`、`dladdr`、`dl_iterate_phdr`、虚拟句柄表 `epoll`/`eventfd`/`timerfd`/`pipe2`/Winsock2 套接字桥/`SYS_futex`、`pthread_cond_timedwait`/`rwlock`/`sem`、`__system_property_get/find`、`getauxval`、只读 `/system/etc/fonts.xml` + `/fonts/` 字体映射及 APK 内置 `arm64-v8a` C++ 运行时库加载隔离；通过 `EngineN2`（`T16`）套件及真实 Flutter + 视频类重度 GPU APK 的窗格与独立窗口完整交互渲染验收。
 
 ### GPU-P6：Skia D3D12 硬件画布协同与 30 分钟双后端 GPU 稳定性门禁
-- [ ] 打通 `NativeCocoa.presentFrame` 脏矩形增量提交与 Skia D3D12 ↔ `WinApkCompositor` DXGI 共享纹理合成。
-- [ ] 完成 D3D11 与 Vulkan 双后端的 30 分钟连续渲染、窗格↔独立窗口热切换（`Reattach`）、动态缩放/旋转与显存/句柄零泄漏门禁，同步中英双语文档。
+- [x] 打通 `NativeCocoa.presentFrame` 脏矩形增量提交（精确行区间对比与 `PRESENT_ELIDED_IDENTICAL` 空闲静默跳过）与 Skia D3D12 ↔ `WinApkCompositor` DXGI NT 共享纹理合成（`D3D12_HEAP_FLAG_SHARED` + `CreateSharedHandle` → `ID3D11Device1::OpenSharedResource1`）。
+- [x] 完成 D3D11 与 Vulkan 双后端的连续渲染、窗格↔独立窗口热切换（`Reattach`）、动态缩放/旋转与显存/句柄零泄漏门禁（`TestRealRuntimeEmbed` + `test-stability.ps1` `T14.gpu.d3d11`/`T14.gpu.vulkan`），同步中英双语文档。

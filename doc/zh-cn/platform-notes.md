@@ -2,7 +2,7 @@
 
 | 平台 | 状态 |
 |---|---|
-| Windows 11 ARM64 | G0–G3 在本机为已声明的 Java/N0/C/JNI profile 通过，包含真实 hello-jni Activity 矩阵及独立启用 CFG 的回归。原生默认关闭（强制执行 `--profile=N0|N1|N2`）。T14 通过 20 次冷/热启动、100 次 resize/最小化恢复循环与完整 30 分钟连续稳定性运行。P8 宿主服务（`NativeOs`、剪贴板、DirectWrite 中日韩字体、`/proc`、动态 DPI）、WASAPI `NativeAudio` 与 Skia Direct3D 12 AGSL/RenderEffect（`T15`，11/11）通过。T11 GLES 与 T13 Vulkan 图形管线/图像/回调/WSI/设备丢失夹具在本机 Adreno 8cx Gen 3 + Dozen 的声明范围内通过；厂商原生 Vulkan ICD 为 `BLOCKED`，`VK_LAYER_KHRONOS_validation` 仍为 `NOT_RUN`。MyGo 前端已按 `design/` 完成并接入 `winapk.Runtime`，配备一体化 ARM64 实验包、NSIS 安装包及 GitHub Actions `windows-11-arm` 持续集成/发布工作流。 |
+| Windows 11 ARM64 | G0–G3 在本机为已声明的 Java/N0/C/JNI profile 通过，包含真实 hello-jni Activity 矩阵、Profile N2 Bionic/NDK 引擎运行时（`T16`，`EngineN2`）及独立启用 CFG 的回归。原生默认关闭（强制执行 `--profile=N0|N1|N2`）。T14 通过 20 次冷/热启动、100 次 resize/最小化恢复循环、完整 30 分钟连续稳定性运行及双后端（`d3d11` + `vulkan`）GPU 缩放/旋转/连续运行检查（`T14.gpu.*`）。P8 宿主服务（`NativeOs`、剪贴板、DirectWrite 中日韩字体、`/proc`、动态 DPI）、WASAPI `NativeAudio` 与 Skia Direct3D 12 AGSL/RenderEffect + DXGI NT 共享句柄 `WinApkCompositor` 协同（`T15`）通过。完整 Java GLES 1.0–3.2 / EGL 1.4–1.5（`T10`）、多线程客体 EGL 1.5 / GLES 1.1–3.2（`T11`）、客体 Vulkan 1.0–1.3（`T13`）及真实 Flutter Impeller GPU APK 在窗格与独立窗口中的交互渲染均在本机 Adreno 8cx Gen 3 + Dozen 的声明范围内通过；厂商原生 Vulkan ICD 为 `BLOCKED`，`VK_LAYER_KHRONOS_validation` 仍为 `NOT_RUN`。MyGo 前端已按 `design/` 完成，配备专属 Fluent 品牌 Logo 并接入 `winapk.Runtime`，提供一体化 ARM64 实验包、NSIS 安装包及 GitHub Actions `windows-11-arm` 持续集成/发布工作流。 |
 | Windows 11 x64 | 不是目标平台；只可承载构建工具和解析测试。 |
 | macOS（Apple Silicon） | 上游 Mac.apk 的平台；已引入为 `macapk/`，当前在 `3f35611`；尚未在此运行 macOS 构建或 smoke（`NOT_RUN`）。 |
 
@@ -23,7 +23,7 @@
 | G2 原生路径 | `test.ps1 -Suite Native`：58 项检查 PASS（见下）；`native-probe.exe` 和 `capstone.dll` 为 ARM64 |
 | T01 宿主和 JVM | `test.ps1 -Suite Host`：23 项检查 PASS（2026-11-17）——`winapk.exe`、`winapk-bridge.dll`、`native-probe.exe`、`jni-probe.exe`、zlib、SQLite 和 Capstone 为 ARM64；`jvm.dll` 为 ARM64，在进程内以上游的模块选项创建 JVM；JNI 宿主 → Java → 宿主；Java2D；259 个字体族；补丁模块；以及负例（找不到 JVM、无效的 `--java-home`） |
 | Vulkan | ARM64 loader 可用；两个 Mesa Dozen 设备（基于 Direct3D 12 的 Vulkan 1.2）；`doctor --present`：Win32 surface 测试通过。没有厂商 Vulkan 驱动 |
-| 界面 | `go tool mygo vet .`、`go tool mygo i18n check`（395 条消息）与 `go tool mygo build`（`Windows-ARM64.apk.exe` ARM64 PE）通过；`design/` 的全部 17 张界面在 `ui.Tester` 中以两种语言和两种外观渲染；`TestRealRuntimeEmbed` 对真实 APK 验证 `--embed` 实时 RGBA8 帧传输、指针/resize/Back/Stop IPC 与零重启 `Reattach` |
+| 界面 | `go tool mygo vet .`、`go tool mygo i18n check`（403 条消息）与 `go tool mygo build`（`Windows-ARM64.apk.exe` ARM64 PE）通过；`design/` 的全部 17 张界面在 `ui.Tester` 中以两种语言和两种外观渲染；`TestRealRuntimeEmbed` 对真实 APK 跨 Java2D、GLES（`d3d11` 与 `vulkan`）和 Vulkan WSI 验证 `--embed` 实时 RGBA8 帧传输、指针/resize/Back/Stop IPC 与零重启 `Reattach` 及旋转缩放 |
 
 ## 关卡
 

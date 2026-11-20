@@ -4,7 +4,7 @@
 #include "embed.h"
 #include "guest_graphics.h"
 
-#include <d3d11.h>
+#include <d3d11_1.h>
 #include <d3dcompiler.h>
 #include <dxgi1_2.h>
 #include <wrl/client.h>
@@ -566,6 +566,59 @@ bool CompositorSubmitSurfaceSharedTexture(HWND hwnd, int layerKey, HANDLE dxgiSh
     slot.placement = placement;
     slot.hasContent = true;
     return RenderAndPublishLocked(wc);
+}
+
+bool CompositorSubmitSurfaceSharedNtHandle(HWND hwnd, int layerKey, HANDLE ntSharedHandle,
+                                           int w, int h, LayerAlpha alpha, bool bottomUp,
+                                           const SurfaceLayerPlacement& placement) {
+    if (!hwnd || !ntSharedHandle || w <= 0 || h <= 0) return false;
+    std::lock_guard lock(g_d3d.mu);
+    if (!EnsureDeviceLocked()) return false;
+
+    ComPtr<ID3D11Device1> dev1;
+    if (FAILED(g_d3d.dev.As(&dev1)) || !dev1) return false;
+
+    ComPtr<ID3D11Texture2D> sharedTex;
+    if (FAILED(dev1->OpenSharedResource1(ntSharedHandle, IID_PPV_ARGS(&sharedTex))) || !sharedTex) {
+        return false;
+    }
+    D3D11_TEXTURE2D_DESC sd{};
+    sharedTex->GetDesc(&sd);
+    DXGI_FORMAT fmt = sd.Format;
+    if (fmt == DXGI_FORMAT_B8G8R8A8_TYPELESS) fmt = DXGI_FORMAT_B8G8R8A8_UNORM;
+    else if (fmt == DXGI_FORMAT_R8G8B8A8_TYPELESS) fmt = DXGI_FORMAT_R8G8B8A8_UNORM;
+
+    WindowCompositor& wc = GetOrCreateLocked(hwnd);
+    LayerSlot& slot = wc.surfaces[layerKey];
+    if (!EnsureLayerTexture(slot, static_cast<int>(sd.Width), static_cast<int>(sd.Height), fmt)) return false;
+    g_d3d.ctx->CopyResource(slot.tex.Get(), sharedTex.Get());
+    slot.alpha = alpha;
+    slot.bottomUp = bottomUp;
+    slot.placement = placement;
+    slot.hasContent = true;
+    RenderAndPublishLocked(wc);
+    return true;
+}
+
+bool CompositorReadbackRgba(HWND hwnd, uint8_t* dstRgba, int w, int h) {
+    if (!hwnd || !dstRgba || w <= 0 || h <= 0) return false;
+    std::lock_guard lock(g_d3d.mu);
+    auto winIt = g_windows.find(hwnd);
+    if (winIt == g_windows.end() || !EnsureDeviceLocked()) return false;
+    WindowCompositor& wc = *winIt->second;
+    if (!EnsureEmbedTargets(wc, w, h)) return false;
+    CompositeToRtv(wc, wc.rtView.Get(), w, h);
+    g_d3d.ctx->CopyResource(wc.staging[0].Get(), wc.rtTex.Get());
+    D3D11_MAPPED_SUBRESOURCE mapped{};
+    if (FAILED(g_d3d.ctx->Map(wc.staging[0].Get(), 0, D3D11_MAP_READ, 0, &mapped))) return false;
+    const auto* src = static_cast<const uint8_t*>(mapped.pData);
+    for (int y = 0; y < h; ++y) {
+        std::memcpy(dstRgba + static_cast<size_t>(y) * static_cast<size_t>(w) * 4,
+                    src + static_cast<size_t>(y) * mapped.RowPitch,
+                    static_cast<size_t>(w) * 4);
+    }
+    g_d3d.ctx->Unmap(wc.staging[0].Get(), 0);
+    return true;
 }
 
 void CompositorUpdateSurfacePlacement(HWND hwnd, int layerKey, const SurfaceLayerPlacement& placement, bool drop) {

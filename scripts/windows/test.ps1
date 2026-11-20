@@ -1546,7 +1546,8 @@ function Test-Agsl {
         $posCode = $LASTEXITCODE
         $backendLine = if ($posOut -match 'BACKEND=([^\r\n]+)') { $Matches[1] } else { 'missing' }
         Check 'T15.agsl.d3d12' ($posCode -eq 0 -and $posOut -match 'PASS ALL 11 T15 AGSL pixel contracts' -and
-            $posOut -notmatch 'WARNING in native method|FATAL ERROR in native method') "backend=$backendLine; all 11 AGSL/RenderEffect pixel contracts passed"
+            $posOut -match 'PASS T15 Skia D3D12 -> DXGI NT shared handle -> D3D11 WinApkCompositor' -and
+            $posOut -notmatch 'WARNING in native method|FATAL ERROR in native method') "backend=$backendLine; all 11 AGSL/RenderEffect pixel contracts + D3D12<->D3D11 NT shared-handle compositing passed"
         if ($posCode -ne 0) { Write-Host $posOut }
 
         Set-TestEnv @{ WINAPK_DISABLE_SKIA = '1'; WINAPK_SKIA_DLL = $skiaDll; PATH = "$(Split-Path $bridge);$($saved.PATH)" }

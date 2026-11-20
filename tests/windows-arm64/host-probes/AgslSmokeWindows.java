@@ -335,7 +335,34 @@ public final class AgslSmokeWindows {
         shaderResultInvalidation();
         uniformContracts();
         childShaderMatrices();
+        compositorSharedTextureInterop();
         System.out.println("PASS ALL 11 T15 AGSL pixel contracts");
+        System.out.println("PASS T15 Skia D3D12 -> DXGI NT shared handle -> D3D11 WinApkCompositor");
         System.exit(0);
+    }
+
+    private static void compositorSharedTextureInterop() {
+        RuntimeShader shader = new RuntimeShader(
+                "half4 main(float2 p) { return p.x < 32.0 ? half4(0.75, 0.25, 0.5, 1.0) : half4(0.125, 0.625, 0.875, 1.0); }");
+        int w = 64, h = 32;
+        int[] composited = new int[w * h];
+        long shaderPtr = org.jetbrains.skia.RuntimeShaderBuilderKt._nMakeShader(shader.getNativeBuilder(), null);
+        check(shaderPtr != 0, "native Skia shader snapshot is zero");
+        try {
+            check(MacApkSkia.evalShaderSharedRoundtrip(shaderPtr, w, h, composited),
+                    "D3D12 -> DXGI NT shared handle -> D3D11 compositor roundtrip failed");
+        } finally {
+            org.jetbrains.skia.impl.RefCnt.unref(shaderPtr);
+        }
+        int leftPx = composited[16 * w + 16];
+        int rightPx = composited[16 * w + 48];
+        near(alpha(leftPx), 255, 1, "shared compositor left alpha");
+        near(red(leftPx), 191, 3, "shared compositor left red");
+        near((leftPx >>> 8) & 255, 64, 3, "shared compositor left green");
+        near(leftPx & 255, 128, 3, "shared compositor left blue");
+        near(alpha(rightPx), 255, 1, "shared compositor right alpha");
+        near(red(rightPx), 32, 3, "shared compositor right red");
+        near((rightPx >>> 8) & 255, 159, 3, "shared compositor right green");
+        near(rightPx & 255, 223, 3, "shared compositor right blue");
     }
 }

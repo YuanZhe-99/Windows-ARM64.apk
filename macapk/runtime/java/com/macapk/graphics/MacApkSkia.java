@@ -415,4 +415,55 @@ public final class MacApkSkia {
             }
         }
     }
+
+    /**
+     * Evaluates an AGSL shader on the Direct3D 12 GPU target and composites it directly into
+     * {@code WinApkCompositor} via a DXGI NT shared handle without marshaling a Java {@code int[]}.
+     */
+    public static boolean evalShaderToCompositor(long shaderPtr, int layerKey, int x, int y,
+                                                 int width, int height, boolean zOrderOnTop) {
+        if (!IS_WINDOWS || shaderPtr == 0 || width <= 0 || height <= 0) return false;
+        synchronized (sGpuLock) {
+            GpuEngine engine = gpu();
+            try {
+                engine.target(width, height);
+                GpuTarget target = engine.current;
+                CanvasKt._nClear(target.canvas, 0);
+                PaintKt._nSetShader(engine.paint, shaderPtr);
+                CanvasKt._nDrawPaint(target.canvas, engine.paint);
+                if (!SurfaceKt._nReadPixelsToPixmap(target.surface, target.pixmap, 0, 0)) return false;
+                return NativeSkiaD3D12.presentSharedLayer(engine.device, engine.queue, layerKey,
+                        target.pixels, width, height, x, y, zOrderOnTop);
+            } finally {
+                PaintKt._nSetShader(engine.paint, 0);
+                engine.finish();
+            }
+        }
+    }
+
+    /**
+     * Evaluates {@code shaderPtr} on Skia Direct3D 12, exports it across a DXGI NT shared handle
+     * into {@code WinApkCompositor} ({@code ID3D11Device1::OpenSharedResource1}), and reads back
+     * the hardware-composited ARGB pixels.
+     */
+    public static boolean evalShaderSharedRoundtrip(long shaderPtr, int width, int height, int[] outArgb) {
+        if (!IS_WINDOWS || shaderPtr == 0 || width <= 0 || height <= 0 || outArgb == null
+                || (long) width * height > outArgb.length) return false;
+        synchronized (sGpuLock) {
+            GpuEngine engine = gpu();
+            try {
+                engine.target(width, height);
+                GpuTarget target = engine.current;
+                CanvasKt._nClear(target.canvas, 0);
+                PaintKt._nSetShader(engine.paint, shaderPtr);
+                CanvasKt._nDrawPaint(target.canvas, engine.paint);
+                if (!SurfaceKt._nReadPixelsToPixmap(target.surface, target.pixmap, 0, 0)) return false;
+                return NativeSkiaD3D12.verifySharedCompositorRoundtrip(engine.device, engine.queue,
+                        target.pixels, width, height, outArgb);
+            } finally {
+                PaintKt._nSetShader(engine.paint, 0);
+                engine.finish();
+            }
+        }
+    }
 }
