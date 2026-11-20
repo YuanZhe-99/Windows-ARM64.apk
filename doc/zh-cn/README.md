@@ -34,7 +34,7 @@ G0–G3 已对 Java/Kotlin APK、N0 ELF/ABI、已声明 C/Bionic 子集与 `hell
 Direct3D 12 AGSL/RenderEffect（`T15`）均通过契约测试。受限 GLES（`T10.java`、`T11`）与 Vulkan（`T13`
 WSI、SPIR-V 图形管线、离屏 `VkImage` 回读、客体回调与设备丢失恢复）在本机 Adreno 8cx Gen 3 + Mesa Dozen
 （`translated=yes`，ADR-0004）上通过；8cx Gen 3 上的厂商原生 ARM64 Vulkan ICD 仍为 `BLOCKED`。当前为
-Mac.apk `3f35611`、Go 1.27.4、MyGo v0.10.0。
+Mac.apk `154f64e`、Go 1.27.4、MyGo v0.10.0。
 
 ## 上游版本
 
@@ -45,7 +45,7 @@ Go、MyGo 与 Mac.apk 不固定版本：始终跟随各自的最新版本。下�
 |---|---|---|
 | Go | 最新发行版 | 1.27.4 |
 | MyGo | 最新标签 | v0.10.0 |
-| Mac.apk | 最新 `main`，作为 `macapk/` subtree | `3f35611`，已合并 |
+| Mac.apk | 最新 `main`，作为 `macapk/` subtree | `154f64e`，已合并 |
 | OpenJDK（ARM64）、clang-cl、MSVC、Windows SDK、CMake、Ninja、vcpkg、Vulkan 头文件 | 锁定在 `build-lock.json` | Microsoft OpenJDK 21.0.13；clang-cl 22.1.3；MSVC 14.51；SDK 10.0.26100；CMake 4.3.1；Ninja 1.13.2；vcpkg 基线 `afa249f`；Vulkan 头文件 1.4.363；liblzma 5.8.4；Capstone 5.0.9 |
 | Android SDK/NDK、kotlinc、AOSP 框架资源 | 锁定在 `build-lock.json` | build-tools 36.0.0、android-36；NDK r30（30.0.16248370）；kotlinc 2.4.0；`android-16.0.0_r2` |
 | ANGLE | 在 P5a 锁定 | `801a1a5`，ARM64 源码构建及宿主/客体 D3D11 + Vulkan 经 Dozen 受限 profile 验证通过 |

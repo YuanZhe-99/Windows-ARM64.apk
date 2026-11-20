@@ -20,7 +20,7 @@ Go, Java and native dependencies with their license texts.
 
 | Component | License | Used for |
 |---|---|---|
-| Mac.apk (git subtree under `macapk/`, at `3f35611`) | AGPL-3.0 (dual-licensed upstream) | DEX translation, Android Framework, loader and bridges; its own bundled components are listed in `macapk/THIRD_PARTY_NOTICES.txt` |
+| Mac.apk (git subtree under `macapk/`, at `154f64e`) | AGPL-3.0 (dual-licensed upstream) | DEX translation, Android Framework, loader and bridges; its own bundled components are listed in `macapk/THIRD_PARTY_NOTICES.txt` |
 | zlib 1.3.2 (vcpkg) | zlib License (Jean-loup Gailly and Mark Adler; the notice ships with `z.dll`) | inflating APK entries in `winapk.exe`; ships as `z.dll` |
 | liblzma / XZ Utils 5.8.4 (vcpkg) | BSD Zero Clause (`0BSD`) | `NativeOs.xzDecompress` in `winapk-bridge.dll`; ships as `liblzma.dll` |
 | SQLite 3.54.1 (vcpkg) | public domain | `android.database.sqlite` in `winapk-bridge.dll`; ships as `sqlite3.dll` |

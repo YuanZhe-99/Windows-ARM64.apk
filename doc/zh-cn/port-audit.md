@@ -1,7 +1,7 @@
 # 移植审计
 
 Mac.apk 中哪些部分与 macOS 绑定、在 Windows ARM64 上如何处理、在哪个阶段处理。审计基于 Mac.apk
-`ff2afbf`（2026-11-03）并在 `3f35611`（2026-11-16，上游 v1.0.2379 同步）上复核，以 `macapk/` subtree 合入，在 Windows 11 ARM64（build 26300）上进行。每次合并
+`ff2afbf`（2026-11-03），并在 `3f35611`（2026-11-16）与 `154f64e`（2026-11-19）上复核，以 `macapk/` subtree 合入，在 Windows 11 ARM64（build 26300）上进行。每次合并
 Mac.apk 后重新执行下面的搜索并更新各表。
 
 ## 方法

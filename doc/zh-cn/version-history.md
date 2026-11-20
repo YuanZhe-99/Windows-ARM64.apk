@@ -1,5 +1,9 @@
 # 版本历史
 
+## 未发布
+
+- 2026-11-19：完成 GPU-P1 至 GPU-P6（ADR-0005）并新增确定性 Fluent 品牌 Logo（`tools/genicon`）：随包集成原生 ARM64 ANGLE（`libEGL.dll`、`libGLESv2.dll`、`d3dcompiler_47.dll`）、原子落盘 `EGL_ANDROID_blob_cache` 与硬件感知 `--graphics=auto` 择优策略，多层 D3D11 `WinApkCompositor` 与 3 槽异步 `--embed` Staging 回读，完整 667 方法 Java `GLES10`–`GLES32` / `EGL14`–`15` / `EGLExt` 桥（`hello-gles3` PASS），505 入口多线程客体 EGL 1.5 / GLES 1.1–3.2 桥含 `share_context` 与 `EGLImageKHR`（`GraphicsGuest` PASS），290+ 命令客体 Vulkan 1.0–1.3 分发含 `pNext`、`VkPipelineCache`、豁免 CFG 客体回调与 `--embed` WSI（`VulkanWsi` PASS），Profile N2 Bionic/NDK 引擎运行时（`libm`、`libjnigraphics`、`ALooper`/`NativeLooper`、`AChoreographer`、`AAssetManager`、`libOpenSLES`、`epoll`/套接字/`SYS_futex`、`STT_OBJECT` `RTLD_DEFAULT` `dlsym`、`app_lib` `ReLinker`、`/system/etc/fonts.xml` + `/fonts/`、`needs-native` 界面引导；`EngineN2` `T16` PASS 及真实 Flutter Impeller APK 交互渲染），以及 Skia D3D12 ↔ `WinApkCompositor` DXGI NT 共享句柄合成、`presentFrame` 脏矩形静默跳过与双后端 GPU 稳定性门禁（`Agsl`、`Stability`、`Package` PASS）。合并 Mac.apk `main` 至 `154f64e`（`signatures/cla.json`）；Go 1.27.4 与 MyGo v0.10.0 经检查未变；版本保持 0.1.0 待确认发布。
+
 ## 0.1.0（2026-11-18）
 
 - 2026-11-18：完成前后端一体化 ARM64 实验包与 NSIS 运行时打包、ANGLE 链接 GN 依赖许可证审核、完整 30 分钟 T14 稳定性基线（20 次冷/热启动、100 次 resize/最小化恢复、1800 秒连续运行）、`NativeOs`（含 `liblzma` 5.8.4 `.xz` 解压）+ Win32/测试隔离剪贴板 + DirectWrite 中日韩字体 + `/proc` 合成 + 动态 `WM_DPICHANGED`、支持默认设备切换重绑的 43 方法 WASAPI `NativeAudio`、硬件 Direct3D 12 Skia `0.150.2` AGSL/RenderEffect（`T15`，11/11 像素契约）、客体 JNI DirectByteBuffer/Critical/反射与 LP64 Bionic 扩展，以及 GitHub Actions `windows-11-arm` 持续集成与 Ed25519 签名发布工作流（`v0.1.0`）。Go 1.27.4、MyGo v0.10.0 和已合并的 Mac.apk `3f35611` 经检查未变。
