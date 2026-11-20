@@ -39,6 +39,17 @@ func (a *App) inspect(path string) {
 				return
 			}
 			a.add.reading, a.add.apk, a.add.failed = false, apk, err != nil
+			if err == nil {
+				if old := a.entry(apk.Package); old != nil {
+					if old.Native == winapk.NativeRestricted {
+						a.add.nativeMode = 1
+					} else {
+						a.add.nativeMode = 0
+					}
+				} else if apk.Verdict == winapk.NeedsNative && len(apk.NativeLibs) > 0 {
+					a.add.nativeMode = 1
+				}
+			}
 		})
 	})
 }
@@ -270,20 +281,21 @@ func (a *App) addEntry(open bool) {
 	apk := a.add.apk
 	e := a.newEntry(apk)
 	e.InWindow = a.add.inWindow == 1
-	if a.add.nativeMode == 1 && len(apk.NativeLibs) > 0 && apk.Verdict != winapk.Unsupported {
-		e.Native = winapk.NativeRestricted
-		if apk.Profile != "" {
-			e.Profile = apk.Profile
+	if len(apk.NativeLibs) > 0 && apk.Verdict != winapk.Unsupported {
+		if a.add.nativeMode == 1 {
+			e.Native = winapk.NativeRestricted
+			e.Profile = maxProfile(winapk.N2, apk.Profile)
+			if e.Graphics == "" {
+				e.Graphics = "auto"
+			}
 		} else {
-			e.Profile = winapk.N2
-		}
-		if e.Graphics == "" {
-			e.Graphics = "auto"
+			e.Native = winapk.NativeOff
+			e.Profile = ""
 		}
 	}
 	if old := a.entry(apk.Package); old != nil {
-		if a.add.nativeMode == 0 {
-			e.Native, e.Profile, e.Graphics = old.Native, old.Profile, old.Graphics
+		if e.Graphics == "" {
+			e.Graphics = old.Graphics
 		}
 		e.Screen, e.Added = old.Screen, old.Added
 		*old = *e
@@ -500,6 +512,9 @@ func (a *App) advanced(c *ui.Context, e *entry) {
 						e.Native = winapk.NativeOff
 						if cur == 1 {
 							e.Native = winapk.NativeRestricted
+							if profileRank(e.Profile) < profileRank(maxProfile(winapk.N2, e.APK.Profile)) {
+								e.Profile = maxProfile(winapk.N2, e.APK.Profile)
+							}
 						}
 						a.saveLibrary()
 					}
@@ -555,13 +570,22 @@ func (a *App) advanced(c *ui.Context, e *entry) {
 			})
 			rowIdx++
 		}
-		ui.Row(c).FillWidth().Gap(14).Padding(12, 16).AlignItems(ui.Start).BorderWidth(min(float32(rowIdx), 1), 0, 0, 0).BorderColor(p.hover).Children(func() {
-			tile(c, icCube, 32, p.hover, p.text)
-			ui.Column(c).Grow(1).MinWidth(0).Children(func() {
-				ui.Text(c, L.GraphicsTitle()).FontWeight(600)
-				muted(c, L.GraphicsHint(), 13).Wrap()
+		ui.Column(c).FillWidth().Padding(12, 16).Gap(8).BorderWidth(min(float32(rowIdx), 1), 0, 0, 0).BorderColor(p.hover).Children(func() {
+			ui.Row(c).FillWidth().Gap(14).AlignItems(ui.Start).Children(func() {
+				tile(c, icCube, 32, p.hover, p.text)
+				ui.Column(c).Grow(1).MinWidth(0).Children(func() {
+					ui.Text(c, L.GraphicsTitle()).FontWeight(600)
+					muted(c, L.GraphicsHint(), 13).Wrap()
+				})
+				a.graphicsSelect(c, "det-gfx", &e.Graphics, true, func() { a.saveLibrary() })
 			})
-			a.graphicsSelect(c, "det-gfx", &e.Graphics, true, func() { a.saveLibrary() })
+			effGfx := e.Graphics
+			if effGfx == "" {
+				effGfx = a.prefs.Graphics
+			}
+			if effGfx == "vulkan" && a.report.Machine.VulkanTranslated {
+				ui.Text(c, L.VulkanTranslatedNote()).FontSize(12).TextColor(p.warn).Padding(0, 0, 0, 46).Wrap()
+			}
 		})
 	})
 	muted(c, L.ChangesNextOpen(), 13).TextColor(p.muted)

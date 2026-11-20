@@ -402,5 +402,7 @@
   "SignedUpdatesHint": "Checks GitHub Releases for a newer Windows-ARM64.apk build signed with the project's Ed25519 update key.",
   "CheckUpdates": "Check for updates",
   "InstallUpdate": "Install {version} & restart",
-  "AppUpToDate": "Windows-ARM64.apk {version} is up to date."
+  "AppUpToDate": "Windows-ARM64.apk {version} is up to date.",
+  "VulkanTranslatedNote": "This PC has no native GPU Vulkan driver — Vulkan runs through Windows' Dozen translation layer (OpenGL ES 2.0 only). Automatic or Direct3D 11 uses native hardware OpenGL ES 3.0 and is recommended for Flutter and 3D apps.",
+  "SwitchProfileN2Retry": "Use Profile N2 & reopen"
 }

@@ -111,7 +111,30 @@ type Prefs struct {
 }
 
 func defaultPrefs() Prefs {
-	return Prefs{Theme: "system", AskOnClose: true, JavaUpdates: true, Graphics: "auto", Profile: winapk.N1}
+	return Prefs{Theme: "system", AskOnClose: true, JavaUpdates: true, Graphics: "auto", Profile: winapk.N2}
+}
+
+func profileRank(p winapk.Profile) int {
+	switch p {
+	case winapk.N0:
+		return 1
+	case winapk.N1:
+		return 2
+	case winapk.N2:
+		return 3
+	default:
+		return 0
+	}
+}
+
+func maxProfile(a, b winapk.Profile) winapk.Profile {
+	if profileRank(b) > profileRank(a) {
+		return b
+	}
+	if a == "" {
+		return winapk.N2
+	}
+	return a
 }
 
 // entry is an app of the library (library.json).
@@ -141,7 +164,7 @@ func (a *App) profile(e *entry) winapk.Profile {
 	if e.Profile != "" {
 		return e.Profile
 	}
-	return a.prefs.Profile
+	return maxProfile(a.prefs.Profile, e.APK.Profile)
 }
 
 // session is an open app: its runtime process and where it shows.
@@ -230,9 +253,16 @@ func (a *App) AddSamples(apks []winapk.APK) {
 }
 
 // newEntry is an APK as a new entry of the library, opening as Settings'
-// General says.
+// General says. Apps whose static inspection requires native code default to
+// Restricted Profile N2 so Flutter/GLES/media engines launch out of the box.
 func (a *App) newEntry(apk winapk.APK) *entry {
-	e := &entry{ID: apk.Package, APK: apk, InWindow: a.prefs.OpenInWindow, Native: winapk.NativeOff, Graphics: "", Added: time.Now()}
+	nat := winapk.NativeOff
+	var prof winapk.Profile
+	if apk.Verdict == winapk.NeedsNative && len(apk.NativeLibs) > 0 {
+		nat = winapk.NativeRestricted
+		prof = maxProfile(winapk.N2, apk.Profile)
+	}
+	e := &entry{ID: apk.Package, APK: apk, InWindow: a.prefs.OpenInWindow, Native: nat, Profile: prof, Graphics: "", Added: time.Now()}
 	a.loadIcon(e)
 	return e
 }

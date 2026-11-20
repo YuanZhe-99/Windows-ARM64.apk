@@ -443,6 +443,9 @@ func (a *App) runtimePage(c *ui.Context) {
 			a.graphicsSelect(c, "rt-gfx-sel", &pr.Graphics, false, func() { a.setPrefs(pr) })
 		})
 	})
+	if a.prefs.Graphics == "vulkan" && a.report.Machine.VulkanTranslated {
+		ui.Text(c, L.VulkanTranslatedNote()).FontSize(12).TextColor(p.warn).Wrap()
+	}
 	section(c, L.AdvancedNative(), func(r *rows) {
 		r.row(c, "rt-native", icShield, L.NewAppsNativeOff(), L.NewAppsNativeOffHint(), func() {
 			chip(c, L.LevelExperimental(), toneWarn)

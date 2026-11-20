@@ -247,17 +247,33 @@ func TestNoJavaNoOpen(t *testing.T) {
 	}
 }
 
-// TestNewAppsNativeOff: an app added starts with native code off, whatever
-// it holds (AGENTS.md: guest native is off by default).
-func TestNewAppsNativeOff(t *testing.T) {
+// TestNewAppsNativeDefaults: pure-Java apps start with native off, while
+// needs-native APKs pre-select Restricted Profile N2 (with user override).
+func TestNewAppsNativeDefaults(t *testing.T) {
 	h := newHarness(t, true, false)
 	a := h.a
+	a.inspect("HelloJava.apk")
+	h.settle()
+	a.addEntry(false)
+	if ej := a.entry("com.example.hellojava"); ej == nil || ej.Native != winapk.NativeOff {
+		t.Fatalf("HelloJava entry %+v, want NativeOff", ej)
+	}
+
 	a.inspect("TilePuzzle-2.3.apk")
 	h.settle()
 	a.addEntry(false)
 	e := a.entry("com.example.tilepuzzle")
-	if e == nil || e.Native != winapk.NativeOff {
-		t.Fatalf("entry %+v", e)
+	if e == nil || e.Native != winapk.NativeRestricted || a.profile(e) != winapk.N2 {
+		t.Fatalf("TilePuzzle entry %+v profile=%s, want Restricted N2", e, a.profile(e))
+	}
+
+	// Explicit user opt-out in Add sheet is honored.
+	a.inspect("TilePuzzle-2.3.apk")
+	h.settle()
+	a.add.nativeMode = 0
+	a.addEntry(false)
+	if e = a.entry("com.example.tilepuzzle"); e == nil || e.Native != winapk.NativeOff {
+		t.Fatalf("TilePuzzle opt-out entry %+v, want NativeOff", e)
 	}
 }
 

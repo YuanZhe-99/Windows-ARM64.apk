@@ -327,5 +327,24 @@ Java_org_winapk_fixture_n2_MainActivity_runChecks(JNIEnv* env, jclass cls, jobje
         return (*env)->NewStringUTF(env, "FAIL:wx-refusal");
     }
 
+    /* 9. Dart VirtualMemory::AllocateAligned regression: reserve PROT_NONE, munmap prefix + suffix,
+          then mprotect(PROT_READ|PROT_WRITE) middle pages without losing the reservation. */
+    uint8_t* cage = (uint8_t*)mmap(NULL, 2 * 1024 * 1024, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    if (cage == MAP_FAILED) return (*env)->NewStringUTF(env, "FAIL:cage-mmap");
+    if (munmap(cage, 64 * 1024) != 0 || munmap(cage + 1024 * 1024, 1024 * 1024) != 0) {
+        return (*env)->NewStringUTF(env, "FAIL:cage-trim");
+    }
+    uint8_t* mid = cage + 64 * 1024;
+    if (mprotect(mid, 128 * 1024, PROT_READ | PROT_WRITE) != 0) {
+        return (*env)->NewStringUTF(env, "FAIL:cage-commit");
+    }
+    mid[0] = 0x5A;
+    mid[128 * 1024 - 1] = 0xA5;
+    if (mid[0] != 0x5A || mid[128 * 1024 - 1] != 0xA5 ||
+        mprotect(mid, 128 * 1024, PROT_NONE) != 0 ||
+        munmap(mid, 960 * 1024) != 0) {
+        return (*env)->NewStringUTF(env, "FAIL:cage-release");
+    }
+
     return (*env)->NewStringUTF(env, "PASS:all-n2");
 }

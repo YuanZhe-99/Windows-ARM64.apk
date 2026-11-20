@@ -4065,3 +4065,23 @@ func AppUpToDate(version string) string { return In(i18n.Locale()).AppUpToDate(v
 func (msgs Messages) AppUpToDate(version string) string {
 	return Catalog.Format(msgs.locale, "AppUpToDate", map[string]any{"version": version})
 }
+
+// VulkanTranslatedNote says "This PC has no native GPU Vulkan driver — Vulkan runs through Windows' Dozen translation layer (OpenGL ES 2.0 only)…"
+// in the language the app shows.
+func VulkanTranslatedNote() string { return In(i18n.Locale()).VulkanTranslatedNote() }
+
+// VulkanTranslatedNote says "This PC has no native GPU Vulkan driver — Vulkan runs through Windows' Dozen translation layer (OpenGL ES 2.0 only)…"
+// in the language of msgs.
+func (msgs Messages) VulkanTranslatedNote() string {
+	return Catalog.Format(msgs.locale, "VulkanTranslatedNote", nil)
+}
+
+// SwitchProfileN2Retry says "Use Profile N2 & reopen"
+// in the language the app shows.
+func SwitchProfileN2Retry() string { return In(i18n.Locale()).SwitchProfileN2Retry() }
+
+// SwitchProfileN2Retry says "Use Profile N2 & reopen"
+// in the language of msgs.
+func (msgs Messages) SwitchProfileN2Retry() string {
+	return Catalog.Format(msgs.locale, "SwitchProfileN2Retry", nil)
+}

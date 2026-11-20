@@ -152,8 +152,6 @@ struct GuestThreadState {
     EGLSurface guestRead = EGL_NO_SURFACE;
     EGLint eglError = EGL_SUCCESS;
     GLenum unboundGlError = GL_NO_ERROR;
-    char strBuf[4][2048]{};
-    unsigned strSlot = 0;
 };
 thread_local GuestThreadState t_tls;
 
@@ -195,20 +193,12 @@ GLenum GL_APIENTRY G_glGetError() {
 
 const GLubyte* GL_APIENTRY G_glGetString(GLenum name) {
     if (!GuestGlReady() || !g_drv.glGetString) return nullptr;
-    const GLubyte* s = g_drv.glGetString(name);
-    if (!s) return nullptr;
-    char* dst = t_tls.strBuf[(t_tls.strSlot++) & 3];
-    std::snprintf(dst, sizeof(t_tls.strBuf[0]), "%s", reinterpret_cast<const char*>(s));
-    return reinterpret_cast<const GLubyte*>(dst);
+    return g_drv.glGetString(name);
 }
 
 const GLubyte* GL_APIENTRY G_glGetStringi(GLenum name, GLuint index) {
     if (!GuestGlReady() || !g_drv.glGetStringi) return nullptr;
-    const GLubyte* s = g_drv.glGetStringi(name, index);
-    if (!s) return nullptr;
-    char* dst = t_tls.strBuf[(t_tls.strSlot++) & 3];
-    std::snprintf(dst, sizeof(t_tls.strBuf[0]), "%s", reinterpret_cast<const char*>(s));
-    return reinterpret_cast<const GLubyte*>(dst);
+    return g_drv.glGetStringi(name, index);
 }
 
 // Debug callbacks from guest code are safely ignored at the host driver boundary so raw guest
@@ -251,10 +241,42 @@ void GL_APIENTRY G_glEGLImageTargetRenderbufferStorageOES(GLenum target, GLeglIm
 void ShutdownLocked() {
     if (t_tls.hostCtx != EGL_NO_CONTEXT && g_drv.display != EGL_NO_DISPLAY && g_drv.eglMakeCurrent) {
         g_drv.eglMakeCurrent(g_drv.display, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
+        for (auto& [id, ctx] : g_contexts) {
+            if (ctx.boundThread == t_tls.id) ctx.boundThread = 0;
+        }
+        for (auto& [id, surf] : g_surfaces) {
+            if (surf.boundThread == t_tls.id) surf.boundThread = 0;
+        }
         t_tls.hostCtx = EGL_NO_CONTEXT;
         t_tls.guestCtx = EGL_NO_CONTEXT;
         t_tls.guestDraw = t_tls.guestRead = EGL_NO_SURFACE;
     }
+
+    bool foreignThreadBound = false;
+    for (const auto& [id, ctx] : g_contexts) {
+        if (ctx.boundThread != 0 && ctx.boundThread != t_tls.id) {
+            foreignThreadBound = true;
+            break;
+        }
+    }
+
+    if (foreignThreadBound) {
+        // Multi-threaded engines (e.g. Flutter raster/IO threads) keep contexts current until
+        // process exit; detach compositor layers without unmapping live ANGLE/Vulkan DLLs.
+        for (auto& [id, surf] : g_surfaces) {
+            if (surf.nativeToken) {
+                if (surf.hwnd) {
+                    const int key = -static_cast<int>(reinterpret_cast<uintptr_t>(surf.nativeToken));
+                    CompositorUpdateSurfacePlacement(surf.hwnd, key, {}, true);
+                }
+                ReleaseSurface(surf.nativeToken);
+            }
+        }
+        g_surfaces.clear();
+        LogLine("[winapk] guest EGL teardown complete");
+        return;
+    }
+
     for (auto& [id, img] : g_images) {
         if (img && g_drv.eglDestroyImageKHR) g_drv.eglDestroyImageKHR(g_drv.display, img);
     }

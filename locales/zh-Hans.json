@@ -402,5 +402,7 @@
   "SignedUpdatesHint": "从 GitHub Releases 检查并验证使用项目 Ed25519 更新密钥签名的新版 Windows-ARM64.apk。",
   "CheckUpdates": "检查更新",
   "InstallUpdate": "安装 {version} 并重启",
-  "AppUpToDate": "当前已是最新版本（{version}）。"
+  "AppUpToDate": "当前已是最新版本（{version}）。",
+  "VulkanTranslatedNote": "当前电脑没有原生厂商 Vulkan 驱动，Vulkan 模式经由 Windows Dozen 转换层运行（仅支持 OpenGL ES 2.0）；运行 Flutter 与 3D 应用推荐使用“自动”或 Direct3D 11（原生硬件 OpenGL ES 3.0）。",
+  "SwitchProfileN2Retry": "启用 Profile N2 并重新打开"
 }

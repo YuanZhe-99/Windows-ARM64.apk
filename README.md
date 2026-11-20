@@ -9,7 +9,7 @@ Android Framework, and the app's own `arm64-v8a` native libraries are loaded by 
 loader with a Bionic, JNI and graphics bridge. An app opens either in a phone-style pane inside the
 main window or in a standalone window, one runtime process per APK.
 
-> **Status:** experimental (`0.1.0`; single-machine verification on
+> **Status:** experimental (`0.1.1`; single-machine verification on
 > Snapdragon 8cx Gen 3 / Windows 11 ARM64 build 26300).
 > Gates G0–G3 pass for the declared Java/Kotlin and restricted N0/N1 C/Bionic/JNI profiles, the
 > MyGo front end is wired to the real `winapk` runtime (`--embed` shared-memory frames and duplex

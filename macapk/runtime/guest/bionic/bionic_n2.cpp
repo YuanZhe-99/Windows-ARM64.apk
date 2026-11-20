@@ -2062,9 +2062,14 @@ int64_t N2Pathconf(const char*, int) { return 4096; }
 
 // ---- W^X Virtual Memory (`mmap` / `munmap` / `mprotect` / `madvise`) ----
 
+constexpr uintptr_t kMmapPageSize = 4096u;
+uintptr_t DownMmapPage(uintptr_t v) { return v & ~(kMmapPageSize - 1u); }
+uintptr_t UpMmapPage(uintptr_t v) { return (v + kMmapPageSize - 1u) & ~(kMmapPageSize - 1u); }
+
 struct MmapRegion {
     void* base = nullptr;
     uint64_t size = 0;
+    std::vector<std::pair<uintptr_t, uintptr_t>> liveSpans;
 };
 std::mutex g_mmapMu;
 std::map<uintptr_t, MmapRegion> g_mmaps;
@@ -2085,6 +2090,7 @@ void* N2Mmap(void* addr, uint64_t length, int prot, int flags, int fd, int64_t o
     const DWORD winProt = GuestProtToWin(prot, protOk);
     if (!protOk) { SetErr(kEinval); return reinterpret_cast<void*>(static_cast<intptr_t>(-1)); }
 
+    const uint64_t alignedLen = static_cast<uint64_t>(UpMmapPage(static_cast<uintptr_t>(length)));
     const bool fixed = (flags & 0x10 /* MAP_FIXED */) != 0;
     const bool anon = (flags & 0x20 /* MAP_ANONYMOUS */) != 0;
 
@@ -2094,24 +2100,36 @@ void* N2Mmap(void* addr, uint64_t length, int prot, int flags, int fd, int64_t o
         bool inside = false;
         {
             std::lock_guard lk(g_mmapMu);
-            for (const auto& [baseAddr, reg] : g_mmaps) {
-                if (target >= baseAddr && target + length <= baseAddr + reg.size) {
+            for (auto& [baseAddr, reg] : g_mmaps) {
+                if (target >= baseAddr && target + alignedLen <= baseAddr + reg.size) {
                     inside = true;
+                    // Ensure [target, target + alignedLen) is tracked in liveSpans.
+                    reg.liveSpans.emplace_back(target, target + static_cast<uintptr_t>(alignedLen));
+                    std::sort(reg.liveSpans.begin(), reg.liveSpans.end());
+                    std::vector<std::pair<uintptr_t, uintptr_t>> merged;
+                    for (const auto& [s, e] : reg.liveSpans) {
+                        if (!merged.empty() && s <= merged.back().second) {
+                            merged.back().second = std::max(merged.back().second, e);
+                        } else {
+                            merged.emplace_back(s, e);
+                        }
+                    }
+                    reg.liveSpans = std::move(merged);
                     break;
                 }
             }
         }
         if (inside) {
             if (prot == 0) {
-                DWORD old = 0;
-                VirtualProtect(addr, static_cast<SIZE_T>(length), PAGE_NOACCESS, &old);
+                VirtualFree(addr, static_cast<SIZE_T>(alignedLen), MEM_DECOMMIT);
                 return addr;
             }
-            if (VirtualAlloc(addr, static_cast<SIZE_T>(length), MEM_COMMIT, PAGE_READWRITE)) {
-                if (anon) std::memset(addr, 0, static_cast<size_t>(length));
+            if (VirtualAlloc(addr, static_cast<SIZE_T>(alignedLen), MEM_COMMIT, PAGE_READWRITE)) {
+                if (anon) std::memset(addr, 0, static_cast<size_t>(alignedLen));
                 else if (fd >= 0) N2Pread(fd, addr, length, offset);
                 DWORD old = 0;
-                if (winProt != PAGE_READWRITE) VirtualProtect(addr, static_cast<SIZE_T>(length), winProt, &old);
+                if (winProt != PAGE_READWRITE) VirtualProtect(addr, static_cast<SIZE_T>(alignedLen), winProt, &old);
+                if (prot & 4) FlushInstructionCache(GetCurrentProcess(), addr, static_cast<SIZE_T>(alignedLen));
                 return addr;
             }
         }
@@ -2119,42 +2137,74 @@ void* N2Mmap(void* addr, uint64_t length, int prot, int flags, int fd, int64_t o
 
     const DWORD allocFlags = (prot == 0) ? MEM_RESERVE : (MEM_RESERVE | MEM_COMMIT);
     const DWORD initProt = (prot == 0) ? PAGE_NOACCESS : PAGE_READWRITE;
-    void* mem = VirtualAlloc(fixed ? addr : nullptr, static_cast<SIZE_T>(length), allocFlags, initProt);
+    void* mem = VirtualAlloc(fixed ? addr : nullptr, static_cast<SIZE_T>(alignedLen), allocFlags, initProt);
     if (!mem && !fixed) {
-        mem = VirtualAlloc(nullptr, static_cast<SIZE_T>(length), allocFlags, initProt);
+        mem = VirtualAlloc(nullptr, static_cast<SIZE_T>(alignedLen), allocFlags, initProt);
     }
     if (!mem) { SetErr(kEnomem); return reinterpret_cast<void*>(static_cast<intptr_t>(-1)); }
 
     if (!anon && fd >= 0) {
-        if (prot == 0) VirtualAlloc(mem, static_cast<SIZE_T>(length), MEM_COMMIT, PAGE_READWRITE);
+        if (prot == 0) VirtualAlloc(mem, static_cast<SIZE_T>(alignedLen), MEM_COMMIT, PAGE_READWRITE);
         N2Pread(fd, mem, length, offset);
     }
     if (prot != 0 && winProt != PAGE_READWRITE) {
         DWORD old = 0;
-        VirtualProtect(mem, static_cast<SIZE_T>(length), winProt, &old);
+        VirtualProtect(mem, static_cast<SIZE_T>(alignedLen), winProt, &old);
     }
-    if (prot & 4) FlushInstructionCache(GetCurrentProcess(), mem, static_cast<SIZE_T>(length));
+    if (prot & 4) FlushInstructionCache(GetCurrentProcess(), mem, static_cast<SIZE_T>(alignedLen));
 
     {
         std::lock_guard lk(g_mmapMu);
-        g_mmaps[reinterpret_cast<uintptr_t>(mem)] = {mem, length};
+        const auto mStart = reinterpret_cast<uintptr_t>(mem);
+        g_mmaps[mStart] = {mem, alignedLen, {{mStart, mStart + static_cast<uintptr_t>(alignedLen)}}};
     }
     return mem;
 }
 
 int N2Munmap(void* addr, uint64_t length) {
     if (!addr || length == 0) return SetErr(kEinval);
-    const auto key = reinterpret_cast<uintptr_t>(addr);
+    const uintptr_t uStart = DownMmapPage(reinterpret_cast<uintptr_t>(addr));
+    const uintptr_t uEnd = UpMmapPage(reinterpret_cast<uintptr_t>(addr) + static_cast<uintptr_t>(length));
+    if (uEnd <= uStart) return SetErr(kEinval);
+
+    bool matchedRegion = false;
     {
         std::lock_guard lk(g_mmapMu);
-        auto it = g_mmaps.find(key);
-        if (it != g_mmaps.end()) {
-            VirtualFree(it->second.base, 0, MEM_RELEASE);
-            g_mmaps.erase(it);
-            return 0;
+        for (auto it = g_mmaps.begin(); it != g_mmaps.end();) {
+            const uintptr_t rStart = it->first;
+            const uintptr_t rEnd = rStart + static_cast<uintptr_t>(it->second.size);
+            if (uEnd <= rStart || uStart >= rEnd) {
+                ++it;
+                continue;
+            }
+            matchedRegion = true;
+            const uintptr_t clipStart = std::max(uStart, rStart);
+            const uintptr_t clipEnd = std::min(uEnd, rEnd);
+
+            std::vector<std::pair<uintptr_t, uintptr_t>> nextSpans;
+            for (const auto& [s, e] : it->second.liveSpans) {
+                if (e <= clipStart || s >= clipEnd) {
+                    nextSpans.emplace_back(s, e);
+                } else {
+                    if (s < clipStart) nextSpans.emplace_back(s, clipStart);
+                    if (e > clipEnd) nextSpans.emplace_back(clipEnd, e);
+                }
+            }
+            if (nextSpans.empty()) {
+                VirtualFree(it->second.base, 0, MEM_RELEASE);
+                it = g_mmaps.erase(it);
+            } else {
+                // Partial unmap (e.g. Dart `VirtualMemory::AllocateAligned` prefix/suffix trim):
+                // decommit the unmapped pages while preserving the remaining `MEM_RESERVE` cage!
+                VirtualFree(reinterpret_cast<void*>(clipStart), clipEnd - clipStart, MEM_DECOMMIT);
+                it->second.liveSpans = std::move(nextSpans);
+                ++it;
+            }
         }
     }
-    VirtualFree(addr, static_cast<SIZE_T>(length), MEM_DECOMMIT);
+    if (!matchedRegion) {
+        VirtualFree(reinterpret_cast<void*>(uStart), uEnd - uStart, MEM_DECOMMIT);
+    }
     return 0;
 }
 
@@ -2163,10 +2213,40 @@ int N2Mprotect(void* addr, uint64_t len, int prot) {
     bool protOk = false;
     const DWORD winProt = GuestProtToWin(prot, protOk);
     if (!protOk) return SetErr(kEinval);
-    if (prot != 0) VirtualAlloc(addr, static_cast<SIZE_T>(len), MEM_COMMIT, PAGE_READWRITE);
-    DWORD old = 0;
-    if (!VirtualProtect(addr, static_cast<SIZE_T>(len), winProt, &old)) return SetErr(kEnomem);
-    if (prot & 4) FlushInstructionCache(GetCurrentProcess(), addr, static_cast<SIZE_T>(len));
+
+    const uintptr_t pStart = DownMmapPage(reinterpret_cast<uintptr_t>(addr));
+    const uintptr_t pEnd = UpMmapPage(reinterpret_cast<uintptr_t>(addr) + static_cast<uintptr_t>(len));
+    uintptr_t cur = pStart;
+    while (cur < pEnd) {
+        MEMORY_BASIC_INFORMATION mbi{};
+        if (!VirtualQuery(reinterpret_cast<const void*>(cur), &mbi, sizeof(mbi)) || mbi.RegionSize == 0) {
+            return SetErr(kEnomem);
+        }
+        const uintptr_t mbiEnd = reinterpret_cast<uintptr_t>(mbi.BaseAddress) + mbi.RegionSize;
+        const uintptr_t chunkEnd = std::min(pEnd, mbiEnd > cur ? mbiEnd : pEnd);
+        const SIZE_T chunkLen = chunkEnd - cur;
+        if (mbi.State == MEM_FREE) return SetErr(kEnomem);
+        if (prot == 0) {
+            if (mbi.State == MEM_COMMIT) {
+                DWORD old = 0;
+                if (!VirtualProtect(reinterpret_cast<void*>(cur), chunkLen, PAGE_NOACCESS, &old)) {
+                    return SetErr(kEnomem);
+                }
+            }
+        } else {
+            if (mbi.State == MEM_RESERVE) {
+                if (!VirtualAlloc(reinterpret_cast<void*>(cur), chunkLen, MEM_COMMIT, PAGE_READWRITE)) {
+                    return SetErr(kEnomem);
+                }
+            }
+            DWORD old = 0;
+            if (!VirtualProtect(reinterpret_cast<void*>(cur), chunkLen, winProt, &old)) {
+                return SetErr(kEnomem);
+            }
+        }
+        cur = chunkEnd;
+    }
+    if (prot & 4) FlushInstructionCache(GetCurrentProcess(), reinterpret_cast<void*>(pStart), pEnd - pStart);
     return 0;
 }
 

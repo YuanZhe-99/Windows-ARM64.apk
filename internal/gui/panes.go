@@ -787,7 +787,14 @@ func (a *App) failedView(c *ui.Context, s *session, e *entry, own bool) {
 				ui.Column(c).Grow(1).MinWidth(0).Gap(6).Children(func() {
 					ui.Text(c, L.TryNativeOff()).FontWeight(600)
 					muted(c, L.TryNativeOffHint(), 13).Wrap()
-					ui.Row(c).Children(func() {
+					ui.Row(c).Gap(8).Children(func() {
+						if a.profile(e) != winapk.N2 {
+							if primary(c, "failn2-"+e.ID, L.SwitchProfileN2Retry(), nil).Clicked() {
+								e.Profile = winapk.N2
+								a.saveLibrary()
+								a.launch(e, own, false)
+							}
+						}
 						if button(c, "failset-"+e.ID, L.OpenItsSettings(), nil).Clicked() {
 							a.openDetails(e.ID)
 							if own {
@@ -804,6 +811,12 @@ func (a *App) failedView(c *ui.Context, s *session, e *entry, own bool) {
 					ui.Text(c, L.TryNativeRestricted()).FontWeight(600)
 					muted(c, L.TryNativeRestrictedHint(), 13).Wrap()
 					ui.Row(c).Gap(8).Children(func() {
+						if primary(c, "failn2-"+e.ID, L.SwitchProfileN2Retry(), nil).Clicked() {
+							e.Native = winapk.NativeRestricted
+							e.Profile = maxProfile(winapk.N2, e.APK.Profile)
+							a.saveLibrary()
+							a.launch(e, own, false)
+						}
 						if button(c, "failset-"+e.ID, L.OpenItsSettings(), nil).Clicked() {
 							a.openDetails(e.ID)
 							if own {
