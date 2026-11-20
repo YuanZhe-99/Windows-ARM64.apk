@@ -1218,7 +1218,15 @@ EGLBoolean EGLAPIENTRY E_SwapBuffers(EGLDisplay d, EGLSurface surf) {
     }
 
     bool submitted = false;
-    if (isD3d11 && g_drv.eglQuerySurfacePointerANGLE) {
+    EGLint cfgSamples = 0;
+    {
+        std::lock_guard lock(g_mu);
+        auto it = g_surfaces.find(surf);
+        if (it != g_surfaces.end() && g_drv.eglGetConfigAttrib) {
+            g_drv.eglGetConfigAttrib(g_drv.display, it->second.hostConfig, EGL_SAMPLES, &cfgSamples);
+        }
+    }
+    if (isD3d11 && cfgSamples == 0 && g_drv.eglQuerySurfacePointerANGLE) {
         void* shareHandle = nullptr;
         if (g_drv.eglQuerySurfacePointerANGLE(g_drv.display, hostPbuf, EGL_D3D_TEXTURE_2D_SHARE_HANDLE_ANGLE, &shareHandle) && shareHandle) {
             g_drv.glFinish();

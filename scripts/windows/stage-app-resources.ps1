@@ -90,7 +90,7 @@ foreach ($module in 'java_base_patch','jdk_unsupported_patch') {
 
 $fw = 'bin\tools\framework-res.apk'
 Copy-Staged $build $fw $fw
-foreach ($helper in 'bionic','jni') {
+foreach ($helper in 'bionic','bionic-n2','jni') {
     $so = "bin\guest\libwinapk-$helper.so"
     Copy-Staged $build $so $so
 }

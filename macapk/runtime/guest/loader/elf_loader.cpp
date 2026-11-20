@@ -11,6 +11,7 @@
 // ModuleSet prepares/links/protects an entire new graph before dependency-first constructors;
 // its close operation preserves mappings until teardown, unlike a standalone N0 Module.
 
+#define _CRT_RAND_S
 #include "elf_loader.h"
 #include "faults.h"
 
@@ -42,12 +43,14 @@ namespace {
 using macapk::translator::Elf64Ehdr;
 using macapk::translator::Elf64Phdr;
 using macapk::translator::Elf64Rela;
+using macapk::translator::Elf64Shdr;
 using macapk::translator::Elf64Sym;
 
 constexpr uint32_t PT_INTERP = 3, PT_NOTE = 4, PT_PHDR = 6, PT_TLS = 7;
 constexpr uint32_t PT_GNU_EH_FRAME = 0x6474e550, PT_GNU_STACK = 0x6474e551,
                    PT_GNU_RELRO = 0x6474e552, PT_GNU_PROPERTY = 0x6474e553;
 constexpr uint32_t PF_W = 2, PF_R = 4;
+constexpr uint64_t SHF_ALLOC = 0x2, SHF_EXECINSTR = 0x4;
 
 constexpr int64_t DT_NULL = 0, DT_NEEDED = 1, DT_PLTRELSZ = 2, DT_PLTGOT = 3, DT_HASH = 4,
                   DT_STRTAB = 5, DT_SYMTAB = 6, DT_RELA = 7, DT_RELASZ = 8, DT_RELAENT = 9,
@@ -134,7 +137,58 @@ std::string PermName(uint32_t flags) {
 uint64_t Down(uint64_t v, uint64_t page) { return v & ~(page - 1); }
 uint64_t Up(uint64_t v, uint64_t page) { return (v + page - 1) & ~(page - 1); }
 
+struct GuardPageState {
+    uint16_t imm16 = 0;
+    uint64_t cookie = 0;
+};
+
+const GuardPageState& EnsureBionicGuardPage() {
+    static const GuardPageState state = [] {
+        GuardPageState s{};
+        unsigned int lo = 0, hi = 0;
+        rand_s(&lo);
+        rand_s(&hi);
+        s.cookie = ((static_cast<uint64_t>(hi) << 32) | lo) & ~0xffull;
+        if (!s.cookie) s.cookie = 0x5741504b47555200ull;
+        for (uint32_t imm = 0x1800u; imm < 0x7ff0u; ++imm) {
+            void* target = reinterpret_cast<void*>(static_cast<uintptr_t>(imm) << 16);
+            void* mem = VirtualAlloc(target, 0x10000, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+            if (!mem) continue;
+            if (mem != target) {
+                VirtualFree(mem, 0, MEM_RELEASE);
+                continue;
+            }
+            auto* slots = static_cast<uint64_t*>(mem);
+            slots[1] = reinterpret_cast<uint64_t>(mem); // Bionic TLS_SLOT_SELF (+0x08)
+            slots[5] = s.cookie;                        // Bionic TLS_SLOT_STACK_GUARD (+0x28)
+            DWORD oldProt = 0;
+            VirtualProtect(mem, 0x10000, PAGE_READONLY, &oldProt);
+            s.imm16 = static_cast<uint16_t>(imm);
+            break;
+        }
+        return s;
+    }();
+    return state;
+}
+
+bool CompatibleVersion(std::string_view providerVer, std::string_view requiredVer, bool n2Engine) {
+    if (providerVer == requiredVer) return true;
+    if (!n2Engine || providerVer != "LIBC") return false;
+    return requiredVer == "LIBC_N" || requiredVer == "LIBC_O" || requiredVer == "LIBC_P" ||
+           requiredVer == "LIBC_Q" || requiredVer == "LIBC_R" || requiredVer == "LIBC_S" ||
+           requiredVer == "LIBC_T" || requiredVer == "LIBC_U" || requiredVer == "LIBC_V";
+}
+
+__declspec(guard(nocf)) int InvokeGuestPhdrCallback(
+        int (*cb)(GuestDlPhdrInfo*, uint64_t, void*), GuestDlPhdrInfo* info, uint64_t sz, void* data) {
+    return cb(info, sz, data);
+}
+
 }  // namespace
+
+uint64_t GuestStackGuardCookie() {
+    return EnsureBionicGuardPage().cookie;
+}
 
 const char* CategoryName(Category c) {
     switch (c) {
@@ -227,6 +281,26 @@ void* Module::Find(std::string_view name) const {
     return nullptr;
 }
 
+bool Module::FindByAddress(uintptr_t address, const char** nameOut, void** symAddrOut) const {
+    if (nameOut) *nameOut = nullptr;
+    if (symAddrOut) *symAddrOut = nullptr;
+    if (!symtab_ || !strtab_ || address < base_ || address - base_ >= size_) return false;
+    for (uint32_t i = 1; i < nsyms_; ++i) {
+        Elf64Sym s;
+        std::memcpy(&s, symtab_ + size_t{i} * sizeof s, sizeof s);
+        if (s.st_shndx == SHN_UNDEF || s.st_shndx == SHN_ABS || s.st_name >= strsz_ || s.st_size == 0) continue;
+        const uint8_t bind = s.st_info >> 4;
+        if (bind != macapk::translator::STB_GLOBAL && bind != macapk::translator::STB_WEAK) continue;
+        const uintptr_t start = static_cast<uintptr_t>(s.st_value + bias_);
+        if (address >= start && address - start < s.st_size) {
+            if (nameOut) *nameOut = strtab_ + s.st_name;
+            if (symAddrOut) *symAddrOut = reinterpret_cast<void*>(start);
+            return true;
+        }
+    }
+    return false;
+}
+
 /// One load: the checks and steps of Load, sharing the file, the headers and the image.
 class Loader {
 public:
@@ -244,8 +318,9 @@ public:
     }
 
     /// Prepares and screens an image without resolving imports or running initializers.
-    bool Prepare(const std::wstring& path, bool managed) {
+    bool Prepare(const std::wstring& path, bool managed, bool n2Engine = false) {
         managed_ = managed;
+        n2Engine_ = n2Engine;
         mod_.reset(new Module);
         const std::u8string name = std::filesystem::path(path).filename().u8string();
         mod_->name_.assign(name.begin(), name.end());
@@ -339,6 +414,9 @@ private:
             return Malformed(0x20, Fmt("%u program headers of %u bytes at %s: past the end of the file",
                                        eh_.e_phnum, eh_.e_phentsize, Hex(eh_.e_phoff).c_str()));
         }
+        const size_t phdrBytes = size_t{eh_.e_phnum} * sizeof(Elf64Phdr);
+        mod_->phdrsRaw_.assign(file_.data() + eh_.e_phoff, file_.data() + eh_.e_phoff + phdrBytes);
+        mod_->phdrCount_ = eh_.e_phnum;
         bool haveDynamic = false;
         for (uint32_t i = 0; i < eh_.e_phnum; i++) {
             const uint64_t at = eh_.e_phoff + uint64_t{i} * sizeof(Elf64Phdr);
@@ -398,6 +476,27 @@ private:
         }
         if (loads_.empty()) return Malformed(eh_.e_phoff, "no PT_LOAD");
         if (!haveDynamic) return Malformed(eh_.e_phoff, "no PT_DYNAMIC");
+        if (n2Engine_ && eh_.e_shentsize == sizeof(Elf64Shdr) && eh_.e_shnum > 0 &&
+            InFile(eh_.e_shoff, uint64_t{eh_.e_shnum} * sizeof(Elf64Shdr))) {
+            std::vector<std::pair<uint64_t, uint64_t>> raw;
+            for (uint32_t i = 0; i < eh_.e_shnum; i++) {
+                Elf64Shdr sh;
+                std::memcpy(&sh, file_.data() + eh_.e_shoff + uint64_t{i} * sizeof(Elf64Shdr), sizeof sh);
+                if ((sh.sh_flags & (SHF_ALLOC | SHF_EXECINSTR)) != (SHF_ALLOC | SHF_EXECINSTR) || sh.sh_size == 0) continue;
+                const Elf64Phdr* seg = SegmentOf(sh.sh_addr, sh.sh_size);
+                if (!seg || !(seg->p_flags & macapk::translator::PF_X)) continue;
+                const uint64_t end = std::min(sh.sh_addr + sh.sh_size, seg->p_vaddr + seg->p_filesz);
+                if (end > sh.sh_addr) raw.emplace_back(sh.sh_addr, end);
+            }
+            std::sort(raw.begin(), raw.end());
+            for (const auto& [s, e] : raw) {
+                if (!execRanges_.empty() && s <= execRanges_.back().second) {
+                    execRanges_.back().second = std::max(execRanges_.back().second, e);
+                } else {
+                    execRanges_.emplace_back(s, e);
+                }
+            }
+        }
         return true;
     }
 
@@ -443,8 +542,22 @@ private:
             }
             // Fresh pages are zero: BSS past p_filesz needs nothing more.
             std::memcpy(At(p.p_vaddr), file_.data() + p.p_offset, p.p_filesz);
-            if (p.p_flags & macapk::translator::PF_X)
+            if ((p.p_flags & macapk::translator::PF_X) && execRanges_.empty())
                 mod_->executable_.push_back({reinterpret_cast<uintptr_t>(At(p.p_vaddr)), static_cast<size_t>(p.p_memsz)});
+        }
+        if (!execRanges_.empty()) {
+            std::vector<std::pair<uint64_t, uint64_t>> pages;
+            for (const auto& [s, e] : execRanges_) {
+                const uint64_t ps = Down(s, page_), pe = Up(e, page_);
+                if (!pages.empty() && ps <= pages.back().second) {
+                    pages.back().second = std::max(pages.back().second, pe);
+                } else {
+                    pages.emplace_back(ps, pe);
+                }
+            }
+            for (const auto& [ps, pe] : pages) {
+                mod_->executable_.push_back({reinterpret_cast<uintptr_t>(At(ps)), static_cast<size_t>(pe - ps)});
+            }
         }
         return true;
     }
@@ -498,16 +611,16 @@ private:
                 d[e.tag] = e.val;
                 continue;
             case DT_VERDEF:
-                if (managed_) return Fail(Category::AbiUnsupported, where, "versioned guest exports are not supported in this module profile");
+                if (managed_ && !n2Engine_) return Fail(Category::AbiUnsupported, where, "versioned guest exports are not supported in this module profile");
                 continue;
             case DT_VERDEFNUM:
-                if (managed_ && e.val) return Fail(Category::AbiUnsupported, where, "versioned guest exports are not supported in this module profile");
+                if (managed_ && !n2Engine_ && e.val) return Fail(Category::AbiUnsupported, where, "versioned guest exports are not supported in this module profile");
                 continue;
             case DT_VERSYM: case DT_VERNEEDNUM:
                 if (managed_) d[e.tag] = e.val;
                 continue;
             case DT_RPATH: case DT_RUNPATH:
-                if (managed_) return Fail(Category::AbiUnsupported, where, "library search paths are not supported in this module profile");
+                if (managed_ && !n2Engine_) return Fail(Category::AbiUnsupported, where, "library search paths are not supported in this module profile");
                 continue;
             case DT_TEXTREL:
                 return Fail(Category::ElfUnsupported, where, "text relocations (DT_TEXTREL), which Android refuses too");
@@ -667,8 +780,10 @@ private:
             std::memcpy(&index, At(versym_ + uint64_t{i} * 2), 2);
             index &= 0x7fff;
             if (index <= 1) continue;
-            if (Sym(i).st_shndx != SHN_UNDEF)
+            if (Sym(i).st_shndx != SHN_UNDEF) {
+                if (n2Engine_) continue;
                 return Fail(Category::AbiUnsupported, "symbol " + std::string(Str(Sym(i).st_name)), "versioned guest exports are not supported");
+            }
             const auto version = versions_.find(index);
             if (version == versions_.end()) return Malformed(dynamic_.p_offset, "DT_VERSYM refers to an unknown version index");
             symbolVersions_[i] = &version->second;
@@ -708,31 +823,68 @@ private:
         cs_option(cs, CS_OPT_DETAIL, CS_OPT_ON);
         cs_insn* insn = cs_malloc(cs);
         bool ok = true;
-        for (const Elf64Phdr& p : loads_) {
-            if (!(p.p_flags & macapk::translator::PF_X) || !ok) continue;
-            const uint64_t start = Up(p.p_vaddr, 4), end = Down(p.p_vaddr + p.p_filesz, 4);
+        const uint16_t guardImm16 = n2Engine_ ? EnsureBionicGuardPage().imm16 : 0;
+        std::vector<std::pair<uint64_t, uint64_t>> scanSpans = execRanges_;
+        if (scanSpans.empty()) {
+            for (const Elf64Phdr& p : loads_) {
+                if (p.p_flags & macapk::translator::PF_X) scanSpans.emplace_back(p.p_vaddr, p.p_vaddr + p.p_filesz);
+            }
+        }
+        for (const auto& [rawStart, rawEnd] : scanSpans) {
+            if (!ok) break;
+            const uint64_t start = Up(rawStart, 4), end = Down(rawEnd, 4);
             mod_->stats_.codeBytes += end > start ? end - start : 0;
             for (uint64_t va = start; ok && va < end; va += 4) {
                 uint32_t w;
                 std::memcpy(&w, At(va), 4);
-                const uint8_t* code = At(va);
-                size_t left = 4;
-                uint64_t addr = va;
-                const bool decoded = cs_disasm_iter(cs, &code, &left, &addr, insn);
+                // N2 stack-canary rewrite: `mrs xRt, TPIDR_EL0` -> `movz xRt, #guardImm16, lsl #16`
+                // pointing at a PAGE_READONLY Bionic guard page (`+0x28` holds the random canary).
+                // Never writes or reads host `TPIDR_EL0`, and `.text` becomes RX in `Protect()`.
+                if (n2Engine_ && guardImm16 != 0 && (w & 0xFFFFFFE0u) == 0xD53BD040u && (w & 0x1Fu) < 31) {
+                    w = 0xD2A00000u | (static_cast<uint32_t>(guardImm16) << 5) | (w & 0x1Fu);
+                    std::memcpy(At(va), &w, 4);
+                }
+                // N2 register-restore paired load rewrite (`libunwind` / Dart VM `PopRegisters`):
+                // `ldp x18, xRt2, [...]` -> `ldp xzr, xRt2, [...]` so `x18` (Windows TEB) is never written.
+                if (n2Engine_ &&
+                    ((w & 0xFFC0001Fu) == 0xA9400012u || (w & 0xFFC0001Fu) == 0xA8C00012u || (w & 0xFFC0001Fu) == 0xA9C00012u) &&
+                    ((w >> 10) & 0x1Fu) != 18 && ((w >> 10) & 0x1Fu) != 31 && ((w >> 5) & 0x1Fu) != 18) {
+                    w = (w & ~0x1Fu) | 31u;
+                    std::memcpy(At(va), &w, 4);
+                }
+                const bool isSvc = (w & 0xFFE0001F) == 0xD4000001 || (w & 0xFFE0001F) == 0xD4000002 || (w & 0xFFE0001F) == 0xD4000003;
+                const bool isTpidr = (w & 0xFFDFFFE0) == 0xD51BD040;
+                const bool maybeX18 = !n2Engine_ ||
+                    (w & 0x1Fu) == 18u || ((w >> 5) & 0x1Fu) == 18u ||
+                    ((w >> 10) & 0x1Fu) == 18u || ((w >> 16) & 0x1Fu) == 18u;
+                bool decoded = false;
+                if (isSvc || isTpidr || maybeX18) {
+                    const uint8_t* code = At(va);
+                    size_t left = 4;
+                    uint64_t addr = va;
+                    decoded = cs_disasm_iter(cs, &code, &left, &addr, insn);
+                }
                 // The message is only built for the word that is refused.
                 auto refuse = [&](const char* why) {
                     const std::string text = decoded ? Fmt("%s %s", insn->mnemonic, insn->op_str) : Fmt(".word %s", Hex(w).c_str());
                     return Fail(Category::AbiUnsupported, "vaddr " + Hex(va), text + why);
                 };
-                if ((w & 0xFFE0001F) == 0xD4000001 || (w & 0xFFE0001F) == 0xD4000002 || (w & 0xFFE0001F) == 0xD4000003) {
+                if (isSvc) {
                     ok = refuse(": a raw system call, never passed to Windows");
-                } else if ((w & 0xFFDFFFE0) == 0xD51BD040) {
+                } else if (isTpidr) {
                     ok = refuse(": TPIDR_EL0 is the host's, not Android's thread pointer");
+                } else if (!maybeX18) {
+                    mod_->stats_.instructions++;
                 } else if (!decoded) {
                     mod_->stats_.dataWords++;
                 } else {
                     mod_->stats_.instructions++;
-                    if (UsesX18(insn)) ok = refuse(": x18 holds the Windows TEB");
+                    if (UsesX18(insn)) {
+                        if (n2Engine_ && (IsReadOnlyX18Save(insn) || IsEmbeddedAsciiRun(va, start, end))) {
+                            continue;
+                        }
+                        ok = refuse(": x18 holds the Windows TEB");
+                    }
                 }
             }
         }
@@ -752,6 +904,31 @@ private:
             if (op.type == ARM64_OP_MEM && (is18(op.mem.base) || is18(op.mem.index))) return true;
         }
         return false;
+    }
+
+    // Admits only pure register-snapshot stores (`stp x18, ...` / `str x18, [xRn, ...]`) that never
+    // write `x18` and never use `x18` as a memory base/index.
+    static bool IsReadOnlyX18Save(const cs_insn* insn) {
+        auto is18 = [](unsigned r) { return r == ARM64_REG_X18 || r == ARM64_REG_W18; };
+        const cs_detail* d = insn->detail;
+        if (std::strcmp(insn->mnemonic, "stp") != 0 && std::strcmp(insn->mnemonic, "str") != 0) return false;
+        for (uint8_t i = 0; i < d->regs_write_count; i++) if (is18(d->regs_write[i])) return false;
+        for (uint8_t i = 0; i < d->arm64.op_count; i++) {
+            const cs_arm64_op& op = d->arm64.operands[i];
+            if (op.type == ARM64_OP_MEM && (is18(op.mem.base) || is18(op.mem.index))) return false;
+        }
+        return true;
+    }
+
+    // Detects embedded read-only ASCII string banners (e.g. BoringSSL's CRYPTOGAMS banner in `.text`).
+    bool IsEmbeddedAsciiRun(uint64_t va, uint64_t segStart, uint64_t segEnd) const {
+        if (va < segStart + 8 || va + 12 > segEnd) return false;
+        const uint8_t* p = At(va - 8);
+        for (int i = 0; i < 20; ++i) {
+            const uint8_t c = p[i];
+            if (!(c >= 0x20 && c <= 0x7E)) return false;
+        }
+        return true;
     }
 
     // Pass `apply` false checks every relocation and import and lists all missing symbols;
@@ -903,6 +1080,32 @@ private:
         DWORD old;
         for (const Elf64Phdr& p : loads_) {
             const uint64_t start = Down(p.p_vaddr, page_), end = Up(p.p_vaddr + p.p_memsz, page_);
+            if ((p.p_flags & macapk::translator::PF_X) && !execRanges_.empty()) {
+                const DWORD roProt = (p.p_flags & PF_R) ? PAGE_READONLY : PAGE_NOACCESS;
+                if (!VirtualProtect(At(start), end - start, roProt, &old)) {
+                    return Fail(Category::HostMemory, "vaddr " + Hex(p.p_vaddr),
+                                Fmt("setting RO on %s bytes failed (error %lu)", Hex(end - start).c_str(), GetLastError()));
+                }
+                std::vector<std::pair<uint64_t, uint64_t>> pages;
+                for (const auto& [s, e] : execRanges_) {
+                    if (e <= p.p_vaddr || s >= p.p_vaddr + p.p_memsz) continue;
+                    const uint64_t ps = std::max(start, Down(s, page_)), pe = std::min(end, Up(e, page_));
+                    if (pe <= ps) continue;
+                    if (!pages.empty() && ps <= pages.back().second) {
+                        pages.back().second = std::max(pages.back().second, pe);
+                    } else {
+                        pages.emplace_back(ps, pe);
+                    }
+                }
+                for (const auto& [ps, pe] : pages) {
+                    if (!VirtualProtect(At(ps), pe - ps, Protection(p.p_flags), &old)) {
+                        return Fail(Category::HostMemory, "vaddr " + Hex(ps),
+                                    Fmt("setting %s on %s bytes failed (error %lu)", PermName(p.p_flags).c_str(),
+                                        Hex(pe - ps).c_str(), GetLastError()));
+                    }
+                }
+                continue;
+            }
             if (!VirtualProtect(At(start), end - start, Protection(p.p_flags), &old)) {
                 return Fail(Category::HostMemory, "vaddr " + Hex(p.p_vaddr),
                             Fmt("setting %s on %s bytes failed (error %lu)", PermName(p.p_flags).c_str(),
@@ -910,11 +1113,16 @@ private:
             }
         }
         if (relro_.p_memsz) {
-            const Elf64Phdr* seg = SegmentOf(relro_.p_vaddr, relro_.p_memsz);
-            if (!seg) return Malformed(relro_.p_offset, "PT_GNU_RELRO lies outside every PT_LOAD");
+            const Elf64Phdr* seg = SegmentOf(relro_.p_vaddr, 1);
+            const uint64_t align = (seg && seg->p_align >= page_ && (seg->p_align & (seg->p_align - 1)) == 0) ? seg->p_align : page_;
+            if (!seg || relro_.p_vaddr + relro_.p_memsz < relro_.p_vaddr ||
+                relro_.p_vaddr + relro_.p_memsz > Up(seg->p_vaddr + seg->p_memsz, align)) {
+                return Malformed(relro_.p_offset, "PT_GNU_RELRO lies outside every PT_LOAD");
+            }
             // The page below RELRO's start is its own only when RELRO starts its segment.
             const uint64_t start = relro_.p_vaddr == seg->p_vaddr ? Down(relro_.p_vaddr, page_) : Up(relro_.p_vaddr, page_);
-            const uint64_t end = Down(relro_.p_vaddr + relro_.p_memsz, page_);
+            const uint64_t segCommittedEnd = Up(seg->p_vaddr + seg->p_memsz, page_);
+            const uint64_t end = std::min(Down(relro_.p_vaddr + relro_.p_memsz, page_), segCommittedEnd);
             if (end > start) {
                 if (!VirtualProtect(At(start), end - start, PAGE_READONLY, &old)) {
                     return Fail(Category::HostMemory, "vaddr " + Hex(start), Fmt("RELRO protection failed (error %lu)", GetLastError()));
@@ -937,10 +1145,12 @@ private:
     std::vector<uint8_t> file_;
     Elf64Ehdr eh_{};
     std::vector<Elf64Phdr> loads_;
+    std::vector<std::pair<uint64_t, uint64_t>> execRanges_;
     Elf64Phdr dynamic_{}, relro_{};
     std::vector<Table> tables_;
     uint64_t page_ = 4096, lo_ = 0, hi_ = 0;
     bool managed_ = false;
+    bool n2Engine_ = false;
     uint64_t init_ = 0, fini_ = 0, initArray_ = 0, initSize_ = 0, finiArray_ = 0, finiSize_ = 0;
     uint64_t versym_ = 0, verneed_ = 0, versionCount_ = 0;
     std::map<uint16_t, Version> versions_;
@@ -951,6 +1161,7 @@ private:
 /// Retains one graph node independently of explicit open references until process teardown.
 struct LibraryRecord {
     std::string name;
+    std::string dladdrPath;
     uint64_t handle = 0, references = 0;
     std::unique_ptr<Loader> preparation;
     std::unique_ptr<Module> module;
@@ -972,10 +1183,13 @@ struct LibraryRecord {
 
 /// Implements one bounded library namespace and its initialization transaction.
 struct ModuleSet::Impl {
+    std::wstring directoryWide;
     std::filesystem::path directory;
     std::vector<HostSymbol> imports;
+    bool n2Engine = false;
     mutable std::recursive_mutex mutex;
     std::map<std::string, std::unique_ptr<LibraryRecord>, std::less<>> records;
+    std::vector<LibraryRecord*> loadOrder;
     uint64_t nextHandle = 1;
     std::thread::id initializingThread;
     size_t initializationDepth = 0;
@@ -997,13 +1211,15 @@ struct ModuleSet::Impl {
 
     /// Looks up an export in self then breadth-first dependency order; no host export fallback.
     static void* Lookup(const LibraryRecord& root, std::string_view symbol,
-                        std::string_view library = {}, std::string_view version = {}) {
+                        std::string_view library = {}, std::string_view version = {}, bool n2 = false) {
         std::vector<const LibraryRecord*> queue{&root};
         std::set<const LibraryRecord*> seen;
         for (size_t i = 0; i < queue.size(); i++) {
             const auto* record = queue[i];
             if (!seen.insert(record).second) continue;
-            if (library.empty() || (record->builtin && record->name == library && record->version == version))
+            if (library.empty() ||
+                (record->builtin && record->name == library && CompatibleVersion(record->version, version, n2)) ||
+                (n2 && !record->builtin && record->name == library))
                 if (void* result = record->Export(symbol)) return result;
             for (const auto* dependency : record->dependencies) queue.push_back(dependency);
         }
@@ -1060,9 +1276,10 @@ struct ModuleSet::Impl {
             }
             auto record = std::make_unique<LibraryRecord>();
             record->name = next;
+            record->dladdrPath = "/data/app/lib/arm64/" + std::string(next);
             record->handle = nextHandle++;
             record->preparation = std::make_unique<Loader>(imports, error);
-            if (!record->preparation->Prepare(path.wstring(), true)) {
+            if (!record->preparation->Prepare(path.wstring(), true, n2Engine)) {
                 error->where = "module " + record->name + " " + error->where;
                 return nullptr;
             }
@@ -1088,12 +1305,18 @@ struct ModuleSet::Impl {
             for (const auto& [index, required] : record->preparation->Versions()) {
                 (void)index;
                 const auto provider = records.find(required.library);
-                if (provider == records.end() || !provider->second->builtin || provider->second->version != required.name)
+                const auto stagedProv = provider == records.end() ? staged.find(required.library) : staged.end();
+                const bool ok = (provider != records.end() &&
+                    ((provider->second->builtin && CompatibleVersion(provider->second->version, required.name, n2Engine)) ||
+                     (n2Engine && !provider->second->builtin))) ||
+                    (n2Engine && stagedProv != staged.end());
+                if (!ok)
                     return Error(error, Category::AbiUnsupported, record->name,
                                  "unsupported symbol version " + required.name + " from " + required.library);
             }
-            if (!record->preparation->Finish([record](std::string_view symbol, std::string_view library, std::string_view version) {
-                    return Lookup(*record, symbol, library, version);
+            const bool isN2 = n2Engine;
+            if (!record->preparation->Finish([record, isN2](std::string_view symbol, std::string_view library, std::string_view version) {
+                    return Lookup(*record, symbol, library, version, isN2);
                 })) {
                 error->where = "module " + record->name + " " + error->where;
                 return 0;
@@ -1102,6 +1325,7 @@ struct ModuleSet::Impl {
         for (auto* record : order) {
             record->module = record->preparation->Take();
             record->preparation.reset();
+            loadOrder.push_back(record);
         }
         records.merge(staged);
         *committed = true;
@@ -1130,12 +1354,16 @@ struct ModuleSet::Impl {
 };
 
 ModuleSet::ModuleSet(std::wstring directory, std::span<const HostSymbol> imports,
-                     std::span<const BuiltinLibrary> libraries) : impl_(std::make_unique<Impl>()) {
+                     std::span<const BuiltinLibrary> libraries, bool n2Engine) : impl_(std::make_unique<Impl>()) {
+    impl_->directoryWide = directory;
     impl_->directory = std::move(directory);
     impl_->imports.assign(imports.begin(), imports.end());
+    impl_->n2Engine = n2Engine;
+    if (n2Engine) EnsureBionicGuardPage();
     for (const auto& library : libraries) {
         auto record = std::make_unique<LibraryRecord>();
         record->name = library.name;
+        record->dladdrPath = "/system/lib64/" + library.name;
         record->handle = impl_->nextHandle++;
         record->symbols = library.symbols;
         record->version = library.version;
@@ -1145,6 +1373,15 @@ ModuleSet::ModuleSet(std::wstring directory, std::span<const HostSymbol> imports
 }
 
 ModuleSet::~ModuleSet() = default;
+
+bool ModuleSet::IsN2Engine() const { return impl_->n2Engine; }
+const std::wstring& ModuleSet::Directory() const { return impl_->directoryWide; }
+
+uint64_t ModuleSet::FindLoaded(std::string_view name) const {
+    std::lock_guard lock(impl_->mutex);
+    auto it = impl_->records.find(name);
+    return it != impl_->records.end() ? it->second->handle : 0;
+}
 
 uint64_t ModuleSet::Open(std::string_view name, LoadError* error) {
     bool committed = false;
@@ -1172,9 +1409,69 @@ bool ModuleSet::Close(uint64_t handle) {
 void* ModuleSet::Find(uint64_t handle, std::string_view symbol) const {
     std::lock_guard lock(impl_->mutex);
     auto* record = impl_->Handle(handle);
-    if (!record || !record->references ||
+    if (!record || (!impl_->n2Engine && !record->references) ||
         (impl_->initializationDepth && impl_->initializingThread != std::this_thread::get_id())) return nullptr;
-    return Impl::Lookup(*record, symbol);
+    return Impl::Lookup(*record, symbol, {}, {}, impl_->n2Engine);
+}
+
+void* ModuleSet::FindDefault(std::string_view symbol) const {
+    std::lock_guard lock(impl_->mutex);
+    for (const auto* record : impl_->loadOrder) {
+        if (record->module) {
+            if (void* p = record->module->Find(symbol)) return p;
+        }
+    }
+    for (const auto& [name, record] : impl_->records) {
+        (void)name;
+        if (record->builtin) {
+            if (void* p = record->Export(symbol)) return p;
+        }
+    }
+    for (const auto& imp : impl_->imports) {
+        if (symbol == imp.name) return imp.address;
+    }
+    return nullptr;
+}
+
+bool ModuleSet::DlAddr(uintptr_t address, GuestDlInfo* info) const {
+    if (!info) return false;
+    std::memset(info, 0, sizeof(*info));
+    std::lock_guard lock(impl_->mutex);
+    for (const auto* record : impl_->loadOrder) {
+        if (!record->module) continue;
+        const Module& m = *record->module;
+        if (address >= m.Base() && address - m.Base() < m.Size()) {
+            info->dli_fname = record->dladdrPath.c_str();
+            info->dli_fbase = reinterpret_cast<void*>(m.Base());
+            m.FindByAddress(address, &info->dli_sname, &info->dli_saddr);
+            return true;
+        }
+    }
+    return false;
+}
+
+int ModuleSet::IteratePhdr(int (*callback)(GuestDlPhdrInfo*, uint64_t, void*), void* data) const {
+    if (!callback) return 0;
+    std::vector<GuestDlPhdrInfo> snapshot;
+    {
+        std::lock_guard lock(impl_->mutex);
+        const uint64_t adds = static_cast<uint64_t>(impl_->loadOrder.size());
+        for (const auto* record : impl_->loadOrder) {
+            if (!record->module || !record->module->PhdrData()) continue;
+            GuestDlPhdrInfo item{};
+            item.dlpi_addr = static_cast<uint64_t>(record->module->Bias());
+            item.dlpi_name = record->dladdrPath.c_str();
+            item.dlpi_phdr = record->module->PhdrData();
+            item.dlpi_phnum = record->module->PhdrCount();
+            item.dlpi_adds = adds;
+            snapshot.push_back(item);
+        }
+    }
+    for (auto& item : snapshot) {
+        const int rc = InvokeGuestPhdrCallback(callback, &item, sizeof(GuestDlPhdrInfo), data);
+        if (rc != 0) return rc;
+    }
+    return 0;
 }
 
 void* ModuleSet::FindOwn(uint64_t handle, std::string_view symbol) const {

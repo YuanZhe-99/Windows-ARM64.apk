@@ -614,6 +614,16 @@ func (msgs Messages) FailedTitle(app string) string {
 	return Catalog.Format(msgs.locale, "FailedTitle", map[string]any{"app": app})
 }
 
+// FailedNativeDisabled says "This app needs its arm64 native code to start, and native code is currently off for it."
+// in the language the app shows.
+func FailedNativeDisabled() string { return In(i18n.Locale()).FailedNativeDisabled() }
+
+// FailedNativeDisabled says "This app needs its arm64 native code to start, and native code is currently off for it."
+// in the language of msgs.
+func (msgs Messages) FailedNativeDisabled() string {
+	return Catalog.Format(msgs.locale, "FailedNativeDisabled", nil)
+}
+
 // FailedNative says "Its native code asked for something Windows-ARM64.apk doesn't provide yet, so the app was stopped before it could mis…"
 // in the language the app shows.
 func FailedNative() string { return In(i18n.Locale()).FailedNative() }
@@ -712,6 +722,26 @@ func TryNativeOffHint() string { return In(i18n.Locale()).TryNativeOffHint() }
 // in the language of msgs.
 func (msgs Messages) TryNativeOffHint() string {
 	return Catalog.Format(msgs.locale, "TryNativeOffHint", nil)
+}
+
+// TryNativeRestricted says "Allow restricted native code for this app?"
+// in the language the app shows.
+func TryNativeRestricted() string { return In(i18n.Locale()).TryNativeRestricted() }
+
+// TryNativeRestricted says "Allow restricted native code for this app?"
+// in the language of msgs.
+func (msgs Messages) TryNativeRestricted() string {
+	return Catalog.Format(msgs.locale, "TryNativeRestricted", nil)
+}
+
+// TryNativeRestrictedHint says "Experimental. Enables its arm64 native libraries and GPU rendering within profile N2."
+// in the language the app shows.
+func TryNativeRestrictedHint() string { return In(i18n.Locale()).TryNativeRestrictedHint() }
+
+// TryNativeRestrictedHint says "Experimental. Enables its arm64 native libraries and GPU rendering within profile N2."
+// in the language of msgs.
+func (msgs Messages) TryNativeRestrictedHint() string {
+	return Catalog.Format(msgs.locale, "TryNativeRestrictedHint", nil)
 }
 
 // OpenItsSettings says "Open its settings"

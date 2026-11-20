@@ -103,7 +103,7 @@ if ((Get-FileHash (Join-Path $build $framework) -Algorithm SHA256).Hash.ToLowerI
     throw 'Framework resource hash differs from build-lock.json'
 }
 Copy-Payload $build $framework $framework
-foreach ($helper in 'bionic','jni') {
+foreach ($helper in 'bionic','bionic-n2','jni') {
     $file = "bin\guest\libwinapk-$helper.so"
     $record = Get-Content (Join-Path $build "bin\guest\$helper.json") -Raw | ConvertFrom-Json
     $inputFile = Join-Path $build $file

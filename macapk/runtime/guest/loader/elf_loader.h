@@ -68,6 +68,32 @@ struct LoadStats {
     uint64_t relroBytes = 0;        ///< bytes made read-only after relocation
 };
 
+/// Android LP64 `Dl_info` layout (`<dlfcn.h>`).
+struct GuestDlInfo {
+    const char* dli_fname;
+    void* dli_fbase;
+    const char* dli_sname;
+    void* dli_saddr;
+};
+static_assert(sizeof(GuestDlInfo) == 32);
+
+/// Android LP64 `struct dl_phdr_info` layout (`<link.h>`).
+struct GuestDlPhdrInfo {
+    uint64_t dlpi_addr;
+    const char* dlpi_name;
+    const void* dlpi_phdr;
+    uint16_t dlpi_phnum;
+    uint16_t pad0[3];
+    uint64_t dlpi_adds;
+    uint64_t dlpi_subs;
+    uint64_t dlpi_tls_modid;
+    void* dlpi_tls_data;
+};
+static_assert(sizeof(GuestDlPhdrInfo) == 64 && offsetof(GuestDlPhdrInfo, dlpi_adds) == 32);
+
+/// Returns the random 64-bit stack-protector cookie backing N2's read-only Bionic guard page.
+uint64_t GuestStackGuardCookie();
+
 /// A mapped guest image; Load returns it relocated/protected without executing guest code.
 /// Side effects: owns its address range and fault attribution; unregisters before unmapping.
 class Module {
@@ -79,6 +105,15 @@ public:
     /// Finds a symbol the module defines and exports (global or weak, default or protected).
     /// Returns: its address in this process, or nullptr.
     void* Find(std::string_view name) const;
+
+    /// Finds the exported dynamic symbol containing `address` for `dladdr`.
+    bool FindByAddress(uintptr_t address, const char** nameOut, void** symAddrOut) const;
+
+    /// Returns: the load bias (`runtime_addr - elf_vaddr`) for `dl_iterate_phdr`.
+    int64_t Bias() const { return bias_; }
+    /// Returns: raw `Elf64_Phdr` bytes and entry count for `dl_iterate_phdr`.
+    const void* PhdrData() const { return phdrsRaw_.empty() ? nullptr : phdrsRaw_.data(); }
+    uint16_t PhdrCount() const { return phdrCount_; }
 
     /// Returns: the start of the module's reserved range in this process.
     uintptr_t Base() const { return base_; }
@@ -119,6 +154,8 @@ private:
     std::string soname_;
     std::vector<std::pair<uintptr_t, size_t>> executable_;
     std::vector<void (*)()> initializers_;
+    std::vector<uint8_t> phdrsRaw_;
+    uint16_t phdrCount_ = 0;
     bool tracked_ = false;
 };
 
@@ -139,18 +176,30 @@ class ModuleSet {
 public:
     /// Creates a private namespace with audited imports and optional reserved logical libraries.
     ModuleSet(std::wstring directory, std::span<const HostSymbol> imports,
-              std::span<const BuiltinLibrary> libraries = {});
+              std::span<const BuiltinLibrary> libraries = {}, bool n2Engine = false);
     /// Releases mapped images after the caller has stopped every guest execution path.
     ~ModuleSet();
     ModuleSet(const ModuleSet&) = delete;
     ModuleSet& operator=(const ModuleSet&) = delete;
+    /// Reports whether N2 engine extensions (Bionic guard page, `dladdr`, `RTLD_DEFAULT`) are active.
+    bool IsN2Engine() const;
+    /// Returns the filesystem directory holding staged APK `.so` files.
+    const std::wstring& Directory() const;
     /// Opens a portable .so basename, initializes dependency-first once, and adds one reference.
     /// Returns: an opaque handle, or 0 and error; failures before initialization roll back.
     uint64_t Open(std::string_view name, LoadError* error);
+    /// Finds an already-loaded module handle by basename without loading (`RTLD_NOLOAD`).
+    uint64_t FindLoaded(std::string_view name) const;
     /// Decrements an explicit open reference; mappings stay pinned. Invalid/closed handles fail.
     bool Close(uint64_t handle);
     /// Looks up an export in an open handle and its breadth-first dependency scope.
     void* Find(uint64_t handle, std::string_view symbol) const;
+    /// Looks up an export (`STT_FUNC` or `STT_OBJECT`) across loaded guest modules (`RTLD_DEFAULT`).
+    void* FindDefault(std::string_view symbol) const;
+    /// Resolves `address` to its owning guest module and nearest containing symbol (`dladdr`).
+    bool DlAddr(uintptr_t address, GuestDlInfo* info) const;
+    /// Walks loaded guest ELF program headers for `dl_iterate_phdr` / `libunwind`.
+    int IteratePhdr(int (*callback)(GuestDlPhdrInfo*, uint64_t, void*), void* data) const;
     /// Looks up only this open image/provider, excluding dependencies (for its own JNI_OnLoad).
     void* FindOwn(uint64_t handle, std::string_view symbol) const;
     /// Checks whether an address belongs to a retained, screened guest executable image.

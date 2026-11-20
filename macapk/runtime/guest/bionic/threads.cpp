@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <chrono>
 #include <condition_variable>
 #include <cstdio>
 #include <cstdlib>
@@ -80,7 +81,9 @@ struct Worker {
     HANDLE handle = nullptr;
     void* result = nullptr;
     bool joining = false;
-    /// Closes the thread handle only after its owner has waited for exit.
+    bool detached = false;
+    bool finished = false;
+    /// Closes the thread handle only after its owner has waited for exit (or on detach).
     ~Worker() { if (handle) CloseHandle(handle); }
 };
 
@@ -100,12 +103,13 @@ struct MutexState {
 /// Owns a guest condition's wait queue and dynamic mutex binding, outside guest storage.
 struct ConditionState {
     uint64_t generation;
+    int clockId = 0;  // 0 = CLOCK_REALTIME, 1 = CLOCK_MONOTONIC
     size_t waiters = 0;
     MutexState* binding = nullptr;
     std::condition_variable changed;
 
-    /// Creates an untimed process-private condition record.
-    explicit ConditionState(uint64_t id) : generation(id) {}
+    /// Creates a process-private condition record.
+    explicit ConditionState(uint64_t id, int clk = 0) : generation(id), clockId(clk) {}
 };
 
 /// Owns one non-inheritable regular-file handle, never represented by a guest fd value.
@@ -151,12 +155,17 @@ struct ForkHooks {
 
 }  // namespace
 
+struct AllocationEntry {
+    void* rawBase = nullptr;
+    uint64_t usableSize = 0;
+};
+
 /// Holds one runtime's synchronized token tables and exact cleanup counters.
 struct ThreadState {
     ModuleSet* modules = nullptr;  // Caller-owned; mappings outlive this runtime's guest threads.
     HANDLE heap = HeapCreate(0, 0, 0);
     std::mutex mutex;
-    std::map<void*, uint64_t> allocations;
+    std::map<void*, AllocationEntry> allocations;
     std::wstring androidRoot;  // Canonical extended-length host path, ending in a backslash.
     std::map<int32_t, std::unique_ptr<GuestFile>> descriptors;
     std::vector<ExitCallback> exits;
@@ -194,10 +203,32 @@ struct GuestThreadContext {
 };
 
 thread_local GuestThreadContext* current = nullptr;
+thread_local GuestThreadContext* t_dormantBindingContext = nullptr;
+std::atomic<ThreadState*> g_n2AutoState{nullptr};
 
-/// Returns the calling managed context; an unmanaged import is a fatal contract violation.
+/// Returns the calling managed context; in N2 mode auto-binds host callback threads on demand.
 GuestThreadContext& Context() {
-    if (!current) Fatal("shim called without a managed guest context");
+    if (!current) {
+        if (ThreadState* autoState = g_n2AutoState.load(std::memory_order_acquire)) {
+            if (t_dormantBindingContext && &t_dormantBindingContext->runtime == autoState) {
+                return *t_dormantBindingContext;
+            }
+            thread_local std::unique_ptr<GuestThreadContext> autoCtx;
+            if (!autoCtx) {
+                GuestThread id = 0;
+                {
+                    std::lock_guard lock(autoState->mutex);
+                    if (!autoState->stopping && autoState->nextThread != std::numeric_limits<GuestThread>::max()) {
+                        id = autoState->nextThread++;
+                    }
+                }
+                if (id != 0) {
+                    autoCtx = std::make_unique<GuestThreadContext>(*autoState, id, true);
+                }
+            }
+        }
+        if (!current) Fatal("shim called without a managed guest context");
+    }
     return *current;
 }
 
@@ -251,15 +282,27 @@ void* BytesSet(void* destination, int32_t value, uint64_t size) {
 }
 
 /// Allocates and records guest-owned bytes; the caller holds runtime.mutex.
-void* Allocate(ThreadState& runtime, uint64_t size, bool zero) {
-    if (size > INT64_MAX) { Context().error = kNoMemory; return nullptr; }
-    void* pointer = HeapAlloc(runtime.heap, zero ? HEAP_ZERO_MEMORY : 0, static_cast<SIZE_T>(size ? size : 1));
-    if (pointer) {
+void* Allocate(ThreadState& runtime, uint64_t size, bool zero, uint64_t align = sizeof(void*)) {
+    if (size > INT64_MAX || align == 0 || (align & (align - 1)) != 0) {
+        Context().error = kNoMemory;
+        return nullptr;
+    }
+    const uint64_t req = size ? size : 1;
+    const uint64_t extra = align > 16 ? align : 0;
+    if (req > static_cast<uint64_t>(INT64_MAX) - extra) {
+        Context().error = kNoMemory;
+        return nullptr;
+    }
+    void* raw = HeapAlloc(runtime.heap, zero ? HEAP_ZERO_MEMORY : 0, static_cast<SIZE_T>(req + extra));
+    if (raw) {
+        uintptr_t addr = reinterpret_cast<uintptr_t>(raw);
+        if (extra) addr = (addr + align - 1) & ~(static_cast<uintptr_t>(align) - 1);
+        void* pointer = reinterpret_cast<void*>(addr);
         try {
-            runtime.allocations.emplace(pointer, size);
+            runtime.allocations.emplace(pointer, AllocationEntry{raw, size});
             return pointer;
         } catch (const std::bad_alloc&) {
-            HeapFree(runtime.heap, 0, pointer);
+            HeapFree(runtime.heap, 0, raw);
         }
     }
     Context().error = kNoMemory;
@@ -288,7 +331,7 @@ void Release(void* pointer) {
     std::lock_guard lock(runtime.mutex);
     const auto it = runtime.allocations.find(pointer);
     if (it == runtime.allocations.end()) Fatal("free of invalid or already freed guest allocation");
-    if (!HeapFree(runtime.heap, 0, pointer)) Fatal("guest heap release failed");
+    if (!HeapFree(runtime.heap, 0, it->second.rawBase)) Fatal("guest heap release failed");
     runtime.allocations.erase(it);
 }
 
@@ -303,9 +346,9 @@ void* Resize(void* pointer, uint64_t size) {
     if (size) {
         result = Allocate(runtime, size, false);
         if (!result) return nullptr;
-        std::memcpy(result, pointer, static_cast<size_t>(std::min(size, it->second)));
+        std::memcpy(result, pointer, static_cast<size_t>(std::min(size, it->second.usableSize)));
     }
-    if (!HeapFree(runtime.heap, 0, pointer)) Fatal("guest heap release failed");
+    if (!HeapFree(runtime.heap, 0, it->second.rawBase)) Fatal("guest heap release failed");
     runtime.allocations.erase(it);
     return result;
 }
@@ -758,10 +801,22 @@ int32_t RegisterAtFork(void (*prepare)(), void (*parent)(), void (*child)(), voi
 
 /// Enters a new guest context on a CRT-initialized host worker and publishes its return value.
 unsigned __stdcall Start(void* pointer) {
-    auto& worker = *static_cast<Worker*>(pointer);
+    auto* worker = static_cast<Worker*>(pointer);
+    ThreadState* rt = worker->runtime;
+    const GuestThread token = worker->token;
+    void* res = nullptr;
     {
-        GuestThreadContext context(*worker.runtime, worker.token);
-        worker.result = worker.entry(worker.argument);
+        GuestThreadContext context(*rt, token);
+        res = worker->entry(worker->argument);
+    }
+    std::lock_guard lock(rt->mutex);
+    auto it = rt->workers.find(token);
+    if (it != rt->workers.end()) {
+        it->second->result = res;
+        it->second->finished = true;
+        if (it->second->detached) {
+            rt->workers.erase(it);
+        }
     }
     return 0;
 }
@@ -922,7 +977,7 @@ void Stamp(void* object, uint32_t tag, uint64_t generation = 0) {
 
 /// Decodes NDK static initializer words, refusing unknown storage and unsupported features.
 template <size_t N>
-int StaticKind(const std::array<uint32_t, N>& words, int* kind) {
+int StaticKind(const std::array<uint32_t, N>& words, int* kind, bool allowN2Cond = false) {
     if (std::any_of(words.begin() + 1, words.end(), [](uint32_t word) { return word != 0; })) return kInvalid;
     if constexpr (N == 10) {
         if (words[0] == 0 || words[0] == 0x4000 || words[0] == 0x8000) {
@@ -932,6 +987,7 @@ int StaticKind(const std::array<uint32_t, N>& words, int* kind) {
         if (words[0] == 0x2000 || words[0] == 0x6000 || words[0] == 0xa000) return kNotSupported;
     } else {
         if (words[0] == 0) { *kind = 0; return 0; }
+        if (allowN2Cond && (words[0] == 1 || words[0] == 2)) { *kind = 1; return 0; }
         if (words[0] <= 3) return kNotSupported;  // process-shared and/or monotonic
     }
     return kInvalid;
@@ -970,11 +1026,12 @@ ConditionState* GetCondition(ThreadState& runtime, void* object, int* error) {
         return nullptr;
     }
     int kind;
-    *error = StaticKind(words, &kind);
+    const bool n2 = runtime.modules && runtime.modules->IsN2Engine();
+    *error = StaticKind(words, &kind, n2);
     if (*error) return nullptr;
     if (runtime.nextSync == UINT64_MAX) { *error = kAgain; return nullptr; }
     const uint64_t generation = runtime.nextSync++;
-    auto condition = std::make_unique<ConditionState>(generation);
+    auto condition = std::make_unique<ConditionState>(generation, kind);
     auto* result = condition.get();
     runtime.conditions.emplace(object, std::move(condition));
     Stamp<12>(object, kConditionMarker, generation);
@@ -1140,7 +1197,8 @@ int ConditionDestroy(void* object) {
     auto it = runtime.conditions.find(object);
     if (it == runtime.conditions.end()) {
         int kind;
-        if (int error = StaticKind(Words<12>(object), &kind)) return error;
+        const bool n2 = runtime.modules && runtime.modules->IsN2Engine();
+        if (int error = StaticKind(Words<12>(object), &kind, n2)) return error;
     } else {
         auto& condition = *it->second;
         if (Words<12>(object) != Marker<12>(kConditionMarker, condition.generation)) return kInvalid;
@@ -1149,6 +1207,265 @@ int ConditionDestroy(void* object) {
     }
     Stamp<12>(object, kDestroyed);
     return 0;
+}
+
+// ---- N2 Pthread, Timed Condition, Attribute, and DL Extensions ----
+
+constexpr int kTimedOut = 110; // Linux ETIMEDOUT
+
+struct GuestPthreadAttr {
+    uint32_t flags;
+    uint32_t pad;
+    void* stack_base;
+    uint64_t stack_size;
+    uint64_t guard_size;
+    int32_t sched_policy;
+    int32_t sched_priority;
+    char reserved[16];
+};
+static_assert(sizeof(GuestPthreadAttr) == 56);
+
+int N2PthreadCreate(GuestThread* token, const GuestPthreadAttr* attrs, Entry entry, void* argument) {
+    auto& runtime = Context().runtime;
+    if (!token || !entry) return kInvalid;
+    const bool detached = attrs && (attrs->flags & 1u) != 0;
+    const unsigned stackSize = (attrs && attrs->stack_size >= 65536 && attrs->stack_size <= (64ull << 20))
+        ? static_cast<unsigned>(attrs->stack_size) : 0;
+    try {
+        std::lock_guard lock(runtime.mutex);
+        if (runtime.stopping) return kNotSupported;
+        if (runtime.nextThread == std::numeric_limits<GuestThread>::max()) return kAgain;
+        const GuestThread id = runtime.nextThread++;
+        auto worker = std::make_unique<Worker>();
+        worker->runtime = &runtime;
+        worker->token = id;
+        worker->entry = entry;
+        worker->argument = argument;
+        worker->detached = detached;
+        auto [it, inserted] = runtime.workers.emplace(id, std::move(worker));
+        (void)inserted;
+        it->second->handle = reinterpret_cast<HANDLE>(
+            _beginthreadex(nullptr, stackSize, Start, it->second.get(), 0, nullptr));
+        if (!it->second->handle) {
+            runtime.workers.erase(it);
+            return kAgain;
+        }
+        *token = id;
+        return 0;
+    } catch (const std::bad_alloc&) {
+        return kAgain;
+    }
+}
+
+int N2PthreadDetach(GuestThread token) {
+    auto& runtime = Context().runtime;
+    std::lock_guard lock(runtime.mutex);
+    auto it = runtime.workers.find(token);
+    if (it == runtime.workers.end()) return kNoThread;
+    if (it->second->joining || it->second->detached) return kInvalid;
+    if (it->second->finished) {
+        runtime.workers.erase(it);
+    } else {
+        it->second->detached = true;
+    }
+    return 0;
+}
+
+int N2MutexAttrInit(int64_t* attr) { if (!attr) return kInvalid; *attr = 0; return 0; }
+int N2MutexAttrDestroy(int64_t* attr) { return attr ? 0 : kInvalid; }
+int N2MutexAttrSetType(int64_t* attr, int type) {
+    if (!attr || type < 0 || type > 2) return kInvalid;
+    *attr = (*attr & ~3LL) | type;
+    return 0;
+}
+int N2MutexAttrGetType(const int64_t* attr, int* type) {
+    if (!attr || !type) return kInvalid;
+    *type = static_cast<int>(*attr & 3LL);
+    return 0;
+}
+
+int N2MutexInit(void* object, const int64_t* attrs) {
+    auto& runtime = Context().runtime;
+    if (!object) return kInvalid;
+    const int kind = attrs ? static_cast<int>(*attrs & 3LL) : 0;
+    if (kind < 0 || kind > 2) return kInvalid;
+    try {
+        std::lock_guard lock(runtime.mutex);
+        if (runtime.mutexes.contains(object)) return kBusy;
+        if (runtime.nextSync == UINT64_MAX) return kAgain;
+        const uint64_t generation = runtime.nextSync++;
+        runtime.mutexes.emplace(object, std::make_unique<MutexState>(generation, kind));
+        Stamp<10>(object, kMutexMarker, generation);
+        return 0;
+    } catch (const std::bad_alloc&) { return kNoMemory; }
+}
+
+int N2CondAttrInit(int64_t* attr) { if (!attr) return kInvalid; *attr = 0; return 0; }
+int N2CondAttrDestroy(int64_t* attr) { return attr ? 0 : kInvalid; }
+int N2CondAttrSetClock(int64_t* attr, int clockId) {
+    if (!attr || (clockId != 0 && clockId != 1)) return kInvalid;
+    *attr = (*attr & ~2LL) | (clockId == 1 ? 2LL : 0LL);
+    return 0;
+}
+int N2CondAttrGetClock(const int64_t* attr, int* clockId) {
+    if (!attr || !clockId) return kInvalid;
+    *clockId = (*attr & 2LL) ? 1 : 0;
+    return 0;
+}
+
+int N2CondInit(void* object, const int64_t* attrs) {
+    auto& runtime = Context().runtime;
+    if (!object) return kInvalid;
+    const int clk = (attrs && (*attrs & 2LL)) ? 1 : 0;
+    try {
+        std::lock_guard lock(runtime.mutex);
+        if (runtime.conditions.contains(object)) return kBusy;
+        if (runtime.nextSync == UINT64_MAX) return kAgain;
+        const uint64_t generation = runtime.nextSync++;
+        runtime.conditions.emplace(object, std::make_unique<ConditionState>(generation, clk));
+        Stamp<12>(object, kConditionMarker, generation);
+        return 0;
+    } catch (const std::bad_alloc&) { return kNoMemory; }
+}
+
+int N2CondTimedWaitWithClock(void* object, void* mutexObject, const GuestTimespec* abstime, int overrideClock) {
+    if (!abstime) return ConditionWait(object, mutexObject);
+    if (abstime->nanoseconds < 0 || abstime->nanoseconds >= 1000000000LL) return kInvalid;
+    auto& context = Context();
+    try {
+        std::unique_lock lock(context.runtime.mutex);
+        int error = 0;
+        auto* mutex = GetMutex(context.runtime, mutexObject, &error);
+        if (!mutex) return error;
+        if (mutex->owner != context.token) return kPermission;
+        const uint32_t savedDepth = mutex->depth;
+        auto* condition = GetCondition(context.runtime, object, &error);
+        if (!condition) return error;
+        if (condition->waiters && condition->binding != mutex) return kInvalid;
+
+        const int clk = overrideClock >= 0 ? overrideClock : condition->clockId;
+        GuestTimespec now{};
+        ClockGetTime(clk, &now);
+        int64_t diffSec = abstime->seconds - now.seconds;
+        int64_t diffNs = abstime->nanoseconds - now.nanoseconds;
+        if (diffNs < 0) { diffSec--; diffNs += 1000000000LL; }
+        if (diffSec < 0) return kTimedOut;
+        const auto waitDur = std::chrono::seconds(std::min<int64_t>(diffSec, 86400 * 365)) +
+                             std::chrono::nanoseconds(diffNs);
+
+        condition->binding = mutex;
+        condition->waiters++;
+        mutex->conditionWaiters++;
+        mutex->owner = 0;
+        mutex->depth = 0;
+        mutex->available.notify_one();
+        const auto cvStatus = condition->changed.wait_for(lock, waitDur);
+        while (mutex->owner) mutex->available.wait(lock);
+        mutex->owner = context.token;
+        mutex->depth = savedDepth;
+        mutex->conditionWaiters--;
+        if (--condition->waiters == 0) condition->binding = nullptr;
+        return cvStatus == std::cv_status::timeout ? kTimedOut : 0;
+    } catch (const std::bad_alloc&) { return kNoMemory; }
+      catch (const std::system_error&) { Fatal("host timed condition wait failed"); }
+}
+
+int N2CondTimedWait(void* object, void* mutexObject, const GuestTimespec* abstime) {
+    return N2CondTimedWaitWithClock(object, mutexObject, abstime, -1);
+}
+int N2CondClockWait(void* object, void* mutexObject, int clk, const GuestTimespec* abstime) {
+    if (clk != 0 && clk != 1) return kInvalid;
+    return N2CondTimedWaitWithClock(object, mutexObject, abstime, clk);
+}
+
+int N2ClockGetTime(int32_t clock, GuestTimespec* result) {
+    if (!result) return IoError(kFault);
+    // 0=REALTIME, 5=REALTIME_COARSE; 1=MONOTONIC, 4=MONOTONIC_RAW, 6=MONOTONIC_COARSE, 7=BOOTTIME
+    if (clock == 0 || clock == 5) return ClockGetTime(0, result);
+    if (clock == 1 || clock == 4 || clock == 6 || clock == 7) return ClockGetTime(1, result);
+    if (clock == 2 || clock == 3) { // PROCESS_CPUTIME_ID / THREAD_CPUTIME_ID
+        FILETIME create{}, exit{}, kernel{}, user{};
+        const BOOL ok = clock == 3
+            ? GetThreadTimes(GetCurrentThread(), &create, &exit, &kernel, &user)
+            : GetProcessTimes(GetCurrentProcess(), &create, &exit, &kernel, &user);
+        if (!ok) return IoError(kInvalid);
+        const uint64_t ticks = ((static_cast<uint64_t>(kernel.dwHighDateTime) << 32) | kernel.dwLowDateTime) +
+                               ((static_cast<uint64_t>(user.dwHighDateTime) << 32) | user.dwLowDateTime);
+        *result = {static_cast<int64_t>(ticks / 10000000ull), static_cast<int64_t>((ticks % 10000000ull) * 100ull)};
+        return 0;
+    }
+    return IoError(kInvalid);
+}
+
+int N2NanoSleep(const GuestTimespec* duration, GuestTimespec* remainder) {
+    if (remainder) *remainder = {0, 0};
+    if (!duration) return IoError(kFault);
+    if (duration->seconds < 0 || duration->nanoseconds < 0 || duration->nanoseconds >= 1000000000LL)
+        return IoError(kInvalid);
+    const uint64_t totalMs = static_cast<uint64_t>(std::min<int64_t>(duration->seconds, 3600)) * 1000ull +
+                             static_cast<uint64_t>((duration->nanoseconds + 999999LL) / 1000000LL);
+    Sleep(static_cast<DWORD>(std::min<uint64_t>(totalMs, 3600000ull)));
+    return 0;
+}
+
+void* N2DlOpen(const char* name, int32_t flags) {
+    auto& context = Context();
+    if (!context.runtime.modules) {
+        context.dlError = "dlopen: no guest module namespace";
+        return nullptr;
+    }
+    if (!name || !*name) {
+        return reinterpret_cast<void*>(static_cast<uintptr_t>(1)); // main program handle -> RTLD_DEFAULT-like
+    }
+    std::string_view sv(name);
+    if (sv.find("..") != std::string_view::npos) {
+        context.dlError = "dlopen: invalid relative path traversal";
+        return nullptr;
+    }
+    const size_t slash = sv.find_last_of("/\\");
+    const std::string_view base = slash == std::string_view::npos ? sv : sv.substr(slash + 1);
+    if (flags & 4 /* RTLD_NOLOAD */) {
+        const uint64_t existing = context.runtime.modules->FindLoaded(base);
+        if (!existing) context.dlError = "dlopen(RTLD_NOLOAD): library not loaded";
+        return reinterpret_cast<void*>(static_cast<uintptr_t>(existing));
+    }
+    LoadError error;
+    const uint64_t handle = context.runtime.modules->Open(base, &error);
+    if (!handle) {
+        context.dlError = std::string(CategoryName(error.category)) + ": " + error.where + ": " + error.reason;
+    }
+    return reinterpret_cast<void*>(static_cast<uintptr_t>(handle));
+}
+
+void* N2DlSym(void* handle, const char* name) {
+    auto& context = Context();
+    if (!context.runtime.modules || !name || !*name) {
+        context.dlError = "dlsym: invalid symbol name";
+        return nullptr;
+    }
+    const auto hVal = reinterpret_cast<uintptr_t>(handle);
+    void* result = nullptr;
+    // On Android ARM64 LP64: RTLD_DEFAULT == 0 (nullptr), RTLD_NEXT == (void*)-1L.
+    if (hVal == 0 || hVal == UINTPTR_MAX) {
+        result = context.runtime.modules->FindDefault(name);
+    } else {
+        result = context.runtime.modules->Find(hVal, name);
+        if (!result && hVal == 1) result = context.runtime.modules->FindDefault(name);
+    }
+    if (!result) context.dlError = std::string("undefined symbol: ") + name;
+    return result;
+}
+
+int N2DlAddr(const void* addr, GuestDlInfo* info) {
+    auto& context = Context();
+    if (!context.runtime.modules || !addr || !info) return 0;
+    return context.runtime.modules->DlAddr(reinterpret_cast<uintptr_t>(addr), info) ? 1 : 0;
+}
+
+int N2DlIteratePhdr(int (*callback)(GuestDlPhdrInfo*, uint64_t, void*), void* data) {
+    auto& context = Context();
+    if (!context.runtime.modules || !callback) return 0;
+    return context.runtime.modules->IteratePhdr(callback, data);
 }
 
 }  // namespace
@@ -1169,6 +1486,8 @@ ThreadRuntime::ThreadRuntime(ModuleSet* modules, const std::wstring& androidRoot
 }
 
 ThreadRuntime::~ThreadRuntime() {
+    ThreadState* expected = state_.get();
+    g_n2AutoState.compare_exchange_strong(expected, nullptr, std::memory_order_acq_rel);
     // Check both before and after callbacks; never release executable code or host locks still in use.
     const auto check = [&] {
         if (!state_->workers.empty() || state_->contexts != 0)
@@ -1344,6 +1663,86 @@ std::span<const HostSymbol> ThreadRuntime::Imports() {
     return imports;
 }
 
+void ThreadRuntime::EnableN2AutoBind() {
+    g_n2AutoState.store(state_.get(), std::memory_order_release);
+}
+
+int32_t* GuestErrnoPtr() { return Errno(); }
+void* GuestHeapMalloc(uint64_t size) { return Malloc(size); }
+void* GuestHeapCalloc(uint64_t count, uint64_t size) { return Calloc(count, size); }
+void* GuestHeapRealloc(void* ptr, uint64_t size) { return Resize(ptr, size); }
+void GuestHeapFree(void* ptr) { Release(ptr); }
+
+int GuestPosixMemalign(void** memptr, uint64_t alignment, uint64_t size) {
+    if (!memptr || alignment < sizeof(void*) || (alignment & (alignment - 1)) != 0) return kInvalid;
+    auto& runtime = Context().runtime;
+    std::lock_guard lock(runtime.mutex);
+    const int32_t savedErr = Context().error;
+    void* p = Allocate(runtime, size, false, alignment);
+    Context().error = savedErr; // POSIX: posix_memalign returns error directly without setting errno.
+    if (!p) return kNoMemory;
+    *memptr = p;
+    return 0;
+}
+
+void* GuestAlignedAlloc(uint64_t alignment, uint64_t size) {
+    if (alignment == 0 || (alignment & (alignment - 1)) != 0 || (size % alignment) != 0) {
+        Context().error = kInvalid;
+        return nullptr;
+    }
+    auto& runtime = Context().runtime;
+    std::lock_guard lock(runtime.mutex);
+    return Allocate(runtime, size, false, std::max<uint64_t>(alignment, sizeof(void*)));
+}
+
+uint64_t GuestMallocUsableSize(const void* ptr) {
+    if (!ptr) return 0;
+    auto& runtime = Context().runtime;
+    std::lock_guard lock(runtime.mutex);
+    auto it = runtime.allocations.find(const_cast<void*>(ptr));
+    return it != runtime.allocations.end() ? it->second.usableSize : 0;
+}
+
+ModuleSet* GuestActiveModules() { return Context().runtime.modules; }
+const std::wstring& GuestActiveAndroidRoot() { return Context().runtime.androidRoot; }
+int32_t GuestLogWriteRaw(int32_t priority, const char* tag, const char* message) {
+    if (!tag) tag = "app";
+    if (!message) message = "";
+    const int32_t p = std::clamp<int32_t>(priority, 2, 7);
+    std::fprintf(stderr, "guest-log %d %s: %.*s\n", p, tag, 4095, message);
+    std::fflush(stderr);
+    return 1;
+}
+
+std::span<const HostSymbol> ThreadRuntime::N2Overrides() {
+    static const HostSymbol overrides[] = {
+        {"pthread_create", reinterpret_cast<void*>(&N2PthreadCreate)},
+        {"pthread_detach", reinterpret_cast<void*>(&N2PthreadDetach)},
+        {"pthread_mutex_init", reinterpret_cast<void*>(&N2MutexInit)},
+        {"pthread_mutexattr_init", reinterpret_cast<void*>(&N2MutexAttrInit)},
+        {"pthread_mutexattr_destroy", reinterpret_cast<void*>(&N2MutexAttrDestroy)},
+        {"pthread_mutexattr_settype", reinterpret_cast<void*>(&N2MutexAttrSetType)},
+        {"pthread_mutexattr_gettype", reinterpret_cast<void*>(&N2MutexAttrGetType)},
+        {"pthread_cond_init", reinterpret_cast<void*>(&N2CondInit)},
+        {"pthread_cond_timedwait", reinterpret_cast<void*>(&N2CondTimedWait)},
+        {"pthread_cond_clockwait", reinterpret_cast<void*>(&N2CondClockWait)},
+        {"pthread_condattr_init", reinterpret_cast<void*>(&N2CondAttrInit)},
+        {"pthread_condattr_destroy", reinterpret_cast<void*>(&N2CondAttrDestroy)},
+        {"pthread_condattr_setclock", reinterpret_cast<void*>(&N2CondAttrSetClock)},
+        {"pthread_condattr_getclock", reinterpret_cast<void*>(&N2CondAttrGetClock)},
+        {"clock_gettime", reinterpret_cast<void*>(&N2ClockGetTime)},
+        {"nanosleep", reinterpret_cast<void*>(&N2NanoSleep)},
+        {"posix_memalign", reinterpret_cast<void*>(&GuestPosixMemalign)},
+        {"aligned_alloc", reinterpret_cast<void*>(&GuestAlignedAlloc)},
+        {"malloc_usable_size", reinterpret_cast<void*>(&GuestMallocUsableSize)},
+        {"dlopen", reinterpret_cast<void*>(&N2DlOpen)},
+        {"dlsym", reinterpret_cast<void*>(&N2DlSym)},
+        {"dladdr", reinterpret_cast<void*>(&N2DlAddr)},
+        {"dl_iterate_phdr", reinterpret_cast<void*>(&N2DlIteratePhdr)},
+    };
+    return overrides;
+}
+
 /// Holds one thread-affine binding and keeps owned storage distinct from a borrowed worker context.
 struct BindingState {
     DWORD owner = GetCurrentThreadId();
@@ -1368,6 +1767,7 @@ ThreadBinding::ThreadBinding(ThreadState& state) : state_(std::make_unique<Bindi
     }
     state_->owned = std::make_unique<GuestThreadContext>(state, token, false);
     state_->context = state_->owned.get();
+    t_dormantBindingContext = state_->context;
 }
 
 ThreadBinding::~ThreadBinding() { Close(); }
@@ -1377,6 +1777,7 @@ void ThreadBinding::Close() {
     if (!state_->context) return;
     if (state_->depth || (state_->owned && current)) Fatal("binding closed during an active call");
     state_->closing = true;
+    if (t_dormantBindingContext == state_->context) t_dormantBindingContext = nullptr;
     if (state_->owned) {
         current = state_->context;
         state_->owned.reset();  // Key callbacks may reenter Call while context/proxy are still valid.

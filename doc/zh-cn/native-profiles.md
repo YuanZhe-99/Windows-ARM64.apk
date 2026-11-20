@@ -10,7 +10,7 @@ APK 路径使用它。该路径在本机为已声明、自有源码的 C/JNI 子
 |---|---|
 | N0，可审计的 leaf ELF | 已实现；G2 在本机通过（[platform-notes.md](platform-notes.md)） |
 | N1，受限的 C/JNI ELF（依赖、导入、构造函数、JNI） | 已声明 C/Bionic/JNI 子集及普通 NDK API-30 APK 夹具通过 G3；默认关闭，排除项见下文 |
-| N2，图形样例 | 本机验证了受限 T11 客体 EGL/GLES 和 T13 客体 Vulkan 夹具；不等于 G4（[图形能力](graphics-capabilities.md)） |
+| N2，引擎与图形运行时 | 本机验证了 N2 Bionic/NDK 引擎运行时（`T16`）、客体 EGL/GLES 1.1–3.1（`T11`）、客体 Vulkan 1.0–1.3（`T13`）及真实 Flutter Impeller GPU APK 交互渲染（[图形能力](graphics-capabilities.md)） |
 
 ## N0
 
@@ -316,6 +316,32 @@ T09 同时保护客体归因及正常 Java/JIT 故障处理。这不允许拦截
 
 T08 faults 使用正常的宿主异常链用例，及隔离进程中的客体访问违规/trap。
 既有 N0 压力套件随映射一同检查注册/注销。
+
+## Profile N2 引擎运行时（GPU-P5，T16）
+
+Profile `N2`（`winapk run --native=restricted --profile=N2`）在保持 `N0` 与 `N1` 严格隔离的前提下（`T16`
+验证 `N1` 仍以 `GUEST_SYMBOL_UNRESOLVED` 拒绝 `N2` 导入），为真实 GPU 与多媒体引擎（如 Flutter Skia/Impeller
+与 `libmpv`）扩展运行库支持：
+
+- **ELF 加载器与 JNI 扩容（`elf_loader.cpp`、`entries.cpp`）**：准入 `LIBC_N`..`LIBC_V` 符号版本、
+  `STT_OBJECT` 全局数据符号、`RTLD_DEFAULT` / `RTLD_NEXT` / `RTLD_NOLOAD` `dlsym`、`dladdr`、
+  `dl_iterate_phdr`、16 KiB LLD 页对齐 `PT_GNU_RELRO`、`--no-rosegment` 映像上按
+  `SHF_ALLOC | SHF_EXECINSTR` 节粒度的 DEP/筛查、只读哨兵页栈金丝雀指令改写（`mrs xRt, TPIDR_EL0` →
+  `movz xRt, #guardImm16, lsl #16`，绝不读写宿主 `TPIDR_EL0`）、寄存器恢复 `ldp x18` → `ldp xzr`
+  改写（绝不改写宿主 `x18` TEB），以及 2,048 槽静态 PE JNI 入口池（`N1` 仍保持 64 槽配额）。
+- **Bionic POSIX/数学/网络运行时（`bionic_n2.cpp`、`libwinapk-bionic-n2.so`）**：提供 `libm.so`
+  （C99/POSIX 数学库含 `sincos`/`sincosf`）、纯客体 AArch64 变参格式化/解析（含 128 位 `long double`）与
+  `setjmp`/`longjmp`、严格 W^X `mmap`/`munmap`/`mprotect`、`epoll`/`poll`/`select`/`eventfd`/`timerfd`/`pipe2`、
+  Winsock2 TCP/UDP/DNS（`getaddrinfo`）、基于 `WaitOnAddress` 的 `SYS_futex`、
+  `pthread_cond_timedwait`/`rwlock`/`sem`/`once`、跨 `NativeLooper` 回调的持久宿主线程上下文复用，以及只读
+  `/system/etc/fonts.xml` + `/fonts/` 回退字体映射（任何对宿主字体路径的写/创建/删除均以 `EACCES` 拒绝）。
+- **NDK 平台库（`ndk_platform.cpp`）**：提供 `libjnigraphics.so`（`AndroidBitmap_*`）、`libandroid.so`
+  （与 Java `com.macapk.loader.NativeLooper` 统一的 `ALooper_*`、`AChoreographer_*`、直读 APK 的
+  `AAssetManager_*`）、`libOpenSLES.so`（WASAPI 共享模式 PCM 缓冲队列），以及在 `libaaudio.so` 中诚实返回
+  `AAUDIO_ERROR_UNAVAILABLE`。
+- **`app_lib` 暂存与 `needs-native` 引导（`run.cpp`、`Pattern.java`、`sheets.go`、`panes.go`）**：为
+  `ReLinker` 填充 `ApplicationInfo.nativeLibraryDir`（`app_lib`）、兼容 Windows 路径分隔符正则匹配、透传主
+  Activity `onCreate` 未捕获 `UnsatisfiedLinkError`，并在前端添加与运行 `needs-native` APK 时提供受限原生开关与引导。
 
 ## 筛查
 

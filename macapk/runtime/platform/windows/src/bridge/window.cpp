@@ -25,6 +25,7 @@
 #include "guest_graphics.h"
 #include "guest_vulkan.h"
 #include "host_services.h"
+#include "ndk_platform.h"
 #include "surface.h"
 
 #include <windows.h>
@@ -482,6 +483,7 @@ void SyncChildSurfaceViews(Window* w, JNIEnv* env, jmethodID changed) {
 /// Runs one frame of `w`'s view: reports a new size, then asks the renderer to draw.
 /// Notes: a minimised window has no client area; it keeps its last size and draws at 2 Hz.
 void Tick(Window* w) {
+    DeliverNativeLooperVsync();
     CompositorFlushEmbed(w->hwnd);
     View* v = w->content;
     if (w->inGraphicsFrame || w->closingGraphics || g_guestGraphicsCommand) return;

@@ -259,8 +259,10 @@ function Build-Fixtures {
         $res = Join-Path $work 'res.zip'
         Invoke-Checked (Join-Path $bt 'aapt2.exe') @('compile', '--dir', (Join-Path $dir.FullName 'res'), '-o', $res)
         $unsigned = Join-Path $work 'unsigned.apk'
-        Invoke-Checked (Join-Path $bt 'aapt2.exe') @('link', '-o', $unsigned, '-I', $sdk.AndroidJar,
-            '--manifest', (Join-Path $dir.FullName 'AndroidManifest.xml'), '--java', $gen, $res)
+        $assetsDir = Join-Path $dir.FullName 'assets'
+        $assetArgs = if (Test-Path $assetsDir) { @('-A', $assetsDir) } else { @() }
+        Invoke-Checked (Join-Path $bt 'aapt2.exe') (@('link', '-o', $unsigned, '-I', $sdk.AndroidJar,
+            '--manifest', (Join-Path $dir.FullName 'AndroidManifest.xml'), '--java', $gen) + $assetArgs + @($res))
         $sources = @(Get-ChildItem (Join-Path $dir.FullName 'src'), $gen -Recurse -Filter *.java | ForEach-Object FullName)
         Invoke-Checked (Join-Path $jdk 'bin\javac.exe') (@('-d', $classes, '-source', '8', '-target', '8', '-encoding', 'UTF-8',
             '-bootclasspath', $sdk.AndroidJar, '-Xlint:-options') + $sources)
@@ -516,6 +518,25 @@ function Build-GuestBionic {
     }
     $record | ConvertTo-Json -Depth 4 | Set-Content (Join-Path $directory 'bionic.json') -Encoding utf8NoBOM
     Write-Step "libwinapk-bionic.so: ELF64 AArch64, $($record.sha256.Substring(0, 16))"
+
+    $n2Lib = Join-Path $directory 'libwinapk-bionic-n2.so'
+    $n2Src = 'macapk/runtime/guest/bionic/bionic_n2_guest.c'
+    $n2Args = @('--target=aarch64-linux-android30', '-shared', '-fPIC', '-fno-stack-protector',
+                '-O2', '-nostdlib', '-fno-builtin', '-Wall', '-Wextra', '-Werror',
+                '-Wl,-soname,libwinapk-bionic-n2.so', '-o', $n2Lib, (Join-Path $repo $n2Src))
+    Invoke-Checked $clang $n2Args
+    $n2Bytes = [IO.File]::ReadAllBytes($n2Lib)
+    if ($n2Bytes[0] -ne 0x7f -or $n2Bytes[4] -ne 2 -or [BitConverter]::ToUInt16($n2Bytes, 18) -ne 183) {
+        throw 'guest N2 Bionic helper is not ELF64 AArch64'
+    }
+    $n2Record = [ordered]@{
+        source = $n2Src; ndk = $lock.guest.androidNdk.version
+        compiler = (& $clang --version | Select-Object -First 1)
+        arguments = $n2Args
+        sha256 = (Get-FileHash $n2Lib -Algorithm SHA256).Hash.ToLower()
+    }
+    $n2Record | ConvertTo-Json -Depth 4 | Set-Content (Join-Path $directory 'bionic-n2.json') -Encoding utf8NoBOM
+    Write-Step "libwinapk-bionic-n2.so: ELF64 AArch64, $($n2Record.sha256.Substring(0, 16))"
 }
 
 <# Builds the Android-only JNI varargs helper and records its toolchain, flags and content hash. #>
@@ -743,6 +764,14 @@ function Build-Host([string]$Target = '') {
         New-Item -ItemType Directory -Force $relAngle | Out-Null
         foreach ($af in Get-ChildItem $angleStaged -File) {
             Copy-Item -LiteralPath $af.FullName -Destination (Join-Path $relAngle $af.Name) -Force
+        }
+    }
+    $guestStaged = Join-Path $out 'bin\guest'
+    if ($Configuration -eq 'Release' -and (Test-Path (Join-Path $guestStaged 'libwinapk-bionic.so'))) {
+        $relGuest = Join-Path $bin 'guest'
+        New-Item -ItemType Directory -Force $relGuest | Out-Null
+        foreach ($gf in Get-ChildItem $guestStaged -File) {
+            Copy-Item -LiteralPath $gf.FullName -Destination (Join-Path $relGuest $gf.Name) -Force
         }
     }
     foreach ($f in Get-ChildItem $bin -Include *.exe, *.dll -Recurse) {

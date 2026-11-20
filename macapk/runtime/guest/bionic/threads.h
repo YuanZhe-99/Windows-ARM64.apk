@@ -61,8 +61,28 @@ public:
     /// Notes: process-lifetime exit/atfork registrations may remain until finalization/teardown.
     bool Idle() const;
 
+    /// Enables N2 process-lifetime thread auto-binding for host driver/audio callbacks entering guest code.
+    void EnableN2AutoBind();
+
+    /// Returns N2-only pthread/heap/dl/clock symbol overrides (`pthread_detach`, `pthread_cond_timedwait`,
+    /// `posix_memalign`, `aligned_alloc`, `malloc_usable_size`, `dladdr`, `dl_iterate_phdr`, etc.).
+    static std::span<const HostSymbol> N2Overrides();
+
 private:
     std::unique_ptr<ThreadState> state_;
 };
+
+// Internal host-side helpers for N2 Bionic / NDK platform modules (`bionic_n2.cpp`, `ndk_platform.cpp`).
+int32_t* GuestErrnoPtr();
+void* GuestHeapMalloc(uint64_t size);
+void* GuestHeapCalloc(uint64_t count, uint64_t size);
+void* GuestHeapRealloc(void* ptr, uint64_t size);
+void GuestHeapFree(void* ptr);
+int GuestPosixMemalign(void** memptr, uint64_t alignment, uint64_t size);
+void* GuestAlignedAlloc(uint64_t alignment, uint64_t size);
+uint64_t GuestMallocUsableSize(const void* ptr);
+ModuleSet* GuestActiveModules();
+const std::wstring& GuestActiveAndroidRoot();
+int32_t GuestLogWriteRaw(int32_t priority, const char* tag, const char* message);
 
 }  // namespace winapk::guest

@@ -44,8 +44,16 @@ public final class GuestNativeLoader {
         try {
             File file = requested.getCanonicalFile();
             File directory = new File(System.getProperty("winapk.guestLibraryDir", "")).getCanonicalFile();
-            if (!directory.equals(file.getParentFile()))
-                throw new UnsatisfiedLinkError("GUEST_ABI_UNSUPPORTED: library outside admitted APK directory");
+            if (!directory.equals(file.getParentFile())) {
+                // Allow ReLinker / app_lib extracted copies only when the basename exists in the
+                // staged APK directory and matches it byte-for-byte; open() always loads from
+                // the screened directory, never from writable app storage.
+                File staged = new File(directory, file.getName());
+                if (!staged.isFile() || !file.isFile() || staged.length() != file.length() ||
+                        java.nio.file.Files.mismatch(staged.toPath(), file.toPath()) != -1L) {
+                    throw new UnsatisfiedLinkError("GUEST_ABI_UNSUPPORTED: library outside admitted APK directory");
+                }
+            }
             open(file.getName(), callerLoader());
         } catch (IOException error) {
             throw new UnsatisfiedLinkError("GUEST_ABI_UNSUPPORTED: cannot resolve guest library path");

@@ -13,8 +13,10 @@ struct EntryFrame {
 static_assert(sizeof(EntryFrame) == 152 && offsetof(EntryFrame, stack) == 128 &&
               offsetof(EntryFrame, integerResult) == 136 && offsetof(EntryFrame, floatingResult) == 144);
 
+constexpr size_t kMaxJniEntries = 2048;
+
 /// Lists process-lifetime PE entry addresses; a closed slot is never recycled.
-extern "C" void* winapk_jni_entries[64];
+extern "C" void* winapk_jni_entries[kMaxJniEntries];
 /// Calls one screened fixed-signature guest entry, copying the descriptor's exact stack-slot count.
 extern "C" void winapk_jni_invoke(void* entry, EntryFrame* frame, uint64_t stackSlots);
 /// Dispatches a PE entry's captured registers to its registered guest method under a thread binding.

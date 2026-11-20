@@ -20,7 +20,7 @@ public:
     /// Returns: nullptr with loader error or a pending JVM exception on failure.
     static std::unique_ptr<JniBridge> Load(JNIEnv* env, jobject loader, ThreadRuntime& threads,
                                          ModuleSet& modules, const std::wstring& helper, LoadError* error,
-                                         bool allowCallbacks = true);
+                                         bool allowCallbacks = true, size_t maxNativeSlots = 64);
     /// Releases this thread's proxy and the loader; active proxies on other threads are fatal.
     ~JniBridge();
 

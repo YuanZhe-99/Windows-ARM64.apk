@@ -797,6 +797,22 @@ func (a *App) failedView(c *ui.Context, s *session, e *entry, own bool) {
 					})
 				})
 			})
+		} else if s.state.Category == "GUEST_NATIVE_DISABLED" && len(e.APK.NativeLibs) > 0 && e.APK.Verdict != winapk.Unsupported {
+			ui.Row(c).Width(420).MaxWidthPercent(100).Margin(28, 0, 0, 0).Padding(14, 16).Gap(12).Radius(radiusCard).Background(p.pane).Border(1, p.border).Children(func() {
+				ui.Icon(c, icChip).FontSize(18).TextColor(p.accentText)
+				ui.Column(c).Grow(1).MinWidth(0).Gap(6).Children(func() {
+					ui.Text(c, L.TryNativeRestricted()).FontWeight(600)
+					muted(c, L.TryNativeRestrictedHint(), 13).Wrap()
+					ui.Row(c).Gap(8).Children(func() {
+						if button(c, "failset-"+e.ID, L.OpenItsSettings(), nil).Clicked() {
+							a.openDetails(e.ID)
+							if own {
+								a.Focus()
+							}
+						}
+					})
+				})
+			})
 		}
 		ui.Spacer(c)
 		if !own {
@@ -808,6 +824,8 @@ func (a *App) failedView(c *ui.Context, s *session, e *entry, own bool) {
 // failedWords says what a failure's category means for the person.
 func failedWords(category string) string {
 	switch category {
+	case "GUEST_NATIVE_DISABLED":
+		return L.FailedNativeDisabled()
 	case "GUEST_SYMBOL_UNRESOLVED", "ELF_RELOCATION_UNSUPPORTED", "GUEST_ABI_UNSUPPORTED":
 		return L.FailedNative()
 	case "GRAPHICS_CAPABILITY_MISSING":

@@ -2,6 +2,7 @@
 #include "bridge.h"
 #include "embed.h"
 #include "graphics.h"
+#include "ndk_platform.h"
 
 #include <windows.h>
 
@@ -84,6 +85,12 @@ extern "C" __declspec(dllexport) jboolean winapk_bridge_register(JNIEnv* env) {
     if (jclass skiaCls = env->FindClass("com/macapk/graphics/NativeSkiaD3D12")) {
         env->DeleteLocalRef(skiaCls);
         ok = RegisterSkia(env) && ok;
+    } else {
+        env->ExceptionClear();
+    }
+    if (jclass looperCls = env->FindClass("com/macapk/loader/NativeLooper")) {
+        env->DeleteLocalRef(looperCls);
+        ok = RegisterNativeLooper(env) && ok;
     } else {
         env->ExceptionClear();
     }

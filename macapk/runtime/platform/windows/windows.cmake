@@ -67,10 +67,12 @@ add_library(winapk-bridge SHARED
   ${_win}/src/bridge/guest_graphics.cpp
   ${_win}/src/bridge/guest_vulkan.cpp
   ${_win}/src/bridge/surface.cpp
+  ${_win}/src/bridge/ndk_platform.cpp
   ${_win}/src/bridge/guest.cpp
   ${CMAKE_CURRENT_LIST_DIR}/../../guest/jni/bridge.cpp
   ${CMAKE_CURRENT_LIST_DIR}/../../guest/jni/entries.cpp
   ${CMAKE_CURRENT_LIST_DIR}/../../guest/bionic/libraries.cpp
+  ${CMAKE_CURRENT_LIST_DIR}/../../guest/bionic/bionic_n2.cpp
   ${CMAKE_CURRENT_LIST_DIR}/../../guest/bionic/threads.cpp
   ${CMAKE_CURRENT_LIST_DIR}/../../guest/loader/faults.cpp
   ${CMAKE_CURRENT_LIST_DIR}/../../guest/loader/elf_loader.cpp
@@ -83,7 +85,7 @@ target_include_directories(winapk-bridge PRIVATE "${JAVA_HOME}/include" "${JAVA_
 target_include_directories(winapk-bridge PRIVATE "${CMAKE_CURRENT_LIST_DIR}/../../translator/include")
 target_compile_definitions(winapk-bridge PRIVATE UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX _CRT_SECURE_NO_WARNINGS)
 target_compile_options(winapk-bridge PRIVATE /W4 /EHsc -Wno-missing-field-initializers)
-target_link_libraries(winapk-bridge PRIVATE Vulkan::Headers unofficial::sqlite3::sqlite3 LibLZMA::LibLZMA user32 gdi32 shcore dwrite d3d11 d3d12 dxgi ole32 shell32 psapi mmdevapi mfplat mfreadwrite mfuuid shlwapi capstone::capstone mincore)
+target_link_libraries(winapk-bridge PRIVATE Vulkan::Headers ZLIB::ZLIB unofficial::sqlite3::sqlite3 LibLZMA::LibLZMA user32 gdi32 shcore dwrite d3d11 d3d12 dxgi ole32 shell32 psapi mmdevapi mfplat mfreadwrite mfuuid shlwapi ws2_32 capstone::capstone mincore)
 set(_angle_headers "${CMAKE_CURRENT_LIST_DIR}/../../../../build/windows-arm64/deps/angle/include")
 if(EXISTS "${_angle_headers}/EGL/eglext_angle.h")
   target_include_directories(winapk-bridge PRIVATE "${_angle_headers}")

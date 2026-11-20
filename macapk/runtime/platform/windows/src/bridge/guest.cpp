@@ -1,9 +1,11 @@
 // guest.cpp -- process-private P4 APK namespace and host-owned guest JNI service.
 #include "bridge.h"
 #include "host_services.h"
+#include "ndk_platform.h"
 #include "surface.h"
 #include "guest_graphics.h"
 #include "guest_vulkan.h"
+#include "../../../../guest/bionic/bionic_n2.h"
 #include "../../../../guest/bionic/libraries.h"
 #include "../../../../guest/jni/bridge.h"
 
@@ -29,6 +31,7 @@ std::mutex guestMutex;
 /// Owns one app's providers, namespace, thread state and JNI bridge in teardown order.
 struct GuestRuntime {
     std::unique_ptr<guest::BionicLibraries> support;
+    std::unique_ptr<guest::N2BionicExtension> n2Support;
     std::unique_ptr<guest::ModuleSet> modules;
     std::unique_ptr<guest::ThreadRuntime> threads;
     std::unique_ptr<guest::JniBridge> jni;
@@ -41,6 +44,7 @@ GuestRuntime* runtime = nullptr;
 void Reject(JNIEnv* env, const guest::LoadError& error) {
     if (env->ExceptionCheck()) return;
     const std::string text = std::string(guest::CategoryName(error.category)) + ": " + error.reason;
+    LogLine("[winapk] guest load rejected (" + error.where + "): " + text);
     jclass type = env->FindClass("java/lang/UnsatisfiedLinkError");
     if (type) { env->ThrowNew(type, text.c_str()); env->DeleteLocalRef(type); }
 }
@@ -54,11 +58,11 @@ void Open(JNIEnv* env, jclass, jobject loader, jstring name) {
         {
             std::lock_guard lock(guestMutex);
             if (config.libraries.empty() || !loader) {
-                Reject(env, {guest::Category::AbiUnsupported, "", "guest native is not configured"});
+                Reject(env, {guest::Category::AbiUnsupported, basename, "guest native is not configured"});
                 return;
             }
             if (!config.admitted.contains(basename)) {
-                Reject(env, {guest::Category::AbiUnsupported, "", "library not present in APK arm64-v8a set"});
+                Reject(env, {guest::Category::AbiUnsupported, basename, "library not present in APK arm64-v8a set"});
                 return;
             }
             if (!runtime) {
@@ -66,26 +70,34 @@ void Open(JNIEnv* env, jclass, jobject loader, jstring name) {
                 guest::LoadError error;
                 const bool n0 = config.profile == "N0";
                 const bool n2 = config.profile == "N2";
-                std::span<const guest::HostSymbol> imports{};
+                std::vector<guest::HostSymbol> combinedImports;
                 std::vector<guest::BuiltinLibrary> libraries;
                 if (!n0) {
                     guest::ThreadRuntime::SetEnvLookup(&GuestEnvGet);
                     value->support = guest::BionicLibraries::Load(config.helpers + L"\\libwinapk-bionic.so", &error);
                     if (!value->support) { Reject(env, error); return; }
-                    imports = value->support->Imports();
+                    const auto baseImports = value->support->Imports();
+                    combinedImports.assign(baseImports.begin(), baseImports.end());
                     const auto baseLibraries = value->support->Libraries();
                     libraries.assign(baseLibraries.begin(), baseLibraries.end());
                     if (n2) {
-                        libraries.push_back(NativeWindowLibrary());
+                        value->n2Support = guest::N2BionicExtension::Install(
+                            config.helpers + L"\\libwinapk-bionic-n2.so",
+                            config.android, libraries, combinedImports, &error);
+                        if (!value->n2Support) { Reject(env, error); return; }
+                        guest::BuiltinLibrary libandroid = NativeWindowLibrary();
+                        AddNdkPlatformLibraries(libandroid, libraries);
+                        libraries.push_back(std::move(libandroid));
                         AddGuestGraphicsLibraries(libraries);
                         AddGuestVulkanLibrary(libraries);
                     }
                 }
-                value->modules = std::make_unique<guest::ModuleSet>(config.libraries, imports, libraries);
+                value->modules = std::make_unique<guest::ModuleSet>(config.libraries, combinedImports, libraries, n2);
                 if (n2) SetGuestVulkanModules(value->modules.get());
                 value->threads = std::make_unique<guest::ThreadRuntime>(value->modules.get(), config.android);
+                if (n2) value->threads->EnableN2AutoBind();
                 value->jni = guest::JniBridge::Load(env, loader, *value->threads, *value->modules,
-                    config.helpers + L"\\libwinapk-jni.so", &error, !n0);
+                    config.helpers + L"\\libwinapk-jni.so", &error, !n0, n2 ? 2048 : 64);
                 if (!value->jni) { Reject(env, error); return; }
                 value->loader = env->NewGlobalRef(loader);
                 if (!value->loader) return;
@@ -93,12 +105,16 @@ void Open(JNIEnv* env, jclass, jobject loader, jstring name) {
             }
             current = runtime;
             if (!env->IsSameObject(loader, current->loader)) {
-                Reject(env, {guest::Category::AbiUnsupported, "", "additional guest ClassLoader is not admitted"});
+                Reject(env, {guest::Category::AbiUnsupported, basename, "additional guest ClassLoader is not admitted"});
                 return;
             }
         }
         guest::LoadError error;
-        if (!current->jni->OpenLibrary(env, basename, &error)) Reject(env, error);
+        if (!current->jni->OpenLibrary(env, basename, &error)) {
+            Reject(env, error);
+            return;
+        }
+        LogLine("[winapk] guest loaded " + basename);
     } catch (const std::bad_alloc&) {
         Reject(env, {guest::Category::HostMemory, "", "guest runtime allocation failed"});
     }

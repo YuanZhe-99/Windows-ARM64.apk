@@ -173,7 +173,7 @@ bool WriteAtomic(const std::wstring& path, const std::string& text) {
 /// Extracts a bounded ARM64 APK library set by content identity, never by arbitrary ZIP paths.
 /// Returns: a stable category on unsafe names, ABI-only mismatch, corrupt input or write failure.
 std::string StageLibraries(const RunArgs& a, const ApkInfo& apk, const std::wstring& appDir,
-                           std::wstring& directory, std::string& admitted) {
+                           const std::wstring& androidRoot, std::wstring& directory, std::string& admitted) {
     directory = appDir + L"\\.macapk-native-" + Wide(Sha256File(a.apk));
     std::vector<ZipEntry> entries;
     if (auto error = ReadZip(a.apk, entries); !error.empty()) return "INSTALL_FAILED_INVALID_APK: " + error;
@@ -204,12 +204,16 @@ std::string StageLibraries(const RunArgs& a, const ApkInfo& apk, const std::wstr
         return "GUEST_ABI_UNSUPPORTED: APK has no arm64-v8a libraries";
     const int rc = SHCreateDirectoryExW(nullptr, directory.c_str(), nullptr);
     if (rc != ERROR_SUCCESS && rc != ERROR_ALREADY_EXISTS) return "IO_ERROR: cannot create APK library directory";
+    const std::wstring appLibDir = androidRoot + L"\\data\\data\\" + Wide(apk.packageName) + L"\\app_lib";
+    SHCreateDirectoryExW(nullptr, appLibDir.c_str(), nullptr);
     for (const auto& entry : libraries) {
         std::vector<uint8_t> bytes;
         if (auto error = ReadEntry(a.apk, entry, bytes); !error.empty()) return "INSTALL_FAILED_INVALID_APK: " + error;
-        if (!WriteAtomic(directory + L"\\" + Wide(entry.name.substr(prefix.size())),
-                         std::string(bytes.begin(), bytes.end())))
+        const std::wstring baseW = Wide(entry.name.substr(prefix.size()));
+        const std::string blob(bytes.begin(), bytes.end());
+        if (!WriteAtomic(directory + L"\\" + baseW, blob))
             return "IO_ERROR: cannot write APK library";
+        WriteAtomic(appLibDir + L"\\" + baseW, blob);
         admitted += entry.name.substr(prefix.size()) + "\n";
     }
     Log("stage guest-libraries (" + std::to_string(libraries.size()) + " ARM64 candidates; screened on load)");
@@ -465,8 +469,12 @@ int Run(const RunArgs& a) {
                     return 69;
                 }
             }
+            if (profile == L"N2" && !Exists(bin + L"\\guest\\libwinapk-bionic-n2.so")) {
+                Log("DEPENDENCY_MISSING: guest N2 Bionic helper");
+                return 69;
+            }
         }
-        if (auto error = StageLibraries(a, apk, appDir, guestLibraries, admitted); !error.empty()) {
+        if (auto error = StageLibraries(a, apk, appDir, android, guestLibraries, admitted); !error.empty()) {
             Log(error);
             return error.starts_with("IO_ERROR") ? 74 : 65;
         }
@@ -501,7 +509,7 @@ int Run(const RunArgs& a) {
     // This process only. MACAPK_BUILD_JAVA_ID keys the app's own dynamic-DEX cache
     // (dalvik.system.MacApkDexConverter), as upstream's main.cpp exports it from build-id.txt.
     SetEnvironmentVariableW(L"MACAPK_FW_RES_APK", fwres.c_str());
-    SetEnvironmentVariableW(L"MACAPK_APK_PATH", a.apk.c_str());
+    SetEnvironmentVariableW(L"WINAPK_APK_PATH", a.apk.c_str());
     SetEnvironmentVariableW(L"MACAPK_BUILD_JAVA_ID", Wide(id.JavaId()).c_str());
     SetEnvironmentVariableW(L"WINAPK_GRAPHICS_MODE", a.graphics.c_str());
     SetEnvironmentVariableW(L"WINAPK_APK_REQUIRES_VULKAN", apk.vulkanRequired ? L"1" : L"0");

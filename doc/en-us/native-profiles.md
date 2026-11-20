@@ -13,7 +13,7 @@ CFG build. Default-build and CFG-build results are reported separately.
 |---|---|
 | N0, an auditable leaf ELF | implemented; G2 passes on this PC ([platform-notes.md](platform-notes.md)) |
 | N1, a restricted C/JNI ELF (dependencies, imports, constructors, JNI) | declared C/Bionic/JNI subset and ordinary NDK API-30 APK fixture pass G3; off by default, with the exclusions below |
-| N2, graphics samples | bounded T11 guest EGL/GLES and T13 guest Vulkan fixtures run on this PC; not G4 ([graphics-capabilities.md](graphics-capabilities.md)) |
+| N2, engine & graphics runtime | N2 Bionic/NDK engine runtime (`T16`), guest EGL/GLES 1.1–3.1 (`T11`), guest Vulkan 1.0–1.3 (`T13`), and real Flutter Impeller GPU APK rendering verified on this PC ([graphics-capabilities.md](graphics-capabilities.md)) |
 
 ## N0
 
@@ -391,6 +391,35 @@ bounded stack buffers and a direct Windows write, not an allocation or guest cal
 
 T08 faults uses a normal host-exception-chain case and isolated guest access-violation/trap
 processes. The existing N0 stress suite checks registration/unregistration alongside mappings.
+
+## Profile N2 engine runtime (GPU-P5, T16)
+
+Profile `N2` (`winapk run --native=restricted --profile=N2`) extends `N1` for real GPU and multimedia
+engines (such as Flutter Skia/Impeller and `libmpv`) while keeping `N0` and `N1` isolated (`T16`
+verifies that `N1` still refuses `N2` imports with `GUEST_SYMBOL_UNRESOLVED`):
+
+- **ELF loader & JNI scaling (`elf_loader.cpp`, `entries.cpp`)**: admits `LIBC_N`..`LIBC_V` symbol
+  versions, `STT_OBJECT` globals, `RTLD_DEFAULT` / `RTLD_NEXT` / `RTLD_NOLOAD` `dlsym`, `dladdr`,
+  `dl_iterate_phdr`, 16 KiB LLD `PT_GNU_RELRO` page-rounded segments, `SHF_ALLOC | SHF_EXECINSTR`
+  executable-section DEP/screening on `--no-rosegment` binaries, read-only guard-page stack-canary
+  rewrites (`mrs xRt, TPIDR_EL0` → `movz xRt, #guardImm16, lsl #16` without ever reading or writing
+  host `TPIDR_EL0`), register-restore `ldp x18` → `ldp xzr` rewrites so `x18` (Windows TEB) is never
+  clobbered, and a 2,048-slot static PE JNI bank (`N1` retains its 64-slot quota).
+- **Bionic POSIX/math/network runtime (`bionic_n2.cpp`, `libwinapk-bionic-n2.so`)**: provides
+  `libm.so` (C99/POSIX math plus `sincos`/`sincosf`), pure-guest AArch64 variadic formatting/scanning
+  (including 128-bit `long double` promotion) and `setjmp`/`longjmp`, W^X `mmap`/`munmap`/`mprotect`,
+  `epoll`/`poll`/`select`/`eventfd`/`timerfd`/`pipe2`, Winsock2 TCP/UDP/DNS (`getaddrinfo`),
+  `WaitOnAddress`-backed `SYS_futex`, `pthread_cond_timedwait`/`rwlock`/`sem`/`once`, persistent
+  host-thread context reuse across `NativeLooper` callbacks, and read-only `/system/etc/fonts.xml` +
+  `/fonts/` fallback font mapping (write/create/unlink attempts on host font paths fail with `EACCES`).
+- **NDK platform libraries (`ndk_platform.cpp`)**: provides `libjnigraphics.so` (`AndroidBitmap_*`),
+  `libandroid.so` (`ALooper_*` unified with Java `com.macapk.loader.NativeLooper`, `AChoreographer_*`,
+  direct APK `AAssetManager_*`), `libOpenSLES.so` (shared-mode WASAPI PCM buffer queues), and
+  honest `AAUDIO_ERROR_UNAVAILABLE` refusal in `libaaudio.so`.
+- **`app_lib` staging & `needs-native` UX (`run.cpp`, `Pattern.java`, `sheets.go`, `panes.go`)**:
+  populates `ApplicationInfo.nativeLibraryDir` (`app_lib`) for `ReLinker`, normalizes Windows path
+  separators in `ReLinker` ZIP regexes, fails fast on uncaught `onCreate` `UnsatisfiedLinkError`,
+  and offers explicit restricted-native opt-in when adding or running `needs-native` APKs.
 
 ## Screening
 

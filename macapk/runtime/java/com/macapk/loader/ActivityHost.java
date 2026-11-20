@@ -4930,6 +4930,16 @@ public final class ActivityHost {
             Throwable cause = e.getTargetException();
             NativeLog.w(TAG, name + " threw " + cause + " -- continuing");
             cause.printStackTrace();
+            if ("onCreate".equals(name) && target instanceof Activity && System.getProperty("winapk.guestNative") != null) {
+                for (Throwable cur = cause; cur != null; cur = cur.getCause()) {
+                    if (cur instanceof UnsatisfiedLinkError && cur.getMessage() != null &&
+                            (cur.getMessage().startsWith("GUEST_") || cur.getMessage().startsWith("ELF_"))) {
+                        System.err.println(cur.getMessage());
+                        System.err.flush();
+                        NativeCocoa.exitProcess(1, null);
+                    }
+                }
+            }
         } catch (Throwable t) {
             NativeLog.w(TAG, name + " failed: " + t + " -- continuing");
         } finally {

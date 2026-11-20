@@ -97,7 +97,7 @@ struct NativeSlot {
     JniLibrary* initialization = nullptr;
 };
 std::mutex nativesMutex;
-std::array<NativeSlot, 64> natives;
+std::array<NativeSlot, kMaxJniEntries> natives;
 size_t nextNative = 0;
 
 /// Validates environment identity against the calling thread's live proxies before dereferencing.
@@ -228,6 +228,7 @@ struct JniState {
     std::vector<size_t> nativeSlots;
     std::vector<jclass> nativeClasses;
     std::atomic<size_t> nativeCalls = 0;
+    size_t maxNativeSlots = 64;
     bool allowCallbacks = true;
     bool nativeClosing = false;
     DWORD closingThread = 0;
@@ -478,7 +479,7 @@ jint Register(void* guest, jclass type, const GuestNativeMethod* methods, jint c
     auto& proxy = Checked(guest);
     auto& state = *proxy.state;
     JNIEnv* env = proxy.host;
-    if (count < 0 || count > 64 || (count && !methods)) {
+    if (count < 0 || static_cast<size_t>(count) > state.maxNativeSlots || (count && !methods)) {
         Error(env, "GUEST_ABI_UNSUPPORTED JNI native registration count");
         return JNI_ERR;
     }
@@ -504,7 +505,10 @@ jint Register(void* guest, jclass type, const GuestNativeMethod* methods, jint c
         bool reserved = false;
         try {
             std::lock_guard lock(nativesMutex);
-            if (!state.nativeClosing && static_cast<size_t>(count) <= natives.size() - nextNative) {
+            const size_t stateRemaining = state.nativeSlots.size() < state.maxNativeSlots
+                ? state.maxNativeSlots - state.nativeSlots.size() : 0;
+            if (!state.nativeClosing && static_cast<size_t>(count) <= stateRemaining &&
+                static_cast<size_t>(count) <= natives.size() - nextNative) {
                 state.nativeSlots.reserve(state.nativeSlots.size() + count);
                 state.nativeClasses.reserve(state.nativeClasses.size() + 1);
                 for (jint i = 0; i < count; i++) {
@@ -798,13 +802,14 @@ JniBridge::JniBridge() : state_(std::make_unique<JniState>()) {}
 
 std::unique_ptr<JniBridge> JniBridge::Load(JNIEnv* env, jobject loader, ThreadRuntime& threads,
                                            ModuleSet& modules, const std::wstring& helper, LoadError* error,
-                                           bool allowCallbacks) {
+                                           bool allowCallbacks, size_t maxNativeSlots) {
     try {
         auto bridge = std::unique_ptr<JniBridge>(new JniBridge);
         auto& state = *bridge->state_;
         state.threads = &threads;
         state.modules = &modules;
         state.allowCallbacks = allowCallbacks;
+        state.maxNativeSlots = std::min(maxNativeSlots, kMaxJniEntries);
         if (env->GetJavaVM(&state.vm) != JNI_OK) return nullptr;
         state.loader = loader ? env->NewGlobalRef(loader) : nullptr;
         if (loader && !state.loader) return nullptr;

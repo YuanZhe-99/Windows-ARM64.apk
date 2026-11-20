@@ -733,9 +733,9 @@ P0 审计/锁定、Java MVP（G1）、N0 ELF/ABI（G2）及已声明 C/Bionic/JN
 - [x] 实现独立于窗口可见性的 Vulkan WSI 合成（优先 `VK_KHR_external_memory_win32` DXGI 共享纹理，回退交换链异步 Transfer 拷贝环），并按 `auto` / `vulkan` 策略诚实向客体暴露 `libvulkan.so`。
 
 ### GPU-P5：GPU 引擎配套 NDK / Bionic 运行库与真实重度 GPU APK 端到端验收
-- [ ] 修复原生库装载链路：`ApplicationInfo.nativeLibraryDir`（`app_lib`）暴露已准入 `.so`、导出 `MACAPK_APK_PATH`、兼容 `ReLinker` 在 Windows 下的 ZIP 条目查找、`GuestNativeLoader` 详细诊断日志、主 Activity 原生初始化致命异常透传（消除空白假运行），以及前端添加 `needs-native` APK 时的清晰受限原生引导。
-- [ ] 实现 NDK 平台库：`libm.so`（完整 C99/POSIX 数学库与 `sincos`/`sincosf`）、`libjnigraphics.so`（`AndroidBitmap_*`）、`libandroid.so`（多表面 `ANativeWindow` 含 `lock/unlockAndPost/setBuffersGeometry`、忠实超时语义 `ALooper_*`、显示器帧率驱动 `AChoreographer_*`、APK 直读 `AAssetManager_*`）及基于 WASAPI 的 `libOpenSLES.so` / `libaaudio.so` 输出桥。
-- [ ] 补齐 Bionic / ELF Loader：`STT_OBJECT` 数据符号 `dlsym`、`RTLD_DEFAULT`、`dladdr`、`dl_iterate_phdr`、虚拟句柄表 `epoll`/`eventfd`/`timerfd`/`pipe2`/Winsock2 套接字桥、`pthread_cond_timedwait`/`rwlock`/`sem`、`__system_property_get/find`、`getauxval` 及 APK 内置 `arm64-v8a` C++ 运行时库加载隔离；在真机实装环境中完成 Flutter + 视频类重度 GPU APK 的窗格与独立窗口完整交互渲染验收。
+- [x] 修复原生库装载链路：`ApplicationInfo.nativeLibraryDir`（`app_lib`）暴露已准入 `.so`、导出 `WINAPK_APK_PATH`、兼容 `ReLinker` 在 Windows 下的 ZIP 条目查找、`GuestNativeLoader` 详细诊断日志、主 Activity 原生初始化致命异常透传（消除空白假运行），以及前端添加 `needs-native` APK 时的清晰受限原生引导。
+- [x] 实现 NDK 平台库：`libm.so`（完整 C99/POSIX 数学库与 `sincos`/`sincosf`）、`libjnigraphics.so`（`AndroidBitmap_*`）、`libandroid.so`（多表面 `ANativeWindow` 含 `lock/unlockAndPost/setBuffersGeometry`、忠实超时语义 `ALooper_*` + `NativeLooper` 主循环统一轮询、显示器帧率驱动 `AChoreographer_*`、APK 直读 `AAssetManager_*`）及基于 WASAPI 的 `libOpenSLES.so` / `libaaudio.so` 输出桥。
+- [x] 补齐 Bionic / ELF Loader：`STT_OBJECT` 数据符号 `dlsym`、`RTLD_DEFAULT`、`dladdr`、`dl_iterate_phdr`、虚拟句柄表 `epoll`/`eventfd`/`timerfd`/`pipe2`/Winsock2 套接字桥/`SYS_futex`、`pthread_cond_timedwait`/`rwlock`/`sem`、`__system_property_get/find`、`getauxval`、只读 `/system/etc/fonts.xml` + `/fonts/` 字体映射及 APK 内置 `arm64-v8a` C++ 运行时库加载隔离；通过 `EngineN2`（`T16`）套件及真实 Flutter + 视频类重度 GPU APK 的窗格与独立窗口完整交互渲染验收。
 
 ### GPU-P6：Skia D3D12 硬件画布协同与 30 分钟双后端 GPU 稳定性门禁
 - [ ] 打通 `NativeCocoa.presentFrame` 脏矩形增量提交与 Skia D3D12 ↔ `WinApkCompositor` DXGI 共享纹理合成。

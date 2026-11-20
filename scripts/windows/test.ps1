@@ -45,7 +45,7 @@ Local runtime ZIP from package.ps1, required for Package.
 #>
 [CmdletBinding()]
 param(
-    [ValidateSet('Host', 'HostServices', 'Audio', 'Agsl', 'Java', 'Native', 'Bionic', 'Modules', 'Memory', 'Io', 'Faults', 'Format', 'Libraries', 'Jni', 'ApkJni', 'GraphicsHost', 'GraphicsJava', 'Surface', 'GraphicsGuest', 'VulkanWsi', 'DexJob', 'Package', 'Stability')]
+    [ValidateSet('Host', 'HostServices', 'Audio', 'Agsl', 'EngineN2', 'Java', 'Native', 'Bionic', 'Modules', 'Memory', 'Io', 'Faults', 'Format', 'Libraries', 'Jni', 'ApkJni', 'GraphicsHost', 'GraphicsJava', 'Surface', 'GraphicsGuest', 'VulkanWsi', 'DexJob', 'Package', 'Stability')]
     [string]$Suite = 'Host',
     [string]$PackageZip
 )
@@ -1360,7 +1360,7 @@ function Test-Package {
         $doctor = & $winapk doctor --json | ConvertFrom-Json
         Check 'T14.package.doctor' ($LASTEXITCODE -eq 0 -and $doctor.jvm.started -eq 'ok' -and
             $doctor.jvm.arch -eq 'arm64' -and $doctor.jvm.source -eq 'WINAPK_JAVA_HOME' -and
-            -not $doctor.graphics.angleFilesArm64) 'external ARM64 JVM; private ANGLE explicitly absent'
+            $doctor.graphics.angleFilesArm64) 'external ARM64 JVM; bundled native ARM64 ANGLE verified'
         $script:appSize = '360x720'
         $log = Join-Path $root 'run.log'
         $p = Start-App $fixture (Join-Path $root '应用 数据') $log 'restricted'
@@ -1557,7 +1557,53 @@ function Test-Agsl {
     }
 }
 
-switch ($Suite) { 'Host' { Test-Host } 'HostServices' { Test-HostServices } 'Audio' { Test-Audio } 'Agsl' { Test-Agsl } 'Java' { Test-Java } 'Native' { Test-Native } 'Bionic' { Test-Bionic } 'Modules' { Test-Modules } 'Memory' { Test-Bionic -Command memory } 'Io' { Test-Bionic -Command io } 'Faults' { Test-Bionic -Command faults } 'Format' { Test-Bionic -Command format } 'Libraries' { Test-Libraries } 'Jni' { Test-Jni } 'ApkJni' { Test-ApkJni } 'GraphicsHost' { Test-GraphicsHost } 'GraphicsJava' { Test-GraphicsJava } 'Surface' { Test-Surface } 'GraphicsGuest' { Test-GraphicsGuest } 'VulkanWsi' { Test-VulkanWsi } 'DexJob' { Test-DexJob } 'Package' { Test-Package } 'Stability' { & "$PSScriptRoot\test-stability.ps1"; if ($LASTEXITCODE) { $script:failed++ } } }
+<# Verifies GPU-P5 T16 Profile N2 engine runtime (libm, libjnigraphics, AAssetManager, ALooper/AChoreographer, epoll/timerfd/sockets/futex, OpenSLES, fonts.xml, W^X) and N1 isolation. #>
+function Test-EngineN2 {
+    $apk = Join-Path $repo 'tests\fixtures\hello-n2.apk'
+    $record = Get-Content (Join-Path $repo 'tests\fixtures\hello-n2.json') -Raw | ConvertFrom-Json
+    Check 'T16.n2.hash' ((Get-FileHash $apk).Hash.ToLower() -eq $record.apkSha256) 'APK and NDK build record'
+    $inspect = & $winapk inspect $apk --json | ConvertFrom-Json
+    Check 'T16.n2.inspect' ($LASTEXITCODE -eq 0 -and $inspect.profile -eq 'N2' -and $inspect.verdict -eq 'needs-native') "profile=$($inspect.profile) verdict=$($inspect.verdict)"
+
+    $script:appSize = '360x720'
+    [WinApkTestWin]::SetProcessDpiAwarenessContext([IntPtr]-4) | Out-Null
+    $logs = Join-Path $out 'test-data\logs'
+    New-Item -ItemType Directory -Force $logs | Out-Null
+
+    # 1. Positive: Profile N2 executes all engine subsystems, ReLinker app_lib load, and negative boundary checks.
+    $logPos = Join-Path $logs 'T16-n2-pos.log'
+    $dataPos = Join-Path $out 'test-data\n2-pos'
+    if (Test-Path $dataPos) { Remove-Item $dataPos -Recurse -Force }
+    $p = Start-App $apk $dataPos $logPos 'restricted' 'off' 'N2'
+    try {
+        $h = Find-AppWindow $p.Id 'Hello N2 Engine' 20 $p
+        $hit = Wait-Log $logPos 'T16\.n2: PASS:all-n2 bitmap=PASS' 25 $p
+        $code = if ($h) { Close-App $h $p } else { 1 }
+        $txt = Read-Log $logPos
+        Check 'T16.n2.positive' ($null -ne $hit -and $code -eq 0 -and
+            $txt -notmatch 'FATAL ERROR in native method|GUEST_EXECUTION_FAULT') 'app_lib ReLinker, libm, jnigraphics, AAssetManager, ALooper/AChoreographer, epoll/TCP/futex, OpenSLES, fonts.xml, W^X'
+    } finally {
+        if (!$p.HasExited) { $p.Kill(); $p.WaitForExit() }
+        $p.Dispose()
+    }
+
+    # 2. Negative: Profile N1 must refuse N2 engine libraries cleanly without leaking N2 providers.
+    $logNeg = Join-Path $logs 'T16-n2-on-n1.log'
+    $dataNeg = Join-Path $out 'test-data\n2-neg'
+    if (Test-Path $dataNeg) { Remove-Item $dataNeg -Recurse -Force }
+    $pn = Start-App $apk $dataNeg $logNeg 'restricted' 'off' 'N1'
+    try {
+        $hn = Find-AppWindow $pn.Id 'Hello N2 Engine' 20 $pn
+        $refused = Wait-Log $logNeg 'T16\.n2: ERR:.*GUEST_SYMBOL_UNRESOLVED' 25 $pn
+        $cn = if ($hn) { Close-App $hn $pn } else { 1 }
+        Check 'T16.n2.n1-isolated' ($null -ne $refused -and $cn -eq 0) 'Profile N1 refuses N2 engine imports with GUEST_SYMBOL_UNRESOLVED'
+    } finally {
+        if (!$pn.HasExited) { $pn.Kill(); $pn.WaitForExit() }
+        $pn.Dispose()
+    }
+}
+
+switch ($Suite) { 'Host' { Test-Host } 'HostServices' { Test-HostServices } 'Audio' { Test-Audio } 'Agsl' { Test-Agsl } 'EngineN2' { Test-EngineN2 } 'Java' { Test-Java } 'Native' { Test-Native } 'Bionic' { Test-Bionic } 'Modules' { Test-Modules } 'Memory' { Test-Bionic -Command memory } 'Io' { Test-Bionic -Command io } 'Faults' { Test-Bionic -Command faults } 'Format' { Test-Bionic -Command format } 'Libraries' { Test-Libraries } 'Jni' { Test-Jni } 'ApkJni' { Test-ApkJni } 'GraphicsHost' { Test-GraphicsHost } 'GraphicsJava' { Test-GraphicsJava } 'Surface' { Test-Surface } 'GraphicsGuest' { Test-GraphicsGuest } 'VulkanWsi' { Test-VulkanWsi } 'DexJob' { Test-DexJob } 'Package' { Test-Package } 'Stability' { & "$PSScriptRoot\test-stability.ps1"; if ($LASTEXITCODE) { $script:failed++ } } }
 if ($script:failed -gt 0) { Write-Host "$script:failed check(s) failed"; exit 1 }
 Write-Host 'all checks passed'
 exit 0

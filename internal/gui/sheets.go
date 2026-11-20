@@ -21,6 +21,7 @@ type addState struct {
 	apk           winapk.APK
 	failed        bool
 	inWindow      int // 0 as a pane, 1 in a window of its own
+	nativeMode    int // 0 Off (default per AGENTS.md), 1 Restricted
 }
 
 // inspect reads an APK with the runtime and opens Add an app with it.
@@ -151,7 +152,11 @@ func (a *App) apkFeatures(c *ui.Context, apk winapk.APK, native winapk.Native, s
 			i++
 		}
 		if apk.Vulkan {
-			featureRow(c, i, icMonitor, "Vulkan", L.FeatVulkanHint(), L.LevelNotYet(), toneNeutral)
+			vkWord, vkTone := L.LevelNotYet(), toneNeutral
+			if a.report.Machine.VulkanLoader == "available" {
+				vkWord, vkTone = L.LevelExperimental(), toneWarn
+			}
+			featureRow(c, i, icMonitor, "Vulkan", L.FeatVulkanHint(), vkWord, vkTone)
 			i++
 		}
 		if showPerms && len(apk.Permissions) > 0 {
@@ -224,9 +229,19 @@ func (a *App) addSheet(c *ui.Context) {
 		})
 		verdictCard(c, apk)
 		sectionTitle(c, L.WhatsInside())
-		a.apkFeatures(c, apk, winapk.NativeOff, true)
+		selNative := winapk.NativeOff
+		if a.add.nativeMode == 1 {
+			selNative = winapk.NativeRestricted
+		}
+		a.apkFeatures(c, apk, selNative, true)
 		if a.entry(apk.Package) != nil {
 			ui.Text(c, L.AlreadyAdded()).FontSize(13).TextColor(p.warn).Wrap()
+		}
+		if len(apk.NativeLibs) > 0 && apk.Verdict != winapk.Unsupported {
+			ui.Row(c).FillWidth().Gap(12).AlignItems(ui.Center).Children(func() {
+				muted(c, L.NativeCodeTitle(), 13).Grow(1)
+				ui.Segmented(c.Key("add-native"), &a.add.nativeMode, L.NativeOff(), L.NativeRestricted()).Label(L.NativeCodeTitle())
+			})
 		}
 		ui.Row(c).FillWidth().Gap(12).AlignItems(ui.Center).Children(func() {
 			muted(c, L.Opens(), 13).Grow(1)
@@ -255,8 +270,22 @@ func (a *App) addEntry(open bool) {
 	apk := a.add.apk
 	e := a.newEntry(apk)
 	e.InWindow = a.add.inWindow == 1
+	if a.add.nativeMode == 1 && len(apk.NativeLibs) > 0 && apk.Verdict != winapk.Unsupported {
+		e.Native = winapk.NativeRestricted
+		if apk.Profile != "" {
+			e.Profile = apk.Profile
+		} else {
+			e.Profile = winapk.N2
+		}
+		if e.Graphics == "" {
+			e.Graphics = "auto"
+		}
+	}
 	if old := a.entry(apk.Package); old != nil {
-		e.Native, e.Profile, e.Graphics, e.Screen, e.Added = old.Native, old.Profile, old.Graphics, old.Screen, old.Added
+		if a.add.nativeMode == 0 {
+			e.Native, e.Profile, e.Graphics = old.Native, old.Profile, old.Graphics
+		}
+		e.Screen, e.Added = old.Screen, old.Added
 		*old = *e
 		e = old
 	} else {

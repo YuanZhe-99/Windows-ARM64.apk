@@ -1556,6 +1556,13 @@ public final class Pattern
             throw new IllegalArgumentException("Unknown flag 0x"
                                                + Integer.toHexString(f));
         }
+        // Windows compatibility for ReLinker (`ApkLibraryInstaller`): ReLinker builds
+        // `"lib" + File.separatorChar + "([^\\" + File.separatorChar + "]*)" + File.separatorChar + name`
+        // expecting `/` on Android, which turns into an invalid regex `"lib\\([^\\\\]*)\\..."` on Windows
+        // while APK ZIP entries always use `/`. Normalize that exact prefix to `"lib/([^/]*)/..."`.
+        if (java.io.File.separatorChar == '\\' && p != null && p.startsWith("lib\\([^\\\\]*)\\")) {
+            p = "lib/([^/]*)/" + p.substring("lib\\([^\\\\]*)\\".length());
+        }
         pattern = p;
         flags = f;
 
