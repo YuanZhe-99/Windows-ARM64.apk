@@ -60,6 +60,9 @@ std::wstring DecodeHexUtf8(const std::string& hex) {
 void Enqueue(EmbedCmd cmd) {
     HWND target = nullptr;
     const bool isStop = cmd.kind == EmbedCmdKind::Stop;
+    if (cmd.kind == EmbedCmdKind::Resize && cmd.w > 0 && cmd.h > 0) {
+        winapk_bridge_set_phone_size(cmd.w, cmd.h);
+    }
     {
         std::lock_guard<std::mutex> lock(g_cmdMu);
         target = g_hwnd;

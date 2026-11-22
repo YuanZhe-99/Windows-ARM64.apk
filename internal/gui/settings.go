@@ -130,7 +130,7 @@ func (a *App) settingsNav(c *ui.Context) {
 				return
 			}
 			on := a.settings.page == pg
-			b := ui.ButtonBase(c.Key(key)).FillWidth().Height(34).Padding(0, 10).Radius(radiusCtl).Selected(on).Label(pg.name())
+			b := ui.ButtonBase(c.Key(key)).FillWidth().Height(34).Padding(0, 10).Radius(radiusCtl).Justify(ui.Start).Selected(on).Label(pg.name())
 			switch {
 			case on:
 				b.Background(p.tint)
@@ -138,10 +138,12 @@ func (a *App) settingsNav(c *ui.Context) {
 				b.Background(p.hover)
 			}
 			b.Children(func() {
-				t := ui.Text(c, pg.name())
-				if on {
-					t.FontWeight(600).TextColor(p.accentText)
-				}
+				ui.Row(c).FillWidth().AlignItems(ui.Center).Children(func() {
+					t := ui.Text(c, pg.name()).Grow(1)
+					if on {
+						t.FontWeight(600).TextColor(p.accentText)
+					}
+				})
 			})
 			if b.Clicked() {
 				a.settings.page = pg
@@ -157,7 +159,7 @@ func (a *App) settingsNav(c *ui.Context) {
 		group(L.GroupRunning())
 		item("set-nav-runtime", spRuntime)
 		if len(words) == 0 {
-			b := ui.ButtonBase(c.Key("set-nav-diag")).FillWidth().Height(34).Padding(0, 10).Radius(radiusCtl).Label(L.Diagnostics())
+			b := ui.ButtonBase(c.Key("set-nav-diag")).FillWidth().Height(34).Padding(0, 10).Radius(radiusCtl).Justify(ui.Start).Label(L.Diagnostics())
 			if b.Hovered() {
 				b.Background(p.hover)
 			}

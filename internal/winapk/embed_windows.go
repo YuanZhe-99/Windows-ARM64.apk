@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"image"
 	"os"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"unsafe"
@@ -43,6 +44,7 @@ type embedChannel struct {
 	connOv    windows.Overlapped
 	connected bool
 	pipe      *os.File
+	pending   []string
 	mapH      windows.Handle
 	hdr       *embedFrameHeader
 	mem       []byte
@@ -177,6 +179,11 @@ func (c *embedChannel) accept(stopCh <-chan struct{}) (*os.File, error) {
 	f := os.NewFile(uintptr(c.pipeH), `\\.\pipe\winapk-`+c.token)
 	c.pipeH = 0
 	c.pipe = f
+	pending := c.pending
+	c.pending = nil
+	for _, line := range pending {
+		_, _ = f.WriteString(line + "\n")
+	}
 	return f, nil
 }
 
@@ -214,14 +221,31 @@ func (c *embedChannel) readFrame() *image.RGBA {
 	return dst
 }
 
-// send writes one control command line to the connected runtime process.
+// send writes one control command line to the connected runtime process,
+// buffering commands sent before the child connects so early resizes take effect.
 func (c *embedChannel) send(line string) error {
 	c.mu.Lock()
-	f := c.pipe
-	c.mu.Unlock()
-	if f == nil || c.closed.Load() {
-		return errors.New("embed channel not connected")
+	if c.closed.Load() {
+		c.mu.Unlock()
+		return errors.New("embed channel closed")
 	}
+	f := c.pipe
+	if f == nil {
+		if strings.HasPrefix(line, "resize ") {
+			filtered := c.pending[:0]
+			for _, p := range c.pending {
+				if !strings.HasPrefix(p, "resize ") {
+					filtered = append(filtered, p)
+				}
+			}
+			c.pending = append(filtered, line)
+		} else {
+			c.pending = append(c.pending, line)
+		}
+		c.mu.Unlock()
+		return nil
+	}
+	c.mu.Unlock()
 	_, err := f.WriteString(line + "\n")
 	return err
 }
@@ -233,6 +257,7 @@ func (c *embedChannel) close() {
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	c.pending = nil
 	if c.pipe != nil {
 		_ = c.pipe.Close()
 		c.pipe = nil

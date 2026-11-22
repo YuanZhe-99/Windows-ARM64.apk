@@ -62,6 +62,7 @@ struct View {
     std::vector<uint32_t> pixels;   ///< ARGB (0xAARRGGBB), top-down, width × height
     int frameW = 0, frameH = 0;
     int sizedW = -1, sizedH = -1;   ///< the size last reported by macapkSurfaceChanged
+    int waitConfigTicks = 0;        ///< bounded wait for DisplayConfig owner-thread commit
     uint64_t rendererRevision = 0;   ///< invalidates an EGL owner when callbacks change
     jobject holderSurface = nullptr; ///< actual holder Surface for plain SurfaceView, global reference
     jfieldID surfaceReleased = nullptr;
@@ -348,6 +349,22 @@ void FailGraphics(Window* w, const std::string& category, const std::string& det
     PostMessageW(w->hwnd, WM_CLOSE, 0, 0);
 }
 
+/// Notifies Java `DisplayConfig` of the current surface size in pixels; returns true once committed.
+bool NoteDisplaySize(JNIEnv* env, int w, int h) {
+    static jclass dcCls = [&] {
+        jclass local = env->FindClass("com/macapk/loader/DisplayConfig");
+        if (!local) { env->ExceptionClear(); return static_cast<jclass>(nullptr); }
+        jclass global = static_cast<jclass>(env->NewGlobalRef(local));
+        env->DeleteLocalRef(local);
+        return global;
+    }();
+    static jmethodID noteSize = dcCls ? env->GetStaticMethodID(dcCls, "macapkNoteSurfaceSize", "(II)Z") : nullptr;
+    if (!noteSize) { env->ExceptionClear(); return true; }
+    const jboolean committed = env->CallStaticBooleanMethod(dcCls, noteSize, static_cast<jint>(w), static_cast<jint>(h));
+    CheckCallback(env, "DisplayConfig.macapkNoteSurfaceSize");
+    return committed == JNI_TRUE;
+}
+
 /// Runs one full-client Java GLES frame, owning the current context only during callbacks.
 void TickGraphics(Window* w, View* v, JNIEnv* env, jclass cls) {
     if (w->minimized || w->inGraphicsFrame || w->closingGraphics) return;
@@ -375,6 +392,16 @@ void TickGraphics(Window* w, View* v, JNIEnv* env, jclass cls) {
             (version < 1 || version > 3) ? "unsupported GLES client version" : "use --graphics=auto, vulkan or d3d11";
         FailGraphics(w, "GRAPHICS_CAPABILITY_MISSING", detail);
         return;
+    }
+    if (rc.right != v->sizedW || rc.bottom != v->sizedH) {
+        const bool committed = NoteDisplaySize(env, rc.right, rc.bottom);
+        if (v->sizedW > 0 && !committed && v->waitConfigTicks < 5) {
+            ++v->waitConfigTicks;
+            return;
+        }
+        v->waitConfigTicks = 0;
+        v->sizedW = rc.right;
+        v->sizedH = rc.bottom;
     }
     w->inGraphicsFrame = true;
     std::string error;
@@ -525,6 +552,12 @@ void Tick(Window* w) {
     RECT rc;
     GetClientRect(w->hwnd, &rc);
     if (!w->minimized && rc.right > 0 && rc.bottom > 0 && (rc.right != v->sizedW || rc.bottom != v->sizedH)) {
+        const bool committed = NoteDisplaySize(env, rc.right, rc.bottom);
+        if (v->sizedW > 0 && !committed && v->waitConfigTicks < 5) {
+            ++v->waitConfigTicks;
+            return;
+        }
+        v->waitConfigTicks = 0;
         v->sizedW = rc.right;
         v->sizedH = rc.bottom;
         env->CallVoidMethod(v->renderer, changed, static_cast<jint>(rc.right), static_cast<jint>(rc.bottom));

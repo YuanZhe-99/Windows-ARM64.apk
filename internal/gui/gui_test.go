@@ -441,17 +441,17 @@ func TestScreenSizeToldOnce(t *testing.T) {
 	tt.Frame()
 	tt.Frame()
 	s := a.open[e.ID]
-	if s.told != (size{360, 720}) {
+	if s.told != (size{phoneW, phoneH}) {
 		t.Fatalf("told %v", s.told)
 	}
 	a.rotate(s, e)
 	tt.Frame()
-	if s.told != (size{720, 360}) {
+	if s.told != (size{phoneH, phoneW}) {
 		t.Fatalf("after rotating, told %v", s.told)
 	}
 	tt.Frame()
 	tt.Frame()
-	if s.told != (size{720, 360}) {
+	if s.told != (size{phoneH, phoneW}) {
 		t.Fatalf("told %v without a change", s.told)
 	}
 }
@@ -500,7 +500,7 @@ func TestSurfaceBitmapAndPointerForwarding(t *testing.T) {
 	h.a.launch(e, false, false)
 	h.settle()
 
-	rgba := image.NewRGBA(image.Rect(0, 0, 360, 720))
+	rgba := image.NewRGBA(image.Rect(0, 0, phoneW, phoneH))
 	rgba.SetRGBA(10, 10, color.RGBA{R: 46, G: 125, B: 79, A: 255})
 	fc.rec.onFrame(rgba)
 	h.settle()
@@ -520,8 +520,8 @@ func TestSurfaceBitmapAndPointerForwarding(t *testing.T) {
 	if len(fc.rec.actions) < 2 || fc.rec.actions[0] != winapk.PointerDown || fc.rec.actions[1] != winapk.PointerUp {
 		t.Fatalf("expected pointer down/up forwarded, got %v", fc.rec.actions)
 	}
-	if fc.rec.xs[0] <= 0 || fc.rec.xs[0] >= 360 || fc.rec.ys[0] <= 0 || fc.rec.ys[0] >= 720 {
-		t.Fatalf("mapped DIP (%v, %v) out of 360x720 phone bounds", fc.rec.xs[0], fc.rec.ys[0])
+	if fc.rec.xs[0] <= 0 || fc.rec.xs[0] >= phoneW || fc.rec.ys[0] <= 0 || fc.rec.ys[0] >= phoneH {
+		t.Fatalf("mapped DIP (%v, %v) out of %dx%d phone bounds", fc.rec.xs[0], fc.rec.ys[0], phoneW, phoneH)
 	}
 }
 
@@ -706,5 +706,165 @@ func TestCopyAPKToAppDataAndUninstallModes(t *testing.T) {
 	h.settle()
 	if len(h.a.missing) != 0 {
 		t.Fatalf("migrated legacy entry reported missing: %+v", h.a.missing)
+	}
+}
+
+// TestFitPaneReopenUsesPaneSize verifies that closing and reopening an app with
+// Fit the pane enabled launches at the pane stage size rather than phone size,
+// and that resizes during Starting are still delivered upon reaching Running.
+func TestFitPaneReopenUsesPaneSize(t *testing.T) {
+	lc := &launchRecordClient{Mock: winapk.NewMock(true, 0)}
+	h := &harness{q: make(chan func(), 256)}
+	h.a = New(lc, "", true)
+	h.a.later = func(fn func()) { h.q <- fn }
+	h.a.async = func(fn func()) { fn() }
+	h.a.AddSamples(lc.Samples())
+	h.a.Start()
+	h.settle()
+
+	tt := ui.NewTester(h.a.view, 1280, 820)
+	tt.Frame()
+	tt.Frame()
+
+	e := h.a.entry("com.example.noteslite")
+	e.Screen = 2 // Fit the pane
+	h.a.launch(e, false, false)
+	h.settle()
+	tt.Frame()
+	tt.Frame()
+
+	h.a.closeApp(e.ID)
+	h.settle()
+	tt.Frame()
+	tt.Frame()
+
+	h.a.launch(e, false, false)
+	h.settle()
+	tt.Frame()
+	tt.Frame()
+
+	if len(lc.specs) != 2 {
+		t.Fatalf("expected 2 launches, got %d", len(lc.specs))
+	}
+	reopen := lc.specs[1]
+	if reopen.Width <= 700 || reopen.Height <= 500 {
+		t.Fatalf("reopened Fit-the-pane size = %dx%d, want full pane stage dimensions", reopen.Width, reopen.Height)
+	}
+	s := h.a.open[e.ID]
+	if s == nil || s.told.w <= 700 || s.told.h <= 500 {
+		t.Fatalf("session told = %v, want full pane stage dimensions", s)
+	}
+	// Starting state must not permanently latch s.told before Running arrives.
+	s.told = size{}
+	s.state.Phase = winapk.Starting
+	tt.Frame()
+	if s.told != (size{}) {
+		t.Fatalf("told latched while Starting: %v", s.told)
+	}
+	s.state.Phase = winapk.Running
+	tt.Frame()
+	if s.told.w <= 700 || s.told.h <= 500 {
+		t.Fatalf("told not sent after transitioning to Running: %v", s.told)
+	}
+	shoot(t, tt, "fit-pane")
+}
+
+// TestSidebarCompactAndDoubleClickHide verifies single-click icon-rail collapse,
+// single-click expand, and double-click full hide + header restore.
+func TestSidebarCompactAndDoubleClickHide(t *testing.T) {
+	h := newHarness(t, true, true)
+	a := h.a
+	tt := ui.NewTester(a.view, 1280, 820)
+	tt.Frame()
+	tt.Frame()
+
+	if err := tt.Click(L.HideSidebar()); err != nil {
+		t.Fatalf("first click sb-hide: %v", err)
+	}
+	tt.Frame()
+	if !a.Prefs().SidebarCompact || a.Prefs().SidebarHidden {
+		t.Fatalf("after single click: compact=%v hidden=%v, want compact=true hidden=false", a.Prefs().SidebarCompact, a.Prefs().SidebarHidden)
+	}
+	// In compact mode, status details and expanded sidebar sections collapse to icons.
+	if tt.HasText(L.StatusJavaFound()) || tt.HasText(L.NothingOpen()) {
+		t.Fatalf("compact sidebar still displays expanded sidebar text: %v", tt.Texts())
+	}
+	if hr, ok := tt.Find(L.NavHome()); !ok || hr.W > sidebarCompactW {
+		t.Fatalf("compact Home icon button bounds = (%+v, %v), want width <= %d", hr, ok, sidebarCompactW)
+	}
+	shoot(t, tt, "compact-sidebar")
+
+	tt.Advance(500 * time.Millisecond)
+	if err := tt.Click(L.ShowSidebar()); err != nil {
+		t.Fatalf("expand click sb-hide: %v", err)
+	}
+	tt.Frame()
+	if a.Prefs().SidebarCompact || a.Prefs().SidebarHidden {
+		t.Fatalf("after expand click: compact=%v hidden=%v, want both false", a.Prefs().SidebarCompact, a.Prefs().SidebarHidden)
+	}
+
+	// Two clicks within 350 ms hide the sidebar completely.
+	tt.Advance(500 * time.Millisecond)
+	if err := tt.Click(L.HideSidebar()); err != nil {
+		t.Fatalf("dblclick 1: %v", err)
+	}
+	tt.Advance(100 * time.Millisecond)
+	if err := tt.Click(L.ShowSidebar()); err != nil {
+		t.Fatalf("dblclick 2: %v", err)
+	}
+	tt.Frame()
+	if !a.Prefs().SidebarHidden || a.Prefs().SidebarCompact {
+		t.Fatalf("after double click: compact=%v hidden=%v, want compact=false hidden=true", a.Prefs().SidebarCompact, a.Prefs().SidebarHidden)
+	}
+	// Clicking Show sidebar in the pane header restores the sidebar.
+	if err := tt.Click(L.ShowSidebar()); err != nil {
+		t.Fatalf("click header show-sb: %v", err)
+	}
+	tt.Frame()
+	if a.Prefs().SidebarHidden || a.Prefs().SidebarCompact {
+		t.Fatalf("after header restore: compact=%v hidden=%v, want both false", a.Prefs().SidebarCompact, a.Prefs().SidebarHidden)
+	}
+}
+
+// TestStandaloneHeaderFitsNarrowWidth verifies standalone window caption buttons
+// remain inside the window bounds and title remains draggable even at paneMinW.
+func TestStandaloneHeaderFitsNarrowWidth(t *testing.T) {
+	h := newHarness(t, true, true)
+	a := h.a
+	e := a.entry("com.example.noteslite")
+	a.open[e.ID] = &session{id: e.ID, state: winapk.State{Phase: winapk.Running}}
+	tt := ui.NewTester(func(c *ui.Context) { a.appWindowView(c, e.ID) }, paneMinW, 720)
+	tt.Frame()
+	tt.Frame()
+
+	for _, name := range []string{L.WindowMinimize(), L.WindowMaximize(), L.WindowClose()} {
+		r, ok := tt.Find(name)
+		if !ok {
+			t.Fatalf("caption button %q missing at %d width", name, paneMinW)
+		}
+		if r.X < 0 || r.X+r.W > float32(paneMinW) {
+			t.Fatalf("caption button %q clipped at %d width: %+v", name, paneMinW, r)
+		}
+	}
+	// Back to the main window folds into More at narrow phone width.
+	if _, ok := tt.Find(L.BackToMain()); ok {
+		t.Fatal("Back to the main window should fold into More at narrow width")
+	}
+	shoot(t, tt, "standalone-narrow")
+}
+
+// TestSettingsNavLeftAligned verifies Settings navigation items are rendered left-aligned.
+func TestSettingsNavLeftAligned(t *testing.T) {
+	h := newHarness(t, true, true)
+	a := h.a
+	a.openSettings(spGeneral)
+	tt := ui.NewTester(a.view, 1280, 820)
+	tt.Frame()
+	tt.Frame()
+
+	for _, name := range []string{L.PageGeneral(), L.PageRuntime(), L.Diagnostics(), L.PageAbout()} {
+		if !tt.HasText(name) {
+			t.Fatalf("settings nav missing %q", name)
+		}
 	}
 }

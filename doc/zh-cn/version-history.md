@@ -1,5 +1,9 @@
 # 版本历史
 
+## 0.1.3（2026-11-21）
+
+- 2026-11-21：前端交互与内嵌缩放优化（`gui`、`winapk`、`winapk-bridge.dll`）：将内置预设分辨率调整为手机 `412 × 915` 与横屏平板 `1024 × 640`；修复开启“适应窗格（Fit the pane）”的应用关闭重开后回退为 `360 × 720` 手机尺寸的问题（新增 `launchRoom`、延迟至 `Running` 后锁定 `s.told`、`embedChannel` 管道连接前 `resize` 缓冲与 `window.cpp`/`embed.cpp` 联动 `DisplayConfig.macapkNoteSurfaceSize`）；修复独立窗口顶部栏在窄宽度下按钮溢出与不可拖拽问题（`own-head` 可伸缩省略标题与可拖拽区域、窄宽自适应折叠与紧凑窗口按钮）；将侧边栏收起调整为单击切换 56 点仅图标紧凑栏、双击完全隐藏（`Prefs.SidebarCompact`）；修复设置导航项与侧边栏底部状态的左对齐布局（`Justify(ui.Start)`）。已检查 Go 1.27.4、MyGo v0.10.0 与已合并的 Mac.apk `154f64e`（均未变更）；打标并发布 `v0.1.3`。
+
 ## 0.1.2（2026-11-19）
 
 - 2026-11-19：将添加的 APK 原子复制保存到 `<AppData>\apks\<package>.apk`（`CopyAPK` / `ManagedAPKPath`，应用库已有可读条目自动迁移，并随 `MoveDataDir` 一并迁移 `apks\` 目录），避免删除或移动原下载文件后无法打开应用；同时升级移除应用确认弹窗（`Remove app…`），支持用户选择**暂时保留数据（只删除复制的 APK，之后重装可恢复使用）**或**同时删除 APK 与全部应用数据/转换缓存**（`ClearAppArtifacts`）。已检查 Go 1.27.4、MyGo v0.10.0 与已合并的 Mac.apk `154f64e`（均未变更）；打标并发布 `v0.1.2`。

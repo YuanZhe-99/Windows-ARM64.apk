@@ -115,9 +115,12 @@ func (a *App) view(c *ui.Context) {
 	a.retitle()
 	shell.Children(func() {
 		left := float32(0)
-		if a.prefs.SidebarHidden {
+		switch {
+		case a.prefs.SidebarHidden:
 			left = margin / 2
-		} else {
+		case a.prefs.SidebarCompact:
+			a.compactSidebar(c)
+		default:
 			a.sidebar(c)
 		}
 		ui.Column(c.Key("main")).Grow(1).MinWidth(0).MinHeight(0).Padding(margin/2, margin/2, margin/2, left).Children(func() {
@@ -149,17 +152,37 @@ func (a *App) view(c *ui.Context) {
 	}
 }
 
+// sidebarToggleButton renders sb-hide: single-click toggles between the
+// full sidebar and the icon-only compact rail; double-click hides it cleanly.
+func (a *App) sidebarToggleButton(c *ui.Context, tip string) {
+	b := iconButton(c, "sb-hide", icSidebar, tip)
+	dbl := b.DoubleClicked()
+	clk := b.Clicked()
+	if !dbl && !clk {
+		return
+	}
+	now := c.Now()
+	pr := a.prefs
+	if dbl || (!a.sbClickAt.IsZero() && now.Sub(a.sbClickAt) <= 350*time.Millisecond) {
+		a.sbClickAt = time.Time{}
+		pr.SidebarHidden = true
+		pr.SidebarCompact = false
+		a.setPrefs(pr)
+		return
+	}
+	a.sbClickAt = now
+	pr.SidebarHidden = false
+	pr.SidebarCompact = !pr.SidebarCompact
+	a.setPrefs(pr)
+}
+
 // sidebar is Hide the sidebar and Add APK…, Home, the open groups and the
 // apps in windows of their own, Settings and the runtime's state.
 func (a *App) sidebar(c *ui.Context) {
 	p := pal(c)
 	ui.Column(c.Key("sidebar")).Width(sidebarW).Shrink(0).Padding(8, 10, 10, 10).Gap(2).Children(func() {
 		ui.Row(c).FillWidth().Height(36).Gap(6).Margin(0, 0, 8, 0).Children(func() {
-			if iconButton(c, "sb-hide", icSidebar, L.HideSidebar()).Clicked() {
-				pr := a.prefs
-				pr.SidebarHidden = true
-				a.setPrefs(pr)
-			}
+			a.sidebarToggleButton(c, L.HideSidebar())
 			ui.Box(c).Grow(1).FillHeight().DragWindow()
 			if button(c, "sb-add", L.AddAPK(), icPlus).Clicked() {
 				a.chooseAPK()
@@ -211,12 +234,12 @@ func (a *App) sidebar(c *ui.Context) {
 			a.openSettings(spGeneral)
 		}
 		ready := a.report.Ready()
-		b := ui.ButtonBase(c.Key("sb-status")).FillWidth().Padding(10).Margin(6, 0, 0, 0).Radius(radiusCtl).BorderWidth(1, 0, 0, 0).BorderColor(p.border).Label(L.OpenDiagnostics())
+		b := ui.ButtonBase(c.Key("sb-status")).FillWidth().Padding(10).Margin(6, 0, 0, 0).Radius(radiusCtl).Justify(ui.Start).BorderWidth(1, 0, 0, 0).BorderColor(p.border).Label(L.OpenDiagnostics())
 		if b.Hovered() {
 			b.Background(p.pane.Alpha(0.5))
 		}
 		b.Children(func() {
-			ui.Row(c).Gap(10).Children(func() {
+			ui.Row(c).FillWidth().Gap(10).AlignItems(ui.Center).Children(func() {
 				col, word, sub := p.success, L.StatusReady(), L.StatusJavaFound()
 				switch {
 				case a.checking && a.checked.IsZero():
@@ -237,6 +260,124 @@ func (a *App) sidebar(c *ui.Context) {
 			a.showTab(tabDiag, false)
 		}
 	})
+}
+
+// compactSidebar renders the icon-only sidebar rail toggled by a single click on sb-hide.
+func (a *App) compactSidebar(c *ui.Context) {
+	p := pal(c)
+	ui.Column(c.Key("sidebar")).Width(sidebarCompactW).Shrink(0).Padding(8, 6, 10, 6).Gap(4).AlignItems(ui.Center).Children(func() {
+		a.sidebarToggleButton(c, L.ShowSidebar())
+		if iconButton(c, "sb-add", icPlus, L.AddAPK()).Clicked() {
+			a.chooseAPK()
+		}
+		hg := a.homeGroup()
+		homeTip := L.NavHome() + " · " + L.AppsCount(len(a.library))
+		if sbCompactRow(c, "sb-home", a.cur == hg && !a.details.open, L.NavHome(), homeTip, func() {
+			mark(c, 22)
+		}).Clicked() {
+			a.details.open = false
+			a.cur = hg
+			hg.focus = tabHome
+		}
+		ui.Box(c).Height(1).Width(28).Background(p.border).Margin(2, 0)
+		open := a.openGroups()
+		list := ui.Scroll(c.Key("sb-open")).Grow(1).FillWidth().Gap(4).AlignItems(ui.Center).Radius(radiusCard)
+		if _, over := ui.DragOver[tabDrag](list); over {
+			list.Background(p.accent.Alpha(0.12))
+		}
+		if d, ok := ui.Drop[tabDrag](list); ok {
+			a.afterFrame(func() { a.detach(d.tab) })
+		}
+		list.Children(func() {
+			for gi, g := range open {
+				ts := g.tabs()
+				pick := func(t string) func() { return func() { a.cur, g.focus = g, t } }
+				if len(ts) == 1 {
+					a.compactTabRow(c, "sb-g"+strconv.Itoa(gi), ts[0], a.cur == g, pick(ts[0]))
+					continue
+				}
+				card := ui.Column(c.Key("sb-card-" + strconv.Itoa(gi))).FillWidth().Padding(3).Gap(2).AlignItems(ui.Center).Radius(radiusCard)
+				if a.cur == g {
+					card.Background(p.pane.Alpha(0.9)).Border(1, p.border)
+				} else {
+					card.Background(p.pane.Alpha(0.35))
+				}
+				card.Children(func() {
+					for _, t := range ts {
+						a.compactTabRow(c, "sb-g"+strconv.Itoa(gi)+"-"+t, t, a.cur == g && g.focus == t, pick(t))
+					}
+				})
+			}
+			if ws := a.windowApps(); len(ws) > 0 {
+				ui.Box(c).Height(1).Width(28).Background(p.border).Margin(2, 0)
+				for _, id := range ws {
+					appID := id
+					a.compactTabRow(c, "sb-win-"+appID, appTab(appID), false, func() { a.reveal(appID) })
+				}
+			}
+		})
+		if sbCompactRow(c, "sb-settings", false, L.NavSettings(), L.NavSettings(), func() {
+			ui.Icon(c, icGear).FontSize(18)
+		}).Clicked() {
+			a.openSettings(spGeneral)
+		}
+		ready := a.report.Ready()
+		col, word := p.success, L.StatusReady()
+		switch {
+		case a.checking && a.checked.IsZero():
+			col, word = p.muted, L.StatusChecking()
+		case !ready:
+			col, word = p.warn, L.StatusNotReady()
+		}
+		stBtn := ui.ButtonBase(c.Key("sb-status")).Size(40, 36).Center().Radius(radiusCtl).BorderWidth(1, 0, 0, 0).BorderColor(p.border).Label(L.OpenDiagnostics()).Tooltip(word)
+		if stBtn.Hovered() {
+			stBtn.Background(p.pane.Alpha(0.5))
+		}
+		stBtn.Children(func() { dot(c, col) })
+		if stBtn.Clicked() {
+			a.showTab(tabDiag, false)
+		}
+	})
+}
+
+// compactTabRow draws an icon-only tab entry in the compact sidebar rail.
+func (a *App) compactTabRow(c *ui.Context, key, t string, selected bool, onClick func()) {
+	name := a.tabName(t)
+	tip := name
+	if t == tabDiag {
+		tip += " · " + L.DiagSub()
+	} else if s := a.open[appOf(t)]; s != nil {
+		tip += " · " + stateWords(s, false, a.entry(s.id), a)
+	}
+	row := sbCompactRow(c, key, selected, name, tip, func() {
+		a.tabIcon(c, t, 22)
+	})
+	row.Drag(tabDrag{t})
+	if e := a.entry(appOf(t)); e != nil {
+		row.ContextMenu(func(m *ui.Menu) { a.rowMenu(m, e) })
+	}
+	if row.Clicked() {
+		onClick()
+	}
+}
+
+// sbCompactRow is an icon-only button for compactSidebar; selected shows an accent bar.
+func sbCompactRow(c *ui.Context, key string, selected bool, label, tip string, body func()) ui.Element {
+	p := pal(c)
+	b := ui.ButtonBase(c.Key(key)).FillWidth().Height(36).Radius(radiusCtl).Center().Selected(selected).Label(label).Tooltip(tip)
+	switch {
+	case selected:
+		b.Background(p.pane.Alpha(0.9))
+	case b.Hovered():
+		b.Background(p.pane.Alpha(0.5))
+	}
+	b.Children(func() {
+		if selected {
+			ui.Box(c).Absolute().Left(0).Top(10).Size(3, 16).Radius(2).Background(p.accent)
+		}
+		ui.Box(c).Center().TextColor(p.text).Children(body)
+	})
+	return b
 }
 
 // openGroups are the groups listed under Open: each but Home's own while
@@ -325,7 +466,7 @@ func (a *App) tabRowExt(c *ui.Context, key, t string, selected, ownWin bool, onC
 // sbRow is a row of the sidebar; selected shows the accent's bar.
 func sbRow(c *ui.Context, key string, selected bool, body func()) ui.Element {
 	p := pal(c)
-	b := ui.ButtonBase(c.Key(key)).FillWidth().MinHeight(36).Padding(5, 10).Radius(radiusCtl).Selected(selected)
+	b := ui.ButtonBase(c.Key(key)).FillWidth().MinHeight(36).Padding(5, 10).Radius(radiusCtl).Justify(ui.Start).Selected(selected)
 	switch {
 	case selected:
 		b.Background(p.pane.Alpha(0.9))
@@ -421,39 +562,41 @@ func (a *App) toastView(c *ui.Context) {
 // after a separator: the system's own are hidden.
 func windowButtons(c *ui.Context, key string, w *mygo.Window) {
 	p := pal(c)
-	ui.Box(c).Size(1, 20).Background(p.border).Margin(0, 4)
-	caption := func(k string, glyph *ui.SVG, label string, close bool) ui.Element {
-		b := ui.ButtonBase(c.Key(key+k)).Size(40, 32).Radius(radiusCtl).Center().Label(label).Tooltip(label)
-		fg := p.text
-		if b.Hovered() {
-			if close {
-				b.Background(ui.Hex("#C42B1C"))
-				fg = ui.Hex("#FFFFFF")
+	ui.Row(c).Shrink(0).Gap(2).AlignItems(ui.Center).Children(func() {
+		ui.Box(c).Size(1, 20).Shrink(0).Background(p.border).Margin(0, 4)
+		caption := func(k string, glyph *ui.SVG, label string, close bool) ui.Element {
+			b := ui.ButtonBase(c.Key(key+k)).Size(36, 32).Shrink(0).Radius(radiusCtl).Center().Label(label).Tooltip(label)
+			fg := p.text
+			if b.Hovered() {
+				if close {
+					b.Background(ui.Hex("#C42B1C"))
+					fg = ui.Hex("#FFFFFF")
+				} else {
+					b.Background(p.hover)
+				}
+			}
+			b.Children(func() { ui.Icon(c, glyph).FontSize(10).TextColor(fg) })
+			return b
+		}
+		if caption("-min", winMin, L.WindowMinimize(), false).Clicked() && w != nil {
+			w.Minimize()
+		}
+		maximized := w != nil && w.IsMaximized()
+		glyph, label := winMax, L.WindowMaximize()
+		if maximized {
+			glyph, label = winRest, L.WindowRestore()
+		}
+		if caption("-max", glyph, label, false).MaximizeButton().Clicked() && w != nil {
+			if maximized {
+				w.Unmaximize()
 			} else {
-				b.Background(p.hover)
+				w.Maximize()
 			}
 		}
-		b.Children(func() { ui.Icon(c, glyph).FontSize(10).TextColor(fg) })
-		return b
-	}
-	if caption("-min", winMin, L.WindowMinimize(), false).Clicked() && w != nil {
-		w.Minimize()
-	}
-	maximized := w != nil && w.IsMaximized()
-	glyph, label := winMax, L.WindowMaximize()
-	if maximized {
-		glyph, label = winRest, L.WindowRestore()
-	}
-	if caption("-max", glyph, label, false).MaximizeButton().Clicked() && w != nil {
-		if maximized {
-			w.Unmaximize()
-		} else {
-			w.Maximize()
+		if caption("-close", winClose, L.WindowClose(), true).Clicked() && w != nil {
+			w.Close()
 		}
-	}
-	if caption("-close", winClose, L.WindowClose(), true).Clicked() && w != nil {
-		w.Close()
-	}
+	})
 }
 
 // retitle names the main window after the pane in focus, as the taskbar

@@ -1,5 +1,9 @@
 # Version history
 
+## 0.1.3 (2026-11-21)
+
+- 2026-11-21: front-end and embed-resize polish (`gui`, `winapk`, `winapk-bridge.dll`): updated built-in presets to Phone `412 × 915` and landscape Tablet `1024 × 640`; fixed Fit-the-pane apps reopening at `360 × 720` (`launchRoom`, deferring `s.told` confirmation until `Running`, pre-connect `embedChannel` resize buffering and calling `DisplayConfig.macapkNoteSurfaceSize` from `window.cpp`/`embed.cpp`); fixed standalone window title-bar overflow and drag region at narrow widths (`own-head` ellipsis + draggable title, responsive folding and compact `windowButtons`); changed sidebar toggle to collapse into a 56-point icon rail on single-click and hide completely on double-click (`Prefs.SidebarCompact`); and left-aligned Settings navigation items and sidebar footer (`Justify(ui.Start)`). Checked Go 1.27.4, MyGo v0.10.0 and merged Mac.apk `154f64e` (unchanged); tagged and released `v0.1.3`.
+
 ## 0.1.2 (2026-11-19)
 
 - 2026-11-19: copy added APKs atomically to `<AppData>\apks\<package>.apk` (`CopyAPK` / `ManagedAPKPath`, auto-migrating readable existing library entries and migrating `apks\` in `MoveDataDir`) so deleting or moving the original download no longer breaks launches, and updated the app removal dialog (`Remove app…`) to let the user either keep saved app data (removing only the stored APK so reinstalling restores it) or delete both the APK and all saved data/converted code (`ClearAppArtifacts`). Checked Go 1.27.4, MyGo v0.10.0 and merged Mac.apk `154f64e` (unchanged); tagged and released `v0.1.2`.

@@ -24,6 +24,9 @@ func (a *App) panesView(c *ui.Context) {
 		a.back(s)
 	}
 	area := ui.Column(c.Key("panes")).Grow(1).FillWidth().MinHeight(0)
+	if pr := area.LayoutBounds(); pr.W > 0 && pr.H > 0 {
+		a.panesRoom = size{pr.W, pr.H}
+	}
 	// The zones stay one frame after the drag leaves: the frame a drop
 	// lands in has to build the zone it lands on.
 	last := a.dragging
@@ -227,6 +230,8 @@ func (a *App) paneHeader(c *ui.Context, g *group, t string, top, right bool, wid
 			if iconButton(c, "show-sb-"+t, icSidebar, L.ShowSidebar()).Clicked() {
 				pr := a.prefs
 				pr.SidebarHidden = false
+				pr.SidebarCompact = false
+				a.sbClickAt = time.Time{}
 				a.setPrefs(pr)
 			}
 		}
@@ -442,11 +447,15 @@ func (a *App) appMenuItems(m *ui.Menu, e *entry) {
 func screenSize(e *entry, rotated bool, room size) (w, h float32) {
 	switch e.Screen {
 	case 1:
-		w, h = 600, 960
+		w, h = tabletW, tabletH
 	case 2:
-		w, h = room.w, room.h
+		if room.w > 0 && room.h > 0 {
+			w, h = room.w, room.h
+		} else {
+			w, h = fitDefaultW, fitDefaultH
+		}
 	default:
-		w, h = 360, 720
+		w, h = phoneW, phoneH
 	}
 	if rotated && e.Screen != 2 {
 		w, h = h, w
@@ -470,8 +479,13 @@ func (a *App) appBody(c *ui.Context, id string, own bool) {
 	ui.Column(c.Key("stage-" + id)).Fill().Background(p.stage).Children(func() {
 		area := ui.Row(c.Key("area-" + id)).Grow(1).FillWidth().MinHeight(0).Center().Gap(24)
 		r := area.LayoutBounds()
+		if !own && r.W > 0 && r.H > 0 {
+			a.lastStage = size{r.W, r.H}
+		}
 		if own || e.Screen == 2 {
-			a.tell(s, size{r.W, r.H})
+			if r.W > 0 && r.H > 0 {
+				a.tell(s, size{r.W, r.H})
+			}
 		} else {
 			w, h := screenSize(e, s.rotated, size{})
 			a.tell(s, size{w, h})
@@ -524,6 +538,7 @@ func (a *App) appBody(c *ui.Context, id string, own bool) {
 							e.Screen = i
 						}
 					}
+					s.told = size{}
 					a.saveLibrary()
 				}
 			})
@@ -572,20 +587,33 @@ func (a *App) rotate(s *session, e *entry) {
 }
 
 // tell tells a running app its screen's size when it differs from what it
-// was told last.
+// was told last, confirming s.told once the process reaches Running so resizes
+// during startup are never dropped before the embed pipe is accepted.
 func (a *App) tell(s *session, sz size) {
-	if s.proc == nil || !s.live() || sz.w <= 0 || sz.h <= 0 || sz == s.told {
+	if s.proc == nil || !s.live() || sz.w <= 0 || sz.h <= 0 {
 		return
 	}
-	s.told = sz
+	w, h := int(sz.w), int(sz.h)
+	if w <= 0 || h <= 0 {
+		return
+	}
+	q := size{float32(w), float32(h)}
+	running := s.state.Phase == winapk.Running
+	if q == s.lastSize && (!running || q == s.told) {
+		return
+	}
+	s.lastSize = q
+	if running {
+		s.told = q
+	}
 	proc := s.proc
-	a.async(func() { _ = proc.Resize(int(sz.w), int(sz.h)) })
+	a.async(func() { _ = proc.Resize(w, h) })
 }
 
 // ownSize is the content size of an app's window of its own: its screen
 // and the header above it.
 func ownSize(e *entry, rotated bool) (w, h int) {
-	sw, sh := screenSize(e, rotated, size{360, 720})
+	sw, sh := screenSize(e, rotated, size{fitDefaultW, fitDefaultH})
 	return int(sw), int(sh) + headerH
 }
 
@@ -647,6 +675,9 @@ func (a *App) forwardInput(s *session, ev ui.InputEvent, dispW, dispH float32) b
 	}
 	mapPt := func(x, y float32) (float32, float32) {
 		tw, th := s.told.w, s.told.h
+		if tw <= 0 || th <= 0 {
+			tw, th = s.lastSize.w, s.lastSize.h
+		}
 		if tw <= 0 || th <= 0 || dispW <= 0 || dispH <= 0 {
 			return x, y
 		}
@@ -891,20 +922,38 @@ func (a *App) appWindowView(c *ui.Context, id string) {
 		if s == nil || e == nil {
 			return
 		}
-		ui.Row(c.Key("own-head")).Height(headerH).Shrink(0).FillWidth().Padding(0, 6, 0, 12).Gap(4).AlignItems(ui.Center).BorderWidth(0, 0, 1, 0).BorderColor(p.border).Children(func() {
-			appIcon(c, e, 22)
-			ui.Text(c, e.APK.Label).FontWeight(600).NoWrap().Margin(0, 0, 0, 4)
-			ui.Box(c).Grow(1).FillHeight().DragWindow()
+		head := ui.Row(c.Key("own-head")).Height(headerH).Shrink(0).FillWidth().Padding(0, 6, 0, 10).Gap(4).AlignItems(ui.Center).BorderWidth(0, 0, 1, 0).BorderColor(p.border)
+		headW := head.LayoutBounds().W
+		if headW <= 0 {
+			cw, _ := ownSize(e, s.rotated)
+			headW = float32(cw)
+		}
+		fold := headW < 460
+		head.Children(func() {
+			ui.Row(c).Gap(8).AlignItems(ui.Center).Grow(1).Shrink(1).MinWidth(48).FillHeight().Clip().DragWindow().Children(func() {
+				appIcon(c, e, 22)
+				ui.Text(c, e.APK.Label).FontWeight(600).Ellipsis("…").MaxLines(1).Shrink(1).MinWidth(0)
+			})
 			if iconButton(c, "own-back", icBack, L.Back()).Disabled(!s.live()).Clicked() {
 				a.back(s)
 			}
-			if iconButton(c, "own-rot", icRotate, L.Rotate()).Clicked() {
+			if iconButton(c, "own-rot", icRotate, L.Rotate()).Disabled(e.Screen == 2).Clicked() {
 				a.rotate(s, e)
 			}
-			if iconButton(c, "own-pane", icDockIn, L.BackToMain()).Tooltip(L.BackToMainHint()).Clicked() {
-				a.toPane(id)
+			if !fold {
+				if iconButton(c, "own-pane", icDockIn, L.BackToMain()).Tooltip(L.BackToMainHint()).Clicked() {
+					a.toPane(id)
+				}
 			}
-			iconButton(c, "own-more", icMore, L.More()).Menu(func(m *ui.Menu) { a.appMenuItems(m, e) })
+			iconButton(c, "own-more", icMore, L.More()).Menu(func(m *ui.Menu) {
+				if fold {
+					if m.Item(L.BackToMain()).Icon(miDockIn).Subtitle(L.BackToMainHint()).Chosen() {
+						a.toPane(id)
+					}
+					m.Separator()
+				}
+				a.appMenuItems(m, e)
+			})
 			windowButtons(c, "own-win", s.win)
 		})
 		a.appBody(c, id, true)

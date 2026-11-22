@@ -54,16 +54,19 @@ type App struct {
 	checking bool
 	install  installState
 
-	window  *mygo.Window
-	diagWin *mygo.Window
-	groups  []*group
-	cur     *group
-	sizes   map[string]size // each pane's room in the last frame
+	window    *mygo.Window
+	diagWin   *mygo.Window
+	groups    []*group
+	cur       *group
+	sizes     map[string]size // each pane's room in the last frame
+	panesRoom size            // panes stage container bounds in the last frame
+	lastStage size            // last measured app stage bounds in the main window
 	// dragging is the tab dragged over the panes, "" for none; pending is
 	// what runs once the frame is built (afterFrame).
 	dragging, zonesFor string
 	pending            []func()
 	quitting           bool
+	sbClickAt          time.Time // last click time on sb-hide for single vs double click
 
 	homeQuery  string
 	homeFilter int // 0 all, 1 open
@@ -115,6 +118,7 @@ type Prefs struct {
 	// Restricted.
 	Profile          winapk.Profile `json:"profile"`
 	SidebarHidden    bool           `json:"sidebarHidden"`
+	SidebarCompact   bool           `json:"sidebarCompact,omitempty"`
 	HideNativeNotice bool           `json:"hideNativeNotice"`
 }
 
@@ -193,8 +197,9 @@ type session struct {
 	// answer.
 	stopAt  time.Time
 	started time.Time
-	// told is the screen size the app was last told, in DIPs.
-	told size
+	// told is the screen size confirmed sent while Running; lastSize is the
+	// latest quantized DIP size requested for pointer mapping before Running.
+	told, lastSize size
 }
 
 // updateFrame uploads a newly published RGBA8 frame into the session's GPU bitmap.
@@ -649,6 +654,30 @@ func (a *App) launch(e *entry, inWindow, beside bool) {
 	})
 }
 
+// launchRoom returns the target stage dimensions (DIPs) to launch e with when
+// Fit the pane is selected so reopened apps start directly at pane size.
+func (a *App) launchRoom(e *entry, s *session) size {
+	const barH = 44
+	if s != nil && s.win != nil {
+		return size{fitDefaultW, fitDefaultH}
+	}
+	if g := a.groupOf(appTab(e.ID)); g != nil {
+		if r, ok := a.sizes[appTab(e.ID)]; ok && r.w > 2 && r.h > headerH+barH+2 {
+			return size{r.w - 2, r.h - headerH - barH - 2}
+		}
+		if len(g.tabs()) == 1 && a.panesRoom.w > margin+2 && a.panesRoom.h > margin+headerH+barH+2 {
+			return size{a.panesRoom.w - margin - 2, a.panesRoom.h - margin - headerH - barH - 2}
+		}
+	}
+	if a.lastStage.w > 0 && a.lastStage.h > 0 {
+		return a.lastStage
+	}
+	if a.panesRoom.w > margin+2 && a.panesRoom.h > margin+headerH+barH+2 {
+		return size{a.panesRoom.w - margin - 2, a.panesRoom.h - margin - headerH - barH - 2}
+	}
+	return size{fitDefaultW, fitDefaultH}
+}
+
 func (a *App) startRuntime(e *entry, s *session) {
 	id := e.ID
 	if !a.demo && e.APK.Path != "" && !strings.HasPrefix(e.APK.Path, "sample:") {
@@ -662,7 +691,8 @@ func (a *App) startRuntime(e *entry, s *session) {
 			return
 		}
 	}
-	sw, sh := screenSize(e, false, size{360, 720})
+	sw, sh := screenSize(e, s.rotated, a.launchRoom(e, s))
+	s.lastSize = size{sw, sh}
 	var dataDir string
 	if !a.demo {
 		dataDir = a.appDataDir()

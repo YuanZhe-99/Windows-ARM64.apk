@@ -68,18 +68,26 @@ func applyTheme(c *ui.Context) {
 
 // Sizes from the design (design/README.md, "Tokens").
 const (
-	fontFamily  = "Segoe UI Variable Text"
-	fontMono    = "Cascadia Mono"
-	fontSmall   = 12
-	fontBody    = 14
-	fontSection = 15
-	fontTitle   = 22
-	radiusCtl   = 6
-	radiusCard  = 8
-	radiusDlg   = 10
-	sidebarW    = 248
-	headerH     = 44
-	margin      = 8
+	fontFamily      = "Segoe UI Variable Text"
+	fontMono        = "Cascadia Mono"
+	fontSmall       = 12
+	fontBody        = 14
+	fontSection     = 15
+	fontTitle       = 22
+	radiusCtl       = 6
+	radiusCard      = 8
+	radiusDlg       = 10
+	sidebarW        = 248
+	sidebarCompactW = 56
+	headerH         = 44
+	margin          = 8
+	// Built-in virtual device dimensions (DIPs) and Fit-the-pane fallback.
+	phoneW      = 412
+	phoneH      = 915
+	tabletW     = 1024
+	tabletH     = 640
+	fitDefaultW = 960
+	fitDefaultH = 640
 	// A pane is at least paneMinW × paneMinH; narrower than paneFoldW its
 	// header folds the window and split buttons into ⋯.
 	paneMinW  = 360

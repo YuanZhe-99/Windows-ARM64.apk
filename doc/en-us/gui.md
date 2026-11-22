@@ -12,10 +12,11 @@ package `internal/winapk`. By default it connects to `winapk.Runtime`; `WINAPK_D
 | Main window | The sidebar on the window's base and the current group's panes beside it, floating 8 points from the edges; no title-bar strip: the top-right pane's header draws minimize, maximize and close, and empty header space moves the window |
 | An app's window of its own | One app, no sidebar, never split; a header with Back, Rotate, Back to the main window, ⋯ and the window's buttons; closing it stops the app |
 
-- **Sidebar.** Hide the sidebar and Add APK…; Home with the number of apps; Open, with one entry
-  per group (a pane alone as a row, several as a card titled with their names); In windows of
-  their own; Settings; the runtime's state (Ready to run apps / Can't run apps yet), which opens
-  Diagnostics.
+- **Sidebar.** Toggle the sidebar (`sb-hide`: a single click collapses it to a 56-point icon rail
+  or expands it again; a double-click hides it completely) and Add APK…; Home with the number of
+  apps; Open, with one entry per group (a pane alone as a row, several as a card titled with their
+  names); In windows of their own; Settings; the runtime's state (Ready to run apps / Can't run apps
+  yet), which opens Diagnostics.
 - **Tabs.** A pane shows Home, Diagnostics or an open app. Home is never closed; it may be split
   with apps and moved into their group.
 - **Groups.** A group is a tree of splits (`layout.go`). Split right / Split down offer the panes of
@@ -24,9 +25,9 @@ package `internal/winapk`. By default it connects to `winapk.Runtime`; `WINAPK_D
   beside it / below it. Maximize shows one pane over its group while the others keep running. A pane
   narrower than 560 points folds the window and split buttons into ⋯. An empty group goes away and
   the main window falls back to Home's group.
-- **An app's pane.** A phone-style frame scaled into the pane (Phone 360 × 720, Small tablet
-  600 × 960, or Fit the pane without a frame), and a bar with Back (also Esc for the pane in
-  focus), Rotate and the screen size. The surface shows the app's state: starting, running,
+- **An app's pane.** A phone-style frame scaled into the pane (Phone 412 × 915, Tablet 1024 × 640,
+  or Fit the pane without a frame), and a bar with Back (also Esc for the pane in focus), Rotate and
+  the screen size. The surface shows the app's state: starting, running,
   not responding (after Stop gets no answer for 5 seconds, with Force stop), stopped (Open again)
   or couldn't start (plain words, Try again, Show details, and Try it with native code off for an
   app run Restricted).
@@ -80,7 +81,7 @@ and versions; panes and Home say what happened in words.
 
 | File | Holds |
 |---|---|
-| `%APPDATA%\Windows-ARM64.apk\gui.json` (`demo\gui.json` under `WINAPK_DEMO=1`) | The interface's settings (`Prefs`): theme, language, how new apps open, closing, App data folder, Java folder, Keep it up to date, default graphics and profile, sidebar hidden |
+| `%APPDATA%\Windows-ARM64.apk\gui.json` (`demo\gui.json` under `WINAPK_DEMO=1`) | The interface's settings (`Prefs`): theme, language, how new apps open, closing, App data folder, Java folder, Keep it up to date, default graphics and profile, sidebar compact/hidden state |
 | `library.json` (same folder) | The library (`entry`): each APK's `Inspect` result and the person's choices for it; not written while the demo's sample library shows |
 
 Both are written atomically (a temporary file renamed over the old one); a missing or broken

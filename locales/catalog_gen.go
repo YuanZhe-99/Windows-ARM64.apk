@@ -524,21 +524,21 @@ func (msgs Messages) ScreenSizeHint() string {
 	return Catalog.Format(msgs.locale, "ScreenSizeHint", nil)
 }
 
-// ScreenPhone says "Phone · 360 × 720"
+// ScreenPhone says "Phone · 412 × 915"
 // in the language the app shows.
 func ScreenPhone() string { return In(i18n.Locale()).ScreenPhone() }
 
-// ScreenPhone says "Phone · 360 × 720"
+// ScreenPhone says "Phone · 412 × 915"
 // in the language of msgs.
 func (msgs Messages) ScreenPhone() string {
 	return Catalog.Format(msgs.locale, "ScreenPhone", nil)
 }
 
-// ScreenTablet says "Small tablet · 600 × 960"
+// ScreenTablet says "Tablet · 1024 × 640"
 // in the language the app shows.
 func ScreenTablet() string { return In(i18n.Locale()).ScreenTablet() }
 
-// ScreenTablet says "Small tablet · 600 × 960"
+// ScreenTablet says "Tablet · 1024 × 640"
 // in the language of msgs.
 func (msgs Messages) ScreenTablet() string {
 	return Catalog.Format(msgs.locale, "ScreenTablet", nil)

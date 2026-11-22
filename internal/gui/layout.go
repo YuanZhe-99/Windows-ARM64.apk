@@ -184,6 +184,7 @@ func (a *App) splitWith(target, t string, across bool) {
 // removeTab takes t out of whichever group shows it; an empty group goes,
 // and the main window then shows Home's.
 func (a *App) removeTab(t string) {
+	delete(a.sizes, t)
 	for i, g := range a.groups {
 		if !g.remove(t) {
 			continue

@@ -29,7 +29,7 @@ per APK.
 
 ## Project status
 
-Version 0.1.2 is the current experimental Windows 11 ARM64 build. On the Windows 11 ARM64 machine recorded in
+Version 0.1.3 is the current experimental Windows 11 ARM64 build. On the Windows 11 ARM64 machine recorded in
 [platform-notes.md](platform-notes.md), G0–G3 pass for Java/Kotlin APKs, N0 ELF/ABI, the declared
 C/Bionic subset and the `hello-jni` Activity matrix (including an independent CFG-enabled build),
 T14 passes 20 cold/warm launches, 100 resize/minimize-restore cycles and a full 30-minute
@@ -44,7 +44,7 @@ Vulkan ICDs remain `BLOCKED` on 8cx Gen 3. Mac.apk `154f64e`, Go 1.27.4 and MyGo
 ## Upstream versions
 
 Go, MyGo and Mac.apk are not pinned: they always follow their latest version. The table shows the
-latest version at the last check (2026-11-19); everything else is locked in `build-lock.json`,
+latest version at the last check (2026-11-21); everything else is locked in `build-lock.json`,
 which also records what the last build used of the three.
 
 | Component | Policy | Latest at last check |
