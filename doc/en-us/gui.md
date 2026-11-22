@@ -67,7 +67,7 @@ package `internal/winapk`. By default it connects to `winapk.Runtime`; `WINAPK_D
 |---|---|
 | Add an app | `Inspect`'s result: name, version, package, size, the verdict in words, what's inside, how it opens; Add to library or Add and open. Says nothing in the file ran |
 | App details | What works here, the last failure, Opens, Screen size, Remove app…; Advanced: native code Off or Restricted with the profile (Use the default, N0, N1, N2), Graphics |
-| Settings | General (how new apps open, closing the main window, Ask first, App data with Open folder and Move…, language, appearance); Runtime (which Java runtime, Update / Reinstall, Keep it up to date, default graphics, default native profile); About |
+| Settings | General (how new apps open, closing the main window, Ask first, App data with Open folder and Move…, language, appearance); Runtime (which Java runtime, Update / Reinstall, Keep it up to date, default graphics, default native profile); About (Updates: Check for updates; Install X & restart stops every open app so `bin\` is unlocked, shows MB download progress and Installing…, installs the Ed25519-signed update and restarts without the Ask-first confirmation; failures leave the current version intact and are logged) |
 | Getting the Java runtime | The card above the panes while none is found, and the step-by-step dialog (download, check, install, test) with Hide and Cancel |
 | Confirmations | Closing the main window with apps in panes; removing an app (keep app data and remove only the APK, or delete both) |
 

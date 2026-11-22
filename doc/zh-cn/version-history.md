@@ -1,5 +1,9 @@
 # 版本历史
 
+## 0.1.4（2026-11-21）
+
+- 2026-11-21：修复“设置 → 关于 → 更新”中的应用内更新器（`gui`）：新增 `runAppUpdate`，在 `swapFiles` 替换 `<install>\bin\` 前先结束所有正在运行的应用进程（`Kill`）以解除文件占用，按整 MB 汇报下载进度并在提取/替换阶段显示 `UpdateInstalling`（`appUpdateDone`/`appUpdateTotal`）与停止运行中应用的提示（`UpdateStopsApps`），检查或安装失败时记录错误日志并提示当前版本仍可正常使用（`UpdateFailed`），安装成功后设置 `a.quitting = true` 再调用 `relaunch`，避免被主窗口的“先询问”关闭确认拦截而取消重启。已检查 Go 1.27.4、MyGo v0.10.0 与已合并的 Mac.apk `154f64e`（均未变更）；打标并发布 `v0.1.4`。
+
 ## 0.1.3（2026-11-21）
 
 - 2026-11-21：前端交互与内嵌缩放优化（`gui`、`winapk`、`winapk-bridge.dll`）：将内置预设分辨率调整为手机 `412 × 915` 与横屏平板 `1024 × 640`；修复开启“适应窗格（Fit the pane）”的应用关闭重开后回退为 `360 × 720` 手机尺寸的问题（新增 `launchRoom`、延迟至 `Running` 后锁定 `s.told`、`embedChannel` 管道连接前 `resize` 缓冲与 `window.cpp`/`embed.cpp` 联动 `DisplayConfig.macapkNoteSurfaceSize`）；修复独立窗口顶部栏在窄宽度下按钮溢出与不可拖拽问题（`own-head` 可伸缩省略标题与可拖拽区域、窄宽自适应折叠与紧凑窗口按钮）；将侧边栏收起调整为单击切换 56 点仅图标紧凑栏、双击完全隐藏（`Prefs.SidebarCompact`）；修复设置导航项与侧边栏底部状态的左对齐布局（`Justify(ui.Start)`）。已检查 Go 1.27.4、MyGo v0.10.0 与已合并的 Mac.apk `154f64e`（均未变更）；打标并发布 `v0.1.3`。

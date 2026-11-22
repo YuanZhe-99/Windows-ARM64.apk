@@ -411,5 +411,8 @@
   "RemoveDeleteDataHint": "Also permanently deletes this app's saved data ({size}) and converted code. This can't be undone.",
   "RemoveDeleteDataHintEmpty": "Also permanently deletes any saved data and converted code for this app. This can't be undone.",
   "RemoveAPKOnly": "Remove APK",
-  "RemoveAndDeleteData": "Delete APK & data"
+  "RemoveAndDeleteData": "Delete APK & data",
+  "UpdateFailed": "The update didn't install. This version still works.",
+  "UpdateInstalling": "Installing…",
+  "UpdateStopsApps": "Open apps stop while the update installs."
 }

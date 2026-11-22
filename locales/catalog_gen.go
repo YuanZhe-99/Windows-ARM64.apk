@@ -4155,3 +4155,33 @@ func RemoveAndDeleteData() string { return In(i18n.Locale()).RemoveAndDeleteData
 func (msgs Messages) RemoveAndDeleteData() string {
 	return Catalog.Format(msgs.locale, "RemoveAndDeleteData", nil)
 }
+
+// UpdateFailed says "The update didn't install. This version still works."
+// in the language the app shows.
+func UpdateFailed() string { return In(i18n.Locale()).UpdateFailed() }
+
+// UpdateFailed says "The update didn't install. This version still works."
+// in the language of msgs.
+func (msgs Messages) UpdateFailed() string {
+	return Catalog.Format(msgs.locale, "UpdateFailed", nil)
+}
+
+// UpdateInstalling says "Installing…"
+// in the language the app shows.
+func UpdateInstalling() string { return In(i18n.Locale()).UpdateInstalling() }
+
+// UpdateInstalling says "Installing…"
+// in the language of msgs.
+func (msgs Messages) UpdateInstalling() string {
+	return Catalog.Format(msgs.locale, "UpdateInstalling", nil)
+}
+
+// UpdateStopsApps says "Open apps stop while the update installs."
+// in the language the app shows.
+func UpdateStopsApps() string { return In(i18n.Locale()).UpdateStopsApps() }
+
+// UpdateStopsApps says "Open apps stop while the update installs."
+// in the language of msgs.
+func (msgs Messages) UpdateStopsApps() string {
+	return Catalog.Format(msgs.locale, "UpdateStopsApps", nil)
+}

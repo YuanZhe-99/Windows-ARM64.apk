@@ -34,9 +34,11 @@ type App struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 	// later runs a function on the main thread and redraws; async runs
-	// work off it. Tests run both inline.
-	later func(func())
-	async func(func())
+	// work off it; relaunch restarts the app after an update. Tests
+	// override them.
+	later    func(func())
+	async    func(func())
+	relaunch func()
 
 	prefs   Prefs
 	library []*entry
@@ -84,7 +86,9 @@ type App struct {
 	appDataBytes   map[string]int64
 	checkedUpdate  bool
 	appUpdate      *mygo.Update
-	appUpdateBusy  bool
+	appUpdateBusy  bool  // true while checking for or installing an app update
+	appUpdateDone  int64 // bytes of the update downloaded so far, while installing
+	appUpdateTotal int64 // total update archive bytes, while installing
 }
 
 // stageJob tracks one background CopyAPK operation for an entry ID.
@@ -237,6 +241,7 @@ func New(rt winapk.Client, dir string, demo bool) *App {
 	}
 	a.later = a.onMain
 	a.async = func(fn func()) { go fn() }
+	a.relaunch = func() { mygo.App.Relaunch() }
 	a.prefs = loadJSON(dir, "gui.json", defaultPrefs())
 	if !demo {
 		a.library = loadJSON[[]*entry](dir, "library.json", nil)

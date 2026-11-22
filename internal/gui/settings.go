@@ -2,6 +2,8 @@ package gui
 
 import (
 	"context"
+	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -544,9 +546,21 @@ func (a *App) aboutPage(c *ui.Context) {
 	})
 	section(c, L.Updates(), func(r *rows) {
 		if mygo.Updater.Enabled() {
-			r.row(c, "ab-updates", icInfo, L.SignedUpdates(), L.SignedUpdatesHint(), func() {
+			hint := L.SignedUpdatesHint()
+			if len(a.paneApps())+len(a.windowApps()) > 0 && a.appUpdate != nil {
+				hint += "\n" + L.UpdateStopsApps()
+			}
+			r.row(c, "ab-updates", icInfo, L.SignedUpdates(), hint, func() {
 				if a.appUpdate != nil {
-					if primary(c, "ab-update-install", L.InstallUpdate(a.appUpdate.Version), nil).Disabled(a.appUpdateBusy).Clicked() {
+					label := L.InstallUpdate(a.appUpdate.Version)
+					if a.appUpdateBusy {
+						if a.appUpdateTotal > 0 && a.appUpdateDone < a.appUpdateTotal {
+							label = L.DownloadMB(fmt.Sprintf("%d", a.appUpdateDone>>20), fmt.Sprintf("%d", a.appUpdateTotal>>20))
+						} else {
+							label = L.UpdateInstalling()
+						}
+					}
+					if primary(c, "ab-update-install", label, nil).Disabled(a.appUpdateBusy).Clicked() {
 						a.installAppUpdate()
 					}
 				} else {
@@ -568,6 +582,7 @@ func (a *App) aboutPage(c *ui.Context) {
 	})
 }
 
+// checkAppUpdate queries the signed release feed for a newer build.
 func (a *App) checkAppUpdate() {
 	if a.appUpdateBusy {
 		return
@@ -580,6 +595,7 @@ func (a *App) checkAppUpdate() {
 		a.later(func() {
 			a.appUpdateBusy = false
 			if err != nil {
+				log.Printf("app update check: %v", err)
 				a.setToast(L.ToastFailed())
 				return
 			}
@@ -591,23 +607,72 @@ func (a *App) checkAppUpdate() {
 	})
 }
 
+// installAppUpdate downloads, verifies and installs a discovered update.
 func (a *App) installAppUpdate() {
 	if a.appUpdateBusy || a.appUpdate == nil {
 		return
 	}
-	upd := a.appUpdate
+	a.runAppUpdate(a.appUpdate.Install)
+}
+
+// runAppUpdate stops every open app so nothing in bin\ is in use while the
+// update swaps files, reports download progress in whole megabytes, and
+// relaunches past the Ask-first close confirmation.
+//
+// Inputs: install downloads, verifies and swaps the update on disk.
+// Side effects: terminates running app processes, updates appUpdateDone/Total,
+// and on success sets quitting and calls relaunch.
+func (a *App) runAppUpdate(install func(context.Context, func(int64, int64)) error) {
+	if a.appUpdateBusy || install == nil {
+		return
+	}
 	a.appUpdateBusy = true
+	a.appUpdateDone, a.appUpdateTotal = 0, 0
+	var procs []winapk.Process
+	for _, s := range a.open {
+		if s != nil && s.live() {
+			procs = append(procs, s.proc)
+		}
+	}
 	a.async(func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+		// Kill ends each winapk.exe and its Job Object DEX child at once so
+		// Windows releases handles inside bin\; mygo's retryInUse covers the
+		// brief teardown before swapFiles renames the folder.
+		for _, p := range procs {
+			_ = p.Kill()
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 		defer cancel()
-		err := upd.Install(ctx, nil)
-		a.later(func() {
-			a.appUpdateBusy = false
-			if err != nil {
-				a.setToast(L.ToastFailed())
+		lastMB := int64(-1)
+		var doneSent bool
+		err := install(ctx, func(done, total int64) {
+			mb := done >> 20
+			finished := total > 0 && done >= total
+			if mb == lastMB && (!finished || doneSent) {
 				return
 			}
-			mygo.App.Relaunch()
+			lastMB = mb
+			if finished {
+				doneSent = true
+			}
+			d, t := done, total
+			a.later(func() {
+				a.appUpdateDone, a.appUpdateTotal = d, t
+			})
+		})
+		a.later(func() {
+			a.appUpdateBusy = false
+			a.appUpdateDone, a.appUpdateTotal = 0, 0
+			if err != nil {
+				log.Printf("app update: %v", err)
+				a.setToast(L.UpdateFailed())
+				return
+			}
+			a.quitting = true
+			a.confirm = confirmState{}
+			if a.relaunch != nil {
+				a.relaunch()
+			}
 		})
 	})
 }

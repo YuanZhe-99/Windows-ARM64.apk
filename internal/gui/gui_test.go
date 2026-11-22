@@ -1,6 +1,7 @@
 package gui
 
 import (
+	"context"
 	"errors"
 	"image"
 	"image/color"
@@ -866,5 +867,73 @@ func TestSettingsNavLeftAligned(t *testing.T) {
 		if !tt.HasText(name) {
 			t.Fatalf("settings nav missing %q", name)
 		}
+	}
+}
+
+// TestAppUpdateStopsAppsAndRelaunches verifies that installing an in-app update
+// kills open app processes, clears busy state, bypasses Ask-first confirmation
+// via quitting and calls relaunch, while failures leave the app running with
+// a non-empty error toast (regression: in-app update with apps open).
+func TestAppUpdateStopsAppsAndRelaunches(t *testing.T) {
+	h := newHarness(t, true, true)
+	a := h.a
+	relaunched := 0
+	a.relaunch = func() { relaunched++ }
+	a.prefs.AskOnClose = true
+
+	a.launch(a.entry("com.example.noteslite"), false, false)
+	h.settle()
+	if s := a.open["com.example.noteslite"]; s == nil || !s.live() {
+		t.Fatal("expected noteslite pane to be live before update")
+	}
+
+	a.runAppUpdate(func(_ context.Context, progress func(int64, int64)) error {
+		progress(5<<20, 60<<20)
+		return nil
+	})
+	h.settle()
+
+	if relaunched != 1 {
+		t.Fatalf("relaunched = %d, want 1", relaunched)
+	}
+	if !a.quitting {
+		t.Fatal("expected quitting = true after update install")
+	}
+	if a.confirm.open {
+		t.Fatal("close confirmation should not open during update relaunch")
+	}
+	if a.appUpdateBusy {
+		t.Fatal("expected appUpdateBusy = false after completion")
+	}
+	if s := a.open["com.example.noteslite"]; s != nil && s.live() {
+		t.Fatal("expected noteslite to stop before update swaps files")
+	}
+
+	// Failure case leaves Ask-first/running app intact without relaunching.
+	fh := newHarness(t, true, true)
+	fa := fh.a
+	fRelaunched := 0
+	fa.relaunch = func() { fRelaunched++ }
+	fa.async = func(fn func()) {
+		// Skip setToast's 4s auto-clear timer so toast remains visible after settle.
+		fa.async = func(func()) {}
+		fn()
+	}
+	fa.runAppUpdate(func(context.Context, func(int64, int64)) error {
+		return errors.New("x")
+	})
+	fh.settle()
+
+	if fRelaunched != 0 {
+		t.Fatalf("failed update relaunched = %d, want 0", fRelaunched)
+	}
+	if fa.quitting {
+		t.Fatal("quitting should remain false after failed update")
+	}
+	if fa.appUpdateBusy {
+		t.Fatal("expected appUpdateBusy = false after failure")
+	}
+	if fa.toast == "" {
+		t.Fatal("expected non-empty error toast after failed update")
 	}
 }

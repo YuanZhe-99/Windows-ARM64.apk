@@ -411,5 +411,8 @@
   "RemoveDeleteDataHint": "同时永久删除该应用保存的数据（{size}）和转换缓存，删除后无法恢复。",
   "RemoveDeleteDataHintEmpty": "同时永久删除该应用的所有已保存数据与转换缓存，删除后无法恢复。",
   "RemoveAPKOnly": "只删 APK",
-  "RemoveAndDeleteData": "删除 APK 和数据"
+  "RemoveAndDeleteData": "删除 APK 和数据",
+  "UpdateFailed": "更新没有安装成功，当前版本仍可正常使用。",
+  "UpdateInstalling": "正在安装…",
+  "UpdateStopsApps": "安装更新时，正在运行的应用会停止。"
 }
