@@ -1,5 +1,9 @@
 # 版本历史
 
+## 0.1.5（2026-11-27）
+
+- 2026-11-27：为 Windows 运行时磁盘日志添加严格上限与清理（`winapk`）：`Launch` 现在通过 `boundedLogFile` 写入 `<app>-<timestamp>.log`（单文件硬上限 4 MiB，超出时原地裁剪最旧日志行），并在启动时调用 `pruneLogsDir` 自动清理 `LogsDir`（最多保留 10 个 `.log` 文件且总大小不超过 20 MiB，优先删除最旧文件）。已检查 Go 1.27.4、MyGo v0.10.0 与已合并的 Mac.apk `154f64e`（均未变更）；打标并发布 `v0.1.5`。
+
 ## 0.1.4（2026-11-21）
 
 - 2026-11-21：修复“设置 → 关于 → 更新”中的应用内更新器（`gui`）：新增 `runAppUpdate`，在 `swapFiles` 替换 `<install>\bin\` 前先结束所有正在运行的应用进程（`Kill`）以解除文件占用，按整 MB 汇报下载进度并在提取/替换阶段显示 `UpdateInstalling`（`appUpdateDone`/`appUpdateTotal`）与停止运行中应用的提示（`UpdateStopsApps`），检查或安装失败时记录错误日志并提示当前版本仍可正常使用（`UpdateFailed`），安装成功后设置 `a.quitting = true` 再调用 `relaunch`，避免被主窗口的“先询问”关闭确认拦截而取消重启。已检查 Go 1.27.4、MyGo v0.10.0 与已合并的 Mac.apk `154f64e`（均未变更）；打标并发布 `v0.1.4`。

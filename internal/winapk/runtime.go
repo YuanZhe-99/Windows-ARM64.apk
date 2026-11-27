@@ -428,14 +428,15 @@ func (r *Runtime) Launch(spec LaunchSpec, report func(State)) (Process, error) {
 		args = append(args, "--java-home", spec.JavaHome)
 	}
 
-	var logFile *os.File
+	var logFile *boundedLogFile
 	var logPath string
 	if dataDir != "" {
 		logsDir := LogsDir(dataDir)
 		if os.MkdirAll(logsDir, 0o700) == nil {
+			pruneLogsDir(logsDir, logDirMaxFiles-1, logDirMaxBytes)
 			base := strings.TrimSuffix(filepath.Base(spec.Path), filepath.Ext(spec.Path))
 			logPath = filepath.Join(logsDir, fmt.Sprintf("%s-%s.log", sanitizeFile(base), time.Now().Format("20060102-150405.000")))
-			logFile, _ = os.OpenFile(logPath, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
+			logFile, _ = openBoundedLogFile(logPath, logFileMax)
 		}
 	}
 
@@ -478,7 +479,7 @@ type runtimeProcess struct {
 	cmd        *exec.Cmd
 	ch         *embedChannel
 	report     func(State)
-	logFile    *os.File
+	logFile    *boundedLogFile
 	done       chan struct{}
 	mu         sync.Mutex
 	st         State
@@ -669,7 +670,7 @@ func (p *runtimeProcess) recordLine(tid, raw string, fromPipe bool) {
 		Time: now, PIDTID: pidTid, Level: level, Stage: stage, Message: msg,
 	})
 	if p.logFile != nil {
-		_, _ = p.logFile.WriteString(formatted + "\n")
+		_ = p.logFile.WriteLine(formatted)
 	}
 	if cat != "" && cat != "UI_THREAD_BLOCKED" {
 		p.st.Category = cat
@@ -677,7 +678,7 @@ func (p *runtimeProcess) recordLine(tid, raw string, fromPipe bool) {
 		p.st.Failure.Detail = msg
 		parseFailureTokens(&p.st.Failure, msg)
 	}
-	//keep bounded memory over long endurance runs (last 1000 lines in RAM; full log stays on disk)
+	//keep bounded memory over long endurance runs (last 1000 lines in RAM)
 	if len(p.st.Log) > 1000 {
 		p.st.Log = append([]string(nil), p.st.Log[len(p.st.Log)-800:]...)
 		p.st.Entries = append([]LogEntry(nil), p.st.Entries[len(p.st.Entries)-800:]...)
@@ -834,4 +835,126 @@ func (p *runtimeProcess) SendText(text string) {
 		return
 	}
 	_ = p.ch.send("text " + hex.EncodeToString([]byte(text)))
+}
+
+const (
+	logFileMax     = 4 << 20  // 4 MiB per runtime log file
+	logDirMaxFiles = 10       // max retained .log files in LogsDir
+	logDirMaxBytes = 20 << 20 // 20 MiB total cap across LogsDir
+)
+
+// boundedLogFile writes a runtime log file capped strictly at max bytes in
+// place, trimming oldest lines when a write would exceed the limit.
+type boundedLogFile struct {
+	f    *os.File
+	max  int64
+	size int64
+}
+
+func openBoundedLogFile(path string, maxBytes int64) (*boundedLogFile, error) {
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR|os.O_TRUNC, 0o600)
+	if err != nil {
+		return nil, err
+	}
+	return &boundedLogFile{f: f, max: maxBytes}, nil
+}
+
+func (w *boundedLogFile) WriteLine(line string) error {
+	if w.f == nil {
+		return nil
+	}
+	data := []byte(line + "\n")
+	if w.max > 0 && int64(len(data)) >= w.max {
+		return w.rewrite(data[int64(len(data))-w.max:])
+	}
+	if w.max > 0 && w.size+int64(len(data)) > w.max {
+		if err := w.trimFor(int64(len(data))); err != nil {
+			return err
+		}
+	}
+	n, err := w.f.Write(data)
+	w.size += int64(n)
+	return err
+}
+
+func (w *boundedLogFile) trimFor(incoming int64) error {
+	target := min(w.max/2, w.max-incoming)
+	if target <= 0 {
+		return w.rewrite(nil)
+	}
+	start := max(w.size-target, 0)
+	if _, err := w.f.Seek(start, io.SeekStart); err != nil {
+		return err
+	}
+	tail, err := io.ReadAll(w.f)
+	if err != nil {
+		return err
+	}
+	if start > 0 {
+		if i := bytes.IndexByte(tail, '\n'); i >= 0 {
+			tail = tail[i+1:]
+		} else {
+			tail = nil
+		}
+	}
+	return w.rewrite(tail)
+}
+
+func (w *boundedLogFile) rewrite(data []byte) error {
+	if _, err := w.f.Seek(0, io.SeekStart); err != nil {
+		return err
+	}
+	if err := w.f.Truncate(0); err != nil {
+		return err
+	}
+	n, err := w.f.Write(data)
+	w.size = int64(n)
+	return err
+}
+
+func (w *boundedLogFile) Close() error {
+	if w.f == nil {
+		return nil
+	}
+	err := w.f.Close()
+	w.f = nil
+	return err
+}
+
+// pruneLogsDir trims archived .log files in dir so their count stays <= maxFiles
+// and their total size stays <= maxBytes, removing oldest files first.
+func pruneLogsDir(dir string, maxFiles int, maxBytes int64) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return
+	}
+	type logEntry struct {
+		path    string
+		size    int64
+		modTime time.Time
+	}
+	var logs []logEntry
+	var total int64
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".log") {
+			continue
+		}
+		info, err := e.Info()
+		if err != nil {
+			continue
+		}
+		total += info.Size()
+		logs = append(logs, logEntry{path: filepath.Join(dir, e.Name()), size: info.Size(), modTime: info.ModTime()})
+	}
+	slices.SortFunc(logs, func(a, b logEntry) int {
+		if c := a.modTime.Compare(b.modTime); c != 0 {
+			return c
+		}
+		return strings.Compare(a.path, b.path)
+	})
+	for i := 0; i < len(logs) && (len(logs)-i > maxFiles || (maxBytes > 0 && total > maxBytes)); i++ {
+		if os.Remove(logs[i].path) == nil {
+			total -= logs[i].size
+		}
+	}
 }

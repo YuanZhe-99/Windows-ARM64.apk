@@ -15,6 +15,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -451,5 +452,60 @@ func TestRealRuntimeEmbed(t *testing.T) {
 			_ = p.Stop()
 			<-done
 		}
+	}
+}
+
+func TestBoundedLogFileAndPrune(t *testing.T) {
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "app.log")
+	w, err := openBoundedLogFile(logPath, 160)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 10; i++ {
+		if err := w.WriteLine(fmt.Sprintf("line-%02d-payload-0123456789abcdef", i)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(data) > 160 {
+		t.Fatalf("bounded log size = %d, exceeds 160", len(data))
+	}
+	if !strings.Contains(string(data), "line-09-") {
+		t.Fatalf("newest line lost after trim: %q", string(data))
+	}
+
+	now := time.Now()
+	for i := 0; i < 5; i++ {
+		p := filepath.Join(dir, fmt.Sprintf("old-%d.log", i))
+		if err := os.WriteFile(p, make([]byte, 100), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		ts := now.Add(time.Duration(i) * time.Minute)
+		_ = os.Chtimes(p, ts, ts)
+	}
+	pruneLogsDir(dir, 3, 250)
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var count int
+	var total int64
+	for _, e := range entries {
+		if strings.HasSuffix(e.Name(), ".log") {
+			count++
+			if info, err := e.Info(); err == nil {
+				total += info.Size()
+			}
+		}
+	}
+	if count > 3 || total > 250 {
+		t.Fatalf("pruneLogsDir left count=%d total=%d (want <=3 files, <=250 bytes)", count, total)
 	}
 }

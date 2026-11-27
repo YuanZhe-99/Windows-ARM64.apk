@@ -1,5 +1,9 @@
 # Version history
 
+## 0.1.5 (2026-11-27)
+
+- 2026-11-27: bounded Windows runtime disk logging (`winapk`): `Launch` now writes each `<app>-<timestamp>.log` through `boundedLogFile` (4 MiB hard cap per file, trimming oldest lines in place) and prunes `LogsDir` on startup (`pruneLogsDir`: at most 10 `.log` files and 20 MiB total, removing oldest files first). Checked Go 1.27.4, MyGo v0.10.0 and merged Mac.apk `154f64e` (unchanged); tagged and released `v0.1.5`.
+
 ## 0.1.4 (2026-11-21)
 
 - 2026-11-21: fixed the in-app updater in Settings → About → Updates (`gui`): `runAppUpdate` now terminates every running app process (`Kill`) before `swapFiles` replaces `<install>\bin\`, tracks whole-MB download progress (`appUpdateDone`/`appUpdateTotal` → `DownloadMB` / `UpdateInstalling`) with a running-apps warning hint (`UpdateStopsApps`), logs check/install errors with a dedicated non-destructive failure toast (`UpdateFailed`), and sets `a.quitting = true` before `relaunch` so Ask-first close confirmation no longer cancels `mygo.App.Relaunch()`. Checked Go 1.27.4, MyGo v0.10.0 and merged Mac.apk `154f64e` (unchanged); tagged and released `v0.1.4`.

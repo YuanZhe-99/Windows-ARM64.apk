@@ -77,7 +77,7 @@ MyGo 前端（`cmd/windows-arm64-apk`、`internal/gui`），按 `design/` 中的
 |---|---|
 | `Doctor(ctx, javaHome)` | `winapk doctor --json`：`Report`，包括找到的 Java 运行时（自带或选定、是否原生 ARM64）、机器信息、GPU/Vulkan/ANGLE 清单、Mac.apk 提交，以及每项功能的级别（`works`、`experimental`、`unavailable`） |
 | `Inspect(ctx, path)` | `winapk inspect --json`：`APK`，包括包名、标签（`resources.arsc`）、版本、大小、SDK 级别、权限、ABI、原生库、GLES/Vulkan 使用、所需的最低 profile（`N0`–`N2`）、结论（`can-run`、`needs-native`、`not-yet`、`unsupported`）和启动器 PNG 图标；不运行任何东西 |
-| `Launch(spec, report)` | 启动 `winapk run --embed <token>`，使用当前用户的重叠双工命名管道（`\\.\pipe\winapk-<token>`）与双缓冲自上而下 `RGBA8` 共享内存（`Local\winapk-frame-<token>`）；持续推送 `State`（`starting`、`running`、`stopped`、带 `PLAN.md` §14.2 类别的 `failed`、图形后端、结构化日志条目）及 `*image.RGBA` 帧 |
+| `Launch(spec, report)` | 启动 `winapk run --embed <token>`，使用当前用户的重叠双工命名管道（`\\.\pipe\winapk-<token>`）与双缓冲自上而下 `RGBA8` 共享内存（`Local\winapk-frame-<token>`）；持续推送 `State`（`starting`、`running`、`stopped`、带 `PLAN.md` §14.2 类别的 `failed`、图形后端、结构化日志条目）及 `*image.RGBA` 帧；单份 `LogsDir` 日志限制为 4 MiB，并将归档清理至最多 10 个文件 / 20 MiB |
 | `Process.Stop`、`Kill`、`Back`、`Resize`、输入 | 通过双工管道发送优雅 `stop`（`WM_CLOSE`）、立即 `Kill`、`back`、以 DIP 计的 `resize` 以及 `pointer`、`wheel`、`key`、`text`，不耦合 Win32 线程输入队列 |
 | `Process.Reattach(window)` | 返回 `true`：前端在窗格与独立窗口之间移动 `*ui.Bitmap` 画面，无需重启运行时进程 |
 | `InstallJava(ctx, dir, progress)` / `CheckJavaUpdate` | 通过 HTTPS 下载 Microsoft Build of OpenJDK 21 ARM64，校验 SHA-256 及 `0xAA64` PE `jvm.dll`，解压到 `dir`，切换前执行 `winapk doctor` 自检，并在空闲时检查更新的 `21.x` 摘要 |
