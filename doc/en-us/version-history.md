@@ -1,5 +1,9 @@
 # Version history
 
+## 0.1.7 (2026-11-27)
+
+- 2026-11-27: fixed missing ARM64 ANGLE DLLs in CI and release packages (`build.yml`, `build.ps1`, `stage-app-resources.ps1`, `package.ps1`): `Build-Angle` is now part of `-Component All` (with content-verified fast skip against `build-lock.json`), `build.yml` invalidates the stale `deps` cache when `angle-args.gn` or `angle-toolchain.patch` changes so `bin\angle\` is built and cached on `windows-11-arm`, and both `stage-app-resources.ps1` and `package.ps1 -Target Bundle` now require `bin\angle\libEGL.dll`, `libGLESv2.dll`, `d3dcompiler_47.dll`, `angle.json`, and `licenses\ANGLE-LICENSE` instead of silently skipping them (preventing `EGL_NOT_INITIALIZED` crashes in Flutter/GLES apps). Merged Mac.apk `main` to `93c0351` (upstream v1.0.2404; preserved Windows `Options.nativeLoadRedirect` / `GuestRepoint` routing); checked Go 1.27.4 and MyGo v0.10.0 (unchanged); tagged and released `v0.1.7`.
+
 ## 0.1.6 (2026-11-27)
 
 - 2026-11-27: fixed private Java SDK auto-installation (`winapk`): `resolveJdkArchive` now follows redirects on the checksum feed (`aka.ms/download-jdk`) and pairs the redirected archive name (e.g. `microsoft-jdk-21.0.13.1-1-windows-aarch64.zip`) with its published SHA-256 instead of a stale un-suffixed filename inside the checksum file (`SHA-256 mismatch`), and updated the fallback pin to `21.0.13.1-1`. Checked Go 1.27.4, MyGo v0.10.0 and merged Mac.apk `154f64e` (unchanged); tagged and released `v0.1.6`.

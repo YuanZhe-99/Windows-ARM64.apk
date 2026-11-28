@@ -2,7 +2,7 @@
 
 What Windows-ARM64.apk relies on from its upstreams, and how far each point has been checked.
 Mac.apk, Go and MyGo follow their latest version, so every point is re-checked when that upstream
-moves. The Mac.apk points below hold at `154f64e` (merged 2026-11-19); "read" means read in the source,
+moves. The Mac.apk points below hold at `93c0351` (merged 2026-11-27); "read" means read in the source,
 "built" or "verified" that P0 built or ran it on Windows 11 ARM64 ([port-audit.md](port-audit.md)).
 
 ## Mac.apk

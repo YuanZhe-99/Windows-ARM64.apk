@@ -39,7 +39,7 @@ clipboard, DirectWrite CJK fonts, `/proc`, dynamic DPI), WASAPI `NativeAudio`, a
 AGSL/RenderEffect (`T15`) pass their contract suites. Bounded GLES (`T10.java`, `T11`) and Vulkan
 (`T13` WSI, SPIR-V graphics pipeline, offscreen `VkImage` readback, guest callbacks and device-loss
 recovery) pass on Adreno 8cx Gen 3 + Mesa Dozen (`translated=yes`, ADR-0004); vendor native ARM64
-Vulkan ICDs remain `BLOCKED` on 8cx Gen 3. Mac.apk `154f64e`, Go 1.27.4 and MyGo v0.10.0 are current.
+Vulkan ICDs remain `BLOCKED` on 8cx Gen 3. Mac.apk `93c0351`, Go 1.27.4 and MyGo v0.10.0 are current.
 
 ## Upstream versions
 
@@ -51,7 +51,7 @@ which also records what the last build used of the three.
 |---|---|---|
 | Go | latest release | 1.27.4 |
 | MyGo | latest tag | v0.10.0 |
-| Mac.apk | latest `main`, as the `macapk/` subtree | `154f64e`, merged |
+| Mac.apk | latest `main`, as the `macapk/` subtree | `93c0351`, merged |
 | OpenJDK (ARM64), clang-cl, MSVC, Windows SDK, CMake, Ninja, vcpkg, Vulkan headers | locked in `build-lock.json` | Microsoft OpenJDK 21.0.13; clang-cl 22.1.3; MSVC 14.51; SDK 10.0.26100; CMake 4.3.1; Ninja 1.13.2; vcpkg baseline `afa249f`; Vulkan headers 1.4.363; liblzma 5.8.4; Capstone 5.0.9 |
 | Android SDK/NDK, kotlinc, AOSP framework resources | locked in `build-lock.json` | build-tools 36.0.0, android-36; NDK r30 (30.0.16248370); kotlinc 2.4.0; `android-16.0.0_r2` |
 | ANGLE | locked in P5a | `801a1a5`, ARM64 source build and host/guest D3D11 + Vulkan-on-Dozen bounded profiles verified |

@@ -82,7 +82,7 @@ func (m *Mock) Doctor(ctx context.Context, javaHome string) (Report, error) {
 			CPU: "Snapdragon X Elite · arm64", MemoryMB: 32768, GPU: "Qualcomm Adreno X1-85",
 			VendorID: "0x5143", DeviceID: "0x36334330", Driver: "31.0.97.0", Vulkan: "1.3.295",
 			VulkanLoader: "available", VulkanInstance: "1.4.304", VulkanDevice: "Qualcomm Adreno X1-85",
-			VulkanQueues: 3, Win32Surface: true, Win32Present: "passed", AngleArm64: true, FrameworkCommit: "154f64e",
+			VulkanQueues: 3, Win32Surface: true, Win32Present: "passed", AngleArm64: true, FrameworkCommit: "93c0351",
 		},
 		Features: []Feature{
 			{ID: "java", Level: Works, Detail: "arm64 · not emulated"},

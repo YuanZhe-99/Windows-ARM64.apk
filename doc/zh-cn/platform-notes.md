@@ -4,7 +4,7 @@
 |---|---|
 | Windows 11 ARM64 | G0–G3 在本机为已声明的 Java/N0/C/JNI profile 通过，包含真实 hello-jni Activity 矩阵、Profile N2 Bionic/NDK 引擎运行时（`T16`，`EngineN2`）及独立启用 CFG 的回归。原生默认关闭（强制执行 `--profile=N0|N1|N2`）。T14 通过 20 次冷/热启动、100 次 resize/最小化恢复循环、完整 30 分钟连续稳定性运行及双后端（`d3d11` + `vulkan`）GPU 缩放/旋转/连续运行检查（`T14.gpu.*`）。P8 宿主服务（`NativeOs`、剪贴板、DirectWrite 中日韩字体、`/proc`、动态 DPI）、WASAPI `NativeAudio` 与 Skia Direct3D 12 AGSL/RenderEffect + DXGI NT 共享句柄 `WinApkCompositor` 协同（`T15`）通过。完整 Java GLES 1.0–3.2 / EGL 1.4–1.5（`T10`）、多线程客体 EGL 1.5 / GLES 1.1–3.2（`T11`）、客体 Vulkan 1.0–1.3（`T13`）及真实 Flutter Impeller GPU APK 在窗格与独立窗口中的交互渲染均在本机 Adreno 8cx Gen 3 + Dozen 的声明范围内通过；厂商原生 Vulkan ICD 为 `BLOCKED`，`VK_LAYER_KHRONOS_validation` 仍为 `NOT_RUN`。MyGo 前端已按 `design/` 完成，配备专属 Fluent 品牌 Logo 并接入 `winapk.Runtime`，提供一体化 ARM64 实验包、NSIS 安装包及 GitHub Actions `windows-11-arm` 持续集成/发布工作流。 |
 | Windows 11 x64 | 不是目标平台；只可承载构建工具和解析测试。 |
-| macOS（Apple Silicon） | 上游 Mac.apk 的平台；已引入为 `macapk/`，当前在 `154f64e`；尚未在此运行 macOS 构建或 smoke（`NOT_RUN`）。 |
+| macOS（Apple Silicon） | 上游 Mac.apk 的平台；已引入为 `macapk/`，当前在 `93c0351`；尚未在此运行 macOS 构建或 smoke（`NOT_RUN`）。 |
 
 ## Windows
 
@@ -18,7 +18,7 @@
 | 平台资源 | `build.ps1 -Component FrameworkRes`：由 AOSP `android-16.0.0_r2`（API 36）构建的 `framework-res.apk`，66.4 MB，sha256 `62eb212e…6d90`；它的 14,530 个公开资源 ID 与 android.jar（android-36）一致，一个资源（`string/user_switched`）因没有默认值被 aapt2 去掉 |
 | 夹具 | `build.ps1 -Component Fixtures`：`hello-java.apk`、`hello-jni.apk` 和 `hello-kotlin.apk`（内含转为 DEX 的 kotlin-stdlib 2.4.0）已签名，apksigner 校验通过；`libhello.so` 为 ELF64 AArch64（NDK r30）；哈希在 `tests/fixtures/*.json` |
 | G1 Java 路径 | `test.ps1 -Suite Java`：100% 缩放（density 160，2026-11-16，含按下途中失去激活释放鼠标捕获的修复）下 43 项检查 PASS，3840×2160 显示器 200% 缩放（density 320，2026-11-04）下 43 项 PASS；`winapk.exe`、`winapk-bridge.dll`、`sqlite3.dll` 和 `zd.dll` 为 ARM64 |
-| Java 侧（Mac.apk `154f64e`） | `build.ps1 -Component Java`：不经修改即可编译，没有错误，并像上游一样把 Android 的 `org.apache.http.legacy` 解包进框架 jar（[port-audit.md](port-audit.md)） |
+| Java 侧（Mac.apk `93c0351`） | `build.ps1 -Component Java`：不经修改即可编译，没有错误，并像上游一样把 Android 的 `org.apache.http.legacy` 解包进框架 jar（[port-audit.md](port-audit.md)） |
 | 客体 ELF 夹具 | `build.ps1 -Component NativeProbe`：用 NDK r30 的 clang 21 构建 T05 和 T06 的 24 个夹具，哈希在 `tests/fixtures/elf/fixtures.json`（[native-profiles.md](native-profiles.md)） |
 | G2 原生路径 | `test.ps1 -Suite Native`：58 项检查 PASS（见下）；`native-probe.exe` 和 `capstone.dll` 为 ARM64 |
 | T01 宿主和 JVM | `test.ps1 -Suite Host`：23 项检查 PASS（2026-11-17）——`winapk.exe`、`winapk-bridge.dll`、`native-probe.exe`、`jni-probe.exe`、zlib、SQLite 和 Capstone 为 ARM64；`jvm.dll` 为 ARM64，在进程内以上游的模块选项创建 JVM；JNI 宿主 → Java → 宿主；Java2D；259 个字体族；补丁模块；以及负例（找不到 JVM、无效的 `--java-home`） |

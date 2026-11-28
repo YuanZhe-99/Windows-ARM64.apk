@@ -1,5 +1,9 @@
 # 版本历史
 
+## 0.1.7（2026-11-27）
+
+- 2026-11-27：修复 CI 与发布包缺少 ARM64 ANGLE DLL 的问题（`build.yml`、`build.ps1`、`stage-app-resources.ps1`、`package.ps1`）：将 `Build-Angle` 纳入 `-Component All`（并基于 `build-lock.json` 做内容校验快速跳过），在 `build.yml` 的 `deps` 缓存键中加入 `angle-args.gn` 与 `angle-toolchain.patch` 哈希以刷新旧缓存并在 `windows-11-arm` 上构建/缓存 `bin\angle\`，同时让 `stage-app-resources.ps1` 与 `package.ps1 -Target Bundle` 强制校验并包含 `bin\angle\libEGL.dll`、`libGLESv2.dll`、`d3dcompiler_47.dll`、`angle.json` 与 `licenses\ANGLE-LICENSE` 而不再静默跳过（消除 Flutter/GLES 应用的 `EGL_NOT_INITIALIZED` 崩溃）。合并 Mac.apk `main` 至 `93c0351`（上游 v1.0.2404；保留 Windows `Options.nativeLoadRedirect` / `GuestRepoint` 重定向）；已检查 Go 1.27.4 与 MyGo v0.10.0（均未变更）；打标并发布 `v0.1.7`。
+
 ## 0.1.6（2026-11-27）
 
 - 2026-11-27：修复私有 Java SDK 自动安装失败问题（`winapk`）：`resolveJdkArchive` 现在跟踪校验清单在 `aka.ms/download-jdk` 上的重定向路径，按重定向后的压缩包名（如 `microsoft-jdk-21.0.13.1-1-windows-aarch64.zip`）与公布的 SHA-256 配对下载，避免校验文件正文里缺少 `-1` 后缀导致下载到旧包而报 `SHA-256 mismatch`，并同步将内置后备版本更新为 `21.0.13.1-1`。已检查 Go 1.27.4、MyGo v0.10.0 与已合并的 Mac.apk `154f64e`（均未变更）；打标并发布 `v0.1.6`。

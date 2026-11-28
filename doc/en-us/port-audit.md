@@ -1,7 +1,7 @@
 # Port audit
 
 What in Mac.apk is tied to macOS, how each part is handled on Windows ARM64, and in which phase.
-Audited at Mac.apk `ff2afbf` (2026-11-03), re-checked at `3f35611` (2026-11-16) and `154f64e` (2026-11-19), merged as the `macapk/` subtree, on Windows 11 ARM64
+Audited at Mac.apk `ff2afbf` (2026-11-03), re-checked at `3f35611` (2026-11-16), `154f64e` (2026-11-19) and `93c0351` (2026-11-27), merged as the `macapk/` subtree, on Windows 11 ARM64
 (build 26300). Re-run the searches below after every Mac.apk merge and update the tables.
 
 ## Method

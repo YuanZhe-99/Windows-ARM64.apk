@@ -21,7 +21,7 @@ Windows-ARM64.apk 以 AGPL-3.0 授权。本清单列出它复用或嵌入的每�
 | Kotlin 编译器与标准库 | 2.4.0，Android Studio 自带，`build-lock.json` | 编译 Kotlin 夹具 T04；`kotlin-stdlib.jar` 转为 DEX 放入该 APK | Apache-2.0 | 无 | 仅构建时使用；夹具是生成的，从不提交，也不随包发布 |
 | ANGLE 及公开 DEPS | `google/angle`、`801a1a5`、`build-lock.json` | 私有 ARM64 EGL/GLES 运行时（`bin\angle\`），含 Vulkan 与 D3D11 | BSD-3-Clause；链接的 GN 目标（`abseil-cpp` Apache-2.0、`vulkan_memory_allocator` MIT、`volk`/`ceval` MIT、`xxhash` BSD-2-Clause、`astc-encoder` Apache-2.0、Khronos 头文件 Apache-2.0/MIT、`zlib` Zlib、LLVM `libc++`/`libc++abi` Apache-2.0 附 LLVM 例外） | 固定 Chromium build 依赖适配锁定 SDK/自定义 VS，不改 renderer | 实际链接 GN 依赖审核已记录于 `THIRD_PARTY_NOTICES.md`；凡附带私有 ANGLE DLL 时须一并保留声明 |
 | JetBrains Skiko / Skia | `org.jetbrains.skiko:skiko-awt-runtime-windows-arm64:0.150.2`，`build-lock.json` | P8 基于 Direct3D 12 的 AGSL `RuntimeShader` 与 `RenderEffect` GPU 后处理（`NativeSkiaD3D12` + `skiko-windows-arm64.dll`，T15） | Apache-2.0（Skiko）、BSD-3-Clause（Skia）、Unicode-DFS-2016（`icudtl.dat`） | 无（从 Maven Central 获取并经 SHA-256 与 `0xAA64` PE 校验的锁定产物） | 随包附带 `skiko-windows-arm64.dll` 时保留 Apache-2.0、Skia BSD-3-Clause 与 Unicode 声明 |
-| Mac.apk | `kksimp/Mac.apk`，最新 `main`，`macapk/` 下的 git subtree（在 `154f64e`） | DEX 转换、Android Framework、APK/资源解析、加载器与桥代码 | AGPL-3.0（上游另提供商业许可，本项目不使用） | 为 Windows 原地修改，按提交记录 | 保留文件头和声明；每次发行附带 `macapk/` 的完整对应源码；其内含组件保留各自许可证（`macapk/THIRD_PARTY_NOTICES.txt`） |
+| Mac.apk | `kksimp/Mac.apk`，最新 `main`，`macapk/` 下的 git subtree（在 `93c0351`） | DEX 转换、Android Framework、APK/资源解析、加载器与桥代码 | AGPL-3.0（上游另提供商业许可，本项目不使用） | 为 Windows 原地修改，按提交记录 | 保留文件头和声明；每次发行附带 `macapk/` 的完整对应源码；其内含组件保留各自许可证（`macapk/THIRD_PARTY_NOTICES.txt`） |
 
 ## 商标
 
