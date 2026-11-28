@@ -1,5 +1,9 @@
 # Version history
 
+## 0.1.6 (2026-11-27)
+
+- 2026-11-27: fixed private Java SDK auto-installation (`winapk`): `resolveJdkArchive` now follows redirects on the checksum feed (`aka.ms/download-jdk`) and pairs the redirected archive name (e.g. `microsoft-jdk-21.0.13.1-1-windows-aarch64.zip`) with its published SHA-256 instead of a stale un-suffixed filename inside the checksum file (`SHA-256 mismatch`), and updated the fallback pin to `21.0.13.1-1`. Checked Go 1.27.4, MyGo v0.10.0 and merged Mac.apk `154f64e` (unchanged); tagged and released `v0.1.6`.
+
 ## 0.1.5 (2026-11-27)
 
 - 2026-11-27: bounded Windows runtime disk logging (`winapk`): `Launch` now writes each `<app>-<timestamp>.log` through `boundedLogFile` (4 MiB hard cap per file, trimming oldest lines in place) and prunes `LogsDir` on startup (`pruneLogsDir`: at most 10 `.log` files and 20 MiB total, removing oldest files first). Checked Go 1.27.4, MyGo v0.10.0 and merged Mac.apk `154f64e` (unchanged); tagged and released `v0.1.5`.

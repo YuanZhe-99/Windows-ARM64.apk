@@ -171,6 +171,27 @@ func TestStorageAndJavaInstall(t *testing.T) {
 	if upd, _, err := rt.CheckJavaUpdate(context.Background(), target); err != nil || upd {
 		t.Fatalf("CheckJavaUpdate = (%v, %v), want (false, nil)", upd, err)
 	}
+
+	// 4. Redirected checksum alias (e.g. Microsoft hotfix `-1`) picks the
+	// redirected archive name over a stale filename inside the sum file.
+	redirSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/" + defaultJdkSumPath:
+			http.Redirect(w, r, "/microsoft-jdk-21.0.99-1-windows-aarch64.zip.sha256sum.txt", http.StatusMovedPermanently)
+		case "/microsoft-jdk-21.0.99-1-windows-aarch64.zip.sha256sum.txt":
+			_, _ = fmt.Fprintf(w, "%s  microsoft-jdk-21.0.99-windows-aarch64.zip\n", armSum)
+		case "/microsoft-jdk-21.0.99-1-windows-aarch64.zip":
+			_, _ = w.Write(armZip)
+		default:
+			_, _ = w.Write(x64Zip) // un-suffixed name would fail SHA-256 & PE check
+		}
+	}))
+	defer redirSrv.Close()
+	rt.JavaFeedURL = redirSrv.URL
+	redirTarget := filepath.Join(t.TempDir(), "RuntimeRedir")
+	if err := rt.InstallJava(context.Background(), redirTarget, nil); err != nil {
+		t.Fatalf("InstallJava redirect: %v", err)
+	}
 }
 
 // TestRealRuntimeEmbed exercises Doctor, Inspect and `--embed` frame/input/resize/stop

@@ -1,5 +1,9 @@
 # 版本历史
 
+## 0.1.6（2026-11-27）
+
+- 2026-11-27：修复私有 Java SDK 自动安装失败问题（`winapk`）：`resolveJdkArchive` 现在跟踪校验清单在 `aka.ms/download-jdk` 上的重定向路径，按重定向后的压缩包名（如 `microsoft-jdk-21.0.13.1-1-windows-aarch64.zip`）与公布的 SHA-256 配对下载，避免校验文件正文里缺少 `-1` 后缀导致下载到旧包而报 `SHA-256 mismatch`，并同步将内置后备版本更新为 `21.0.13.1-1`。已检查 Go 1.27.4、MyGo v0.10.0 与已合并的 Mac.apk `154f64e`（均未变更）；打标并发布 `v0.1.6`。
+
 ## 0.1.5（2026-11-27）
 
 - 2026-11-27：为 Windows 运行时磁盘日志添加严格上限与清理（`winapk`）：`Launch` 现在通过 `boundedLogFile` 写入 `<app>-<timestamp>.log`（单文件硬上限 4 MiB，超出时原地裁剪最旧日志行），并在启动时调用 `pruneLogsDir` 自动清理 `LogsDir`（最多保留 10 个 `.log` 文件且总大小不超过 20 MiB，优先删除最旧文件）。已检查 Go 1.27.4、MyGo v0.10.0 与已合并的 Mac.apk `154f64e`（均未变更）；打标并发布 `v0.1.5`。

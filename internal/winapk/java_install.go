@@ -20,8 +20,8 @@ import (
 const (
 	defaultJdkBaseURL   = "https://aka.ms/download-jdk"
 	defaultJdkSumPath   = "microsoft-jdk-21-windows-aarch64.zip.sha256sum.txt"
-	pinnedJdkArchive    = "microsoft-jdk-21.0.13.0.2-windows-aarch64.zip"
-	pinnedJdkSHA256     = "9c1f36b1660d97ab228787294433eefaaad3e3e8963bdd3cf975b02171137ecc"
+	pinnedJdkArchive    = "microsoft-jdk-21.0.13.1-1-windows-aarch64.zip"
+	pinnedJdkSHA256     = "3545c14d3706dbea3165e8ab9bcc157f62ebed0da917b984cc02f577597ec991"
 	runtimeMetaFilename = ".winapk-runtime.json"
 )
 
@@ -52,15 +52,38 @@ func (r *Runtime) resolveJdkArchive(ctx context.Context) (url, archive, wantSHA 
 	}
 	reqCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
-	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, base+"/"+defaultJdkSumPath, nil)
+	sumURL := base + "/" + defaultJdkSumPath
+	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, sumURL, nil)
 	if err == nil {
-		if resp, rerr := http.DefaultClient.Do(req); rerr == nil {
+		// aka.ms may redirect e.g. microsoft-jdk-21-...sha256sum.txt to
+		// microsoft-jdk-21.0.13.1-1-...sha256sum.txt while the file body still
+		// lists the filename without "-1"; prefer the redirected alias name.
+		lastFeedSum := ""
+		client := &http.Client{
+			CheckRedirect: func(r2 *http.Request, via []*http.Request) error {
+				if len(via) >= 10 {
+					return errors.New("stopped after 10 redirects")
+				}
+				u := r2.URL.String()
+				if strings.HasPrefix(u, base+"/") && strings.HasSuffix(u, ".sha256sum.txt") {
+					lastFeedSum = u
+				}
+				return nil
+			},
+		}
+		if resp, rerr := client.Do(req); rerr == nil {
 			body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 			_ = resp.Body.Close()
 			if resp.StatusCode == http.StatusOK {
 				fields := strings.Fields(string(body))
 				if len(fields) >= 2 && len(fields[0]) == 64 {
 					name := filepath.Base(fields[1])
+					if lastFeedSum != "" {
+						cand := strings.TrimSuffix(strings.TrimPrefix(lastFeedSum, base+"/"), ".sha256sum.txt")
+						if strings.HasPrefix(cand, "microsoft-jdk-21") && strings.HasSuffix(cand, "-windows-aarch64.zip") {
+							name = cand
+						}
+					}
 					if strings.HasPrefix(name, "microsoft-jdk-21") && strings.HasSuffix(name, "-windows-aarch64.zip") {
 						return base + "/" + name, name, strings.ToLower(fields[0]), nil
 					}
