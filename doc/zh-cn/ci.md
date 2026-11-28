@@ -19,7 +19,7 @@ Windows 11 ARM64 硬件之间明确分工：
 | 检查 / 套件 | `windows-11-arm` CI | 物理 ARM64 桌面 + GPU |
 |---|---|---|
 | `gofmt`、`go vet`、`go test ./internal/version ./internal/gui`、`CGO_ENABLED=0`、`mygo vet`、`mygo i18n check`、`checkdocs` | 每次推送 / PR 执行 | 发布前执行 |
-| `Build-Java`、`Build-FrameworkRes`、`Build-Skia`、`Build-Fixtures`、`Build-Host`（`Debug` 与 `Release`）、`Build-GuestBionic`、`Build-GuestJni`、`Build-ElfFixtures` | 每次推送 / PR 执行 | 发布前执行 |
+| `Build-Java`、`Build-FrameworkRes`、`Build-Angle`、`Build-Skia`、`Build-Fixtures`、`Build-Host`（`Debug` 与 `Release`）、`Build-GuestBionic`、`Build-GuestJni`、`Build-ElfFixtures` | 每次推送 / PR 执行 | 发布前执行 |
 | `Host`、`Native`、`Bionic`、`Jni`、`DexJob` | 在 `windows-11-arm` 上原生执行 | 发布前执行 |
 | `HostServices`、`Audio`（硬件 WASAPI）、`Agsl`（`T15` D3D12）、`Java`、`ApkJni`、`Surface`、`GraphicsHost`、`GraphicsJava`、`GraphicsGuest`、`VulkanWsi`、`Package`、`Stability`（`T14`） | 产物构建与 PE 架构审计（`Package` 清单） | 完整交互式窗口、GPU 与 30 分钟稳定性门禁（[platform-notes.md](platform-notes.md)） |
 

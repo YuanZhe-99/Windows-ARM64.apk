@@ -26,7 +26,7 @@ Go, Java and native dependencies with their license texts.
 | SQLite 3.54.1 (vcpkg) | public domain | `android.database.sqlite` in `winapk-bridge.dll`; ships as `sqlite3.dll` |
 | Capstone 5.0.9 (vcpkg) | BSD-3-Clause (Nguyen Anh Quynh and contributors; the notice ships with `capstone.dll`) | screening guest ARM64 code in the ELF loader (`native-probe.exe`, a development tool) |
 | Android's `org.apache.http.legacy` (through Mac.apk) | Apache-2.0 (AOSP `platform/external/apache-http`, Apache HttpComponents' NOTICE) | Apache HttpClient for apps, inside `android-framework.jar` |
-| ANGLE `801a1a5` | BSD-3-Clause (The ANGLE Project Authors); public DEPS retain their licenses | optional ARM64 host experiment; no released package yet; packaging must supply full linked-dependency notices |
+| ANGLE `801a1a5` | BSD-3-Clause (The ANGLE Project Authors); public DEPS retain their licenses | private ARM64 EGL/GLES runtime (`bin\angle\libEGL.dll`, `libGLESv2.dll`, `d3dcompiler_47.dll`); linked-dependency notices below |
 | OpenJDK and AOSP resources | see `doc/en-us/third-party.md` | private JVM and framework resources |
 | JetBrains Skiko 0.150.2 (`skiko-windows-arm64.dll` + `icudtl.dat`) | Apache-2.0 (JetBrains s.r.o.), BSD-3-Clause (Google LLC Skia), Unicode/ICU | AGSL `RuntimeShader` and `RenderEffect` GPU post-processing over Direct3D 12 (`T15`) |
 

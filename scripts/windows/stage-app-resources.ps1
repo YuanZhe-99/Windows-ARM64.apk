@@ -49,16 +49,10 @@ foreach ($req in 'winapk.exe','winapk-bridge.dll','winapk-probe.jar','z.dll','sq
     if (-not (Test-Path -LiteralPath (Join-Path $stage "bin\$req"))) { throw "Missing required Release binary: $req" }
 }
 $angleDir = Join-Path $build 'bin\angle'
-if (Test-Path -LiteralPath (Join-Path $angleDir 'libEGL.dll')) {
-    foreach ($dll in 'libEGL.dll','libGLESv2.dll','d3dcompiler_47.dll') {
-        if (Test-Path -LiteralPath (Join-Path $angleDir $dll)) {
-            Copy-Staged $angleDir $dll "bin\angle\$dll"
-        }
-    }
-    if (Test-Path -LiteralPath (Join-Path $angleDir 'angle.json')) {
-        Copy-Staged $angleDir 'angle.json' 'bin\angle\angle.json'
-    }
+foreach ($dll in 'libEGL.dll','libGLESv2.dll','d3dcompiler_47.dll') {
+    Copy-Staged $angleDir $dll "bin\angle\$dll"
 }
+Copy-Staged $angleDir 'angle.json' 'bin\angle\angle.json'
 $skikoDir = Join-Path $build 'bin\skia'
 if (Test-Path -LiteralPath (Join-Path $skikoDir 'skiko-windows-arm64.dll')) {
     Copy-Staged $skikoDir 'skiko-windows-arm64.dll' 'bin\skia\skiko-windows-arm64.dll'
@@ -106,9 +100,7 @@ foreach ($dep in @('zlib','sqlite3','capstone','vulkan-headers','liblzma')) {
         Copy-Staged $build "vcpkg_installed\arm64-windows\share\$dep\copyright" "licenses\$dep.txt"
     }
 }
-if (Test-Path -LiteralPath (Join-Path $build 'deps\angle\LICENSE')) {
-    Copy-Staged $build 'deps\angle\LICENSE' 'licenses\ANGLE-LICENSE'
-}
+Copy-Staged $build 'deps\angle\LICENSE' 'licenses\ANGLE-LICENSE'
 if ($lock.guest.frameworkRes.source -match 'tag (\S+),') {
     $notice = "framework-res\work-$($Matches[1])\src\NOTICE"
     if (Test-Path -LiteralPath (Join-Path $build $notice)) {

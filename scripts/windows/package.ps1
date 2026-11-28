@@ -59,15 +59,12 @@ foreach ($req in 'winapk.exe','winapk-bridge.dll','winapk-probe.jar','z.dll','sq
     if (!(Test-Path -LiteralPath (Join-Path $stage "bin\$req"))) { throw "Missing required runtime file: $req" }
 }
 $angleBin = Join-Path $build 'bin\angle'
-if ($IncludeAngle -or (Test-Path -LiteralPath (Join-Path $angleBin 'libEGL.dll'))) {
+$bundleAngle = ($Target -eq 'Bundle') -or $IncludeAngle
+if ($bundleAngle -or (Test-Path -LiteralPath (Join-Path $angleBin 'libEGL.dll'))) {
     foreach ($dll in 'libEGL.dll','libGLESv2.dll','d3dcompiler_47.dll') {
-        if ($IncludeAngle -or (Test-Path -LiteralPath (Join-Path $angleBin $dll))) {
-            Copy-Payload $angleBin $dll "bin\angle\$dll"
-        }
+        Copy-Payload $angleBin $dll "bin\angle\$dll"
     }
-    if (Test-Path -LiteralPath (Join-Path $angleBin 'angle.json')) {
-        Copy-Payload $angleBin 'angle.json' 'bin\angle\angle.json'
-    }
+    Copy-Payload $angleBin 'angle.json' 'bin\angle\angle.json'
 }
 # Reject a mixed Debug/Release build tree, including Debug CRT imports in dependency DLLs.
 $readobj = Join-Path (Split-Path (Find-AndroidNdk)) 'llvm-readobj.exe'
@@ -125,7 +122,7 @@ foreach ($dep in @('zlib','sqlite3','capstone','vulkan-headers','liblzma')) {
         Copy-Payload $build "vcpkg_installed\arm64-windows\share\$dep\copyright" "licenses\$dep.txt"
     }
 }
-if (Test-Path -LiteralPath (Join-Path $build 'deps\angle\LICENSE')) {
+if (Test-Path -LiteralPath (Join-Path $stage 'bin\angle\libEGL.dll')) {
     Copy-Payload $build 'deps\angle\LICENSE' 'licenses\ANGLE-LICENSE'
 }
 if ($lock.guest.frameworkRes.source -notmatch 'tag (\S+),') { throw 'Missing framework resource source tag' }
@@ -147,7 +144,7 @@ $contents = @(Get-ChildItem -LiteralPath $stage -File -Recurse | Sort-Object Ful
     }
 })
 $omitted = [System.Collections.Generic.List[string]]::new()
-if (-not $IncludeAngle) { $omitted.Add('ANGLE') }
+if (-not (Test-Path -LiteralPath (Join-Path $stage 'bin\angle\libEGL.dll'))) { $omitted.Add('ANGLE') }
 $omitted.AddRange([string[]]@('JVM (auto-installed privately by front end or supplied externally)', 'Vulkan loader and GPU drivers', 'fixture APKs'))
 if ($Target -eq 'Cli') { $omitted.Add('frontend') }
 

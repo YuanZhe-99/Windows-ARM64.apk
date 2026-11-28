@@ -39,8 +39,9 @@ Release 宿主产物与 Debug 测试二进制隔离。脚本使用已有产物�
 修改源码后须重新构建再打包：清单同时记录源码快照与产物哈希，但不证明构建可重现。
 不安装、不发布。需已有包含 `java.desktop` 的 ARM64 OpenJDK 21
 及 ARM64 Microsoft Visual C++ v14 Redistributable。可传入 `--java-home <绝对路径>`，
-或仅在当前 shell 设置 `WINAPK_JAVA_HOME`。基础包不包含 ANGLE、GPU 驱动、Vulkan loader、
-doctor JAR 之外的探测产物或夹具 APK。ANGLE 分发仍需审核实际链接组件的许可。
+或仅在当前 shell 设置 `WINAPK_JAVA_HOME`。`Bundle` 包（`-Target Bundle` 与 `stage-app-resources.ps1`）包含私有 ARM64 ANGLE（`bin\angle\`）及
+`licenses\ANGLE-LICENSE`；`-Target Cli` 默认不含 ANGLE，除非传入 `-IncludeAngle`。所有打包产物均不含
+GPU 驱动、Vulkan loader、doctor JAR 之外的探测产物或夹具 APK。
 客体 Vulkan 清屏使用系统 loader，仍属实验。
 包测试使用全新的数据/配置根目录、中文和空格路径及仅含 Windows 目录的进程级 `PATH`；
 不关闭系统网络，不能代替第二台机器验证。
@@ -52,8 +53,8 @@ Go 模块展开包通配符时忽略 `./build`。该生成/下载目录可能包
 
 ```powershell
 .\scripts\windows\check-requirements.ps1
-.\scripts\windows\build.ps1 -Component All          # or Java, FrameworkRes, Fixtures, Host, NativeProbe, JniProbe
-.\scripts\windows\build.ps1 -Component Angle        # optional P5a source build; separate from Java
+.\scripts\windows\build.ps1 -Component All          # or Java, FrameworkRes, Fixtures, Angle, Skia, Host, NativeProbe, JniProbe
+.\scripts\windows\build.ps1 -Component Angle        # builds/verifies private ARM64 ANGLE DLLs (included in All)
 .\scripts\windows\build.ps1 -Component AngleProbe
 .\scripts\windows\test.ps1 -Suite GraphicsHost      # host-only; not G4
 .\scripts\windows\build.ps1 -Component Host         # after Angle, to enable the Java GLES bridge

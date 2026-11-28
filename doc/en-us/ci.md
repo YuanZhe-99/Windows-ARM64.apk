@@ -19,7 +19,7 @@ session, so verification splits cleanly between CI and physical Windows 11 ARM64
 | Check / Suite | `windows-11-arm` CI | Physical ARM64 desktop + GPU |
 |---|---|---|
 | `gofmt`, `go vet`, `go test ./internal/version ./internal/gui`, `CGO_ENABLED=0`, `mygo vet`, `mygo i18n check`, `checkdocs` | Runs on every push/PR | Runs before release |
-| `Build-Java`, `Build-FrameworkRes`, `Build-Skia`, `Build-Fixtures`, `Build-Host` (`Debug` & `Release`), `Build-GuestBionic`, `Build-GuestJni`, `Build-ElfFixtures` | Runs on every push/PR | Runs before release |
+| `Build-Java`, `Build-FrameworkRes`, `Build-Angle`, `Build-Skia`, `Build-Fixtures`, `Build-Host` (`Debug` & `Release`), `Build-GuestBionic`, `Build-GuestJni`, `Build-ElfFixtures` | Runs on every push/PR | Runs before release |
 | `Host`, `Native`, `Bionic`, `Jni`, `DexJob` | Runs natively on `windows-11-arm` | Runs before release |
 | `HostServices`, `Audio` (hardware WASAPI), `Agsl` (`T15` D3D12), `Java`, `ApkJni`, `Surface`, `GraphicsHost`, `GraphicsJava`, `GraphicsGuest`, `VulkanWsi`, `Package`, `Stability` (`T14`) | Artifact build & PE audit (`Package` inventory) | Full interactive window, GPU & 30-min stability gates ([platform-notes.md](platform-notes.md)) |
 

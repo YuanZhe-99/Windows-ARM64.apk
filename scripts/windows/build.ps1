@@ -570,21 +570,74 @@ function Build-Angle {
     $lock = Get-Content (Join-Path $repo 'build-lock.json') -Raw | ConvertFrom-Json
     $record = $lock.host.angle
     $deps = Join-Path $out 'deps'
+    $dest = Join-Path $out 'bin\angle'
+    $metaPath = Join-Path $dest 'angle.json'
+    $licensePath = Join-Path $deps 'angle\LICENSE'
+    if ((Test-Path -LiteralPath $metaPath) -and (Test-Path -LiteralPath $licensePath)) {
+        try {
+            $meta = Get-Content -LiteralPath $metaPath -Raw | ConvertFrom-Json
+            $wantArgsSha = (Get-FileHash (Join-Path $repo $record.gnArgs) -Algorithm SHA256).Hash.ToLower()
+            $patchesOk = ($meta.patches.Count -eq $record.patches.Count)
+            if ($patchesOk) {
+                for ($i = 0; $i -lt $record.patches.Count; $i++) {
+                    $pSha = (Get-FileHash (Join-Path $repo $record.patches[$i]) -Algorithm SHA256).Hash.ToLower()
+                    if ($meta.patches[$i].path -ne $record.patches[$i] -or $meta.patches[$i].sha256 -ne $pSha) { $patchesOk = $false; break }
+                }
+            }
+            $dllsOk = $true
+            foreach ($dllName in 'libEGL.dll', 'libGLESv2.dll', 'd3dcompiler_47.dll') {
+                $dllFile = Join-Path $dest $dllName
+                if (-not (Test-Path -LiteralPath $dllFile) -or (Get-PeMachine $dllFile) -ne 'ARM64' -or
+                    (Get-FileHash $dllFile -Algorithm SHA256).Hash.ToLower() -ne $meta.sha256.$dllName) {
+                    $dllsOk = $false; break
+                }
+            }
+            if ($meta.commit -eq $record.commit -and $meta.depotToolsCommit -eq $record.depotToolsCommit -and
+                $meta.windowsSdk -eq $lock.host.windowsSdk.version -and $meta.argsSha256 -eq $wantArgsSha -and
+                $patchesOk -and $dllsOk) {
+                Write-Step "ANGLE DLLs already staged and verified: $dest"
+                return
+            }
+        } catch {
+            Write-Step "Rebuilding ANGLE (existing metadata unreadable: $($_.Exception.Message))"
+        }
+    }
     New-Item -ItemType Directory -Force $deps | Out-Null
     foreach ($source in @(
-        @{ Name = 'depot_tools'; Url = 'https://chromium.googlesource.com/chromium/tools/depot_tools.git'; Commit = $record.depotToolsCommit },
-        @{ Name = 'angle'; Url = $record.source; Commit = $record.commit }
+        @{ Name = 'depot_tools'; Url = 'https://chromium.googlesource.com/chromium/tools/depot_tools.git'; Fallback = ''; Commit = $record.depotToolsCommit },
+        @{ Name = 'angle'; Url = $record.source; Fallback = 'https://github.com/google/angle'; Commit = $record.commit }
     )) {
         $path = Join-Path $deps $source.Name
-        if (-not (Test-Path $path)) { Invoke-Checked 'git' @('clone', '--depth', '1', $source.Url, $path) }
-        & git -C $path remote set-url origin $source.Url 2>$null
-        if ($LASTEXITCODE -ne 0) { Invoke-Checked 'git' @('-C', $path, 'remote', 'add', 'origin', $source.Url) }
+        if (-not (Test-Path $path)) {
+            & git clone --depth 1 $source.Url $path
+            if ($LASTEXITCODE -ne 0) {
+                if ($source.Fallback) {
+                    Write-Step "$($source.Name) clone from $($source.Url) failed; trying $($source.Fallback)"
+                    if (Test-Path $path) { Remove-Item -LiteralPath $path -Recurse -Force }
+                    Invoke-Checked 'git' @('clone', '--depth', '1', $source.Fallback, $path)
+                } else {
+                    throw "git clone $($source.Url) exited with $LASTEXITCODE"
+                }
+            }
+        }
+        $remotes = @(& git -C $path remote)
+        if ($LASTEXITCODE -ne 0) { throw "Not a source checkout: $path" }
+        if ($remotes -contains 'origin') {
+            Invoke-Checked 'git' @('-C', $path, 'remote', 'set-url', 'origin', $source.Url)
+        } else {
+            Invoke-Checked 'git' @('-C', $path, 'remote', 'add', 'origin', $source.Url)
+        }
         $head = & git -C $path rev-parse HEAD
         if ($LASTEXITCODE -ne 0) { throw "Not a source checkout: $path" }
         $changes = & git -C $path status --porcelain --untracked-files=no
         if ($LASTEXITCODE -ne 0 -or $changes) { throw "Inspect local source changes before building $($source.Name)" }
         if ($head.Trim() -ne $source.Commit) {
-            Invoke-Checked 'git' @('-C', $path, 'fetch', '--depth', '1', 'origin', $source.Commit)
+            & git -C $path fetch --depth 1 origin $source.Commit
+            if ($LASTEXITCODE -ne 0 -and $source.Fallback) {
+                Invoke-Checked 'git' @('-C', $path, 'fetch', '--depth', '1', $source.Fallback, $source.Commit)
+            } elseif ($LASTEXITCODE -ne 0) {
+                throw "git fetch $($source.Commit) exited with $LASTEXITCODE"
+            }
             Invoke-Checked 'git' @('-C', $path, 'checkout', '--detach', $source.Commit)
         }
     }
@@ -838,5 +891,5 @@ switch ($Component) {
     'Angle' { Build-Angle }
     'AngleProbe' { Build-Host 'angle-probe' }
     'Skia' { Build-Skia }
-    'All' { Build-Java; Build-FrameworkRes; Build-Fixtures; Build-Skia; Build-Host; Build-GuestBionic; Build-GuestJni; Build-ElfFixtures }
+    'All' { Build-Java; Build-FrameworkRes; Build-Fixtures; Build-Angle; Build-Skia; Build-Host; Build-GuestBionic; Build-GuestJni; Build-ElfFixtures }
 }

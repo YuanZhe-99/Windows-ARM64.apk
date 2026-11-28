@@ -54,7 +54,9 @@ jobs:
           $lockRaw = Get-Content build-lock.json -Raw
           $vcpkgRaw = Get-Content macapk/runtime/platform/windows/vcpkg.json -Raw
           $bootHash = (Get-FileHash scripts/windows/ci-bootstrap.ps1).Hash
-          "deps=winapk-deps-arm64-$(ShortHash "$bootHash|$lockRaw")" >> $env:GITHUB_OUTPUT
+          $angleArgsHash = (Get-FileHash scripts/windows/angle-args.gn).Hash
+          $anglePatchHash = (Get-FileHash scripts/windows/angle-toolchain.patch).Hash
+          "deps=winapk-deps-arm64-$(ShortHash "$bootHash|$lockRaw|$angleArgsHash|$anglePatchHash")" >> $env:GITHUB_OUTPUT
           "vcpkg=winapk-vcpkg-arm64-$(ShortHash "$vcpkgRaw|$lockRaw")" >> $env:GITHUB_OUTPUT
 
       - name: Restore SDK/JDK cache

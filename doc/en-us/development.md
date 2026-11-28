@@ -49,8 +49,10 @@ hashes, but does not prove a reproducible build.
 It does not install or publish anything. It requires an existing ARM64 OpenJDK 21 with
 `java.desktop` and the ARM64 Microsoft Visual C++ v14 Redistributable. Pass
 `--java-home <absolute-path>` or set `WINAPK_JAVA_HOME` for the current shell only.
-This baseline package omits ANGLE, GPU drivers, the Vulkan loader, probes other than the
-doctor JAR, and fixture APKs. ANGLE redistribution still needs its linked-license audit.
+`Bundle` packages (`-Target Bundle` and `stage-app-resources.ps1`) include private ARM64 ANGLE
+(`bin\angle\`) and `licenses\ANGLE-LICENSE`; `-Target Cli` omits ANGLE unless `-IncludeAngle` is
+passed. Every package omits GPU drivers, the Vulkan loader, probes other than the doctor JAR, and
+fixture APKs.
 Guest Vulkan transfer-clear uses the system loader and remains experimental.
 The package test uses a fresh data/profile root, Chinese/space paths and a process-local
 Windows-only `PATH`; it does not disable networking system-wide or stand in for a second PC.
@@ -63,8 +65,8 @@ tree can contain large third-party checkouts; it is not product Go source. Root 
 
 ```powershell
 .\scripts\windows\check-requirements.ps1
-.\scripts\windows\build.ps1 -Component All          # or Java, FrameworkRes, Fixtures, Host, NativeProbe, JniProbe
-.\scripts\windows\build.ps1 -Component Angle        # optional P5a source build; separate from Java
+.\scripts\windows\build.ps1 -Component All          # or Java, FrameworkRes, Fixtures, Angle, Skia, Host, NativeProbe, JniProbe
+.\scripts\windows\build.ps1 -Component Angle        # builds/verifies private ARM64 ANGLE DLLs (included in All)
 .\scripts\windows\build.ps1 -Component AngleProbe
 .\scripts\windows\test.ps1 -Suite GraphicsHost      # host-only; not G4
 .\scripts\windows\build.ps1 -Component Host         # after Angle, to enable the Java GLES bridge

@@ -17,7 +17,7 @@
       "resourceCompilerSha256": "903769d98df8a005c79d52d7089fe34f23c0b7ada4cd0c42b6063526a5593e6a",
       "source": "https://chromium.googlesource.com/angle/angle",
       "license": "BSD-3-Clause (plus the licenses of its DEPS)",
-      "use": "P5a source build of ARM64 Windows libEGL.dll/libGLESv2.dll with Vulkan and D3D11; host experiment only, not packaged",
+      "use": "Private ARM64 Windows libEGL.dll/libGLESv2.dll (with d3dcompiler_47.dll) built from source with Vulkan and D3D11; bundled under bin\\angle\\ (ADR-0005)",
       "hostVerification": {
         "suite": "GraphicsHost",
         "result": "PASS",
