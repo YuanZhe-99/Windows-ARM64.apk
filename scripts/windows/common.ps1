@@ -148,28 +148,52 @@ Side effects: the environment changes for the program only; this shell's is
 put back afterwards, and the system environment is never touched.
 #>
 function Invoke-InDevShell($Vs, [string[]]$Command) {
-    if (-not (Get-Variable -Scope Script -Name devEnv -ErrorAction SilentlyContinue)) {
+    if (-not (Get-Variable -Scope Script -Name devEnvVars -ErrorAction SilentlyContinue)) {
+        $before = [System.Collections.Generic.Dictionary[string, string]]::new([StringComparer]::OrdinalIgnoreCase)
+        foreach ($e in [Environment]::GetEnvironmentVariables().GetEnumerator()) {
+            $before[[string]$e.Key] = [string]$e.Value
+        }
+        $beforePathSet = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+        if ($before.ContainsKey('PATH')) {
+            foreach ($p in ($before['PATH'] -split ';')) { if ($p) { [void]$beforePathSet.Add($p.TrimEnd('\')) } }
+        }
         $vcvars = Join-Path $Vs.Root 'VC\Auxiliary\Build\vcvarsall.bat'
         $lines = & cmd.exe /d /c "`"$vcvars`" arm64 >nul && set"
         if ($LASTEXITCODE -ne 0) { throw 'vcvarsall.bat arm64 failed' }
-        $script:devEnv = @{}
-        foreach ($l in $lines) { if ($l -match '^([^=]+)=(.*)$') { $script:devEnv[$Matches[1]] = $Matches[2] } }
+        $script:devEnvVars = @{}
+        $afterPath = ''
+        foreach ($l in $lines) {
+            if ($l -match '^([^=]+)=(.*)$') {
+                $k = $Matches[1]; $v = $Matches[2]
+                if ($k -ieq 'PATH') { $afterPath = $v; continue }
+                if ($k -ieq '__VSCMD_PREINIT_PATH') { continue }
+                if (-not $before.ContainsKey($k) -or $before[$k] -ne $v) {
+                    $script:devEnvVars[$k] = $v
+                }
+            }
+        }
         $llvmDirs = @(
             (Join-Path $Vs.Root 'VC\Tools\Llvm\ARM64\bin'),
             (Join-Path $env:ProgramFiles 'LLVM\bin')
         ) | Where-Object { Test-Path $_ }
-        if ($llvmDirs) { $script:devEnv['PATH'] = ($llvmDirs -join ';') + ';' + $script:devEnv['PATH'] }
+        $vcvarsAdded = @($afterPath -split ';' | Where-Object { $_ -and -not $beforePathSet.Contains($_.TrimEnd('\')) })
+        $script:devEnvPathPrefix = (@($llvmDirs) + @($vcvarsAdded)) -join ';'
     }
     $saved = @{}
-    foreach ($k in $script:devEnv.Keys) {
+    foreach ($k in $script:devEnvVars.Keys) {
         $saved[$k] = [Environment]::GetEnvironmentVariable($k)
-        [Environment]::SetEnvironmentVariable($k, $script:devEnv[$k])
+        [Environment]::SetEnvironmentVariable($k, $script:devEnvVars[$k])
+    }
+    $savedPath = [Environment]::GetEnvironmentVariable('PATH')
+    if ($script:devEnvPathPrefix) {
+        [Environment]::SetEnvironmentVariable('PATH', "$($script:devEnvPathPrefix);$savedPath")
     }
     try {
         $program, $rest = $Command
         & $program @rest
         if ($LASTEXITCODE -ne 0) { throw "$([IO.Path]::GetFileName($program)) exited with $LASTEXITCODE" }
     } finally {
+        [Environment]::SetEnvironmentVariable('PATH', $savedPath)
         foreach ($k in $saved.Keys) { [Environment]::SetEnvironmentVariable($k, $saved[$k]) }
     }
 }
