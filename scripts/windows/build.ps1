@@ -573,7 +573,8 @@ function Build-Angle {
     $dest = Join-Path $out 'bin\angle'
     $metaPath = Join-Path $dest 'angle.json'
     $licensePath = Join-Path $deps 'angle\LICENSE'
-    if ((Test-Path -LiteralPath $metaPath) -and (Test-Path -LiteralPath $licensePath)) {
+    $headerPath = Join-Path $deps 'angle\include\EGL\eglext_angle.h'
+    if ((Test-Path -LiteralPath $metaPath) -and (Test-Path -LiteralPath $licensePath) -and (Test-Path -LiteralPath $headerPath)) {
         try {
             $meta = Get-Content -LiteralPath $metaPath -Raw | ConvertFrom-Json
             $wantArgsSha = (Get-FileHash (Join-Path $repo $record.gnArgs) -Algorithm SHA256).Hash.ToLower()
@@ -608,6 +609,9 @@ function Build-Angle {
         @{ Name = 'angle'; Url = $record.source; Fallback = 'https://github.com/google/angle'; Commit = $record.commit }
     )) {
         $path = Join-Path $deps $source.Name
+        if ((Test-Path -LiteralPath $path) -and -not (Test-Path -LiteralPath (Join-Path $path '.git'))) {
+            Remove-Item -LiteralPath $path -Recurse -Force
+        }
         if (-not (Test-Path $path)) {
             & git clone --depth 1 $source.Url $path
             if ($LASTEXITCODE -ne 0) {
@@ -665,91 +669,101 @@ solutions = [
     } else { $client | Set-Content $clientPath -Encoding utf8NoBOM }
     $depot = Join-Path $deps 'depot_tools'
     $angle = Join-Path $deps 'angle'
-    $env:DEPOT_TOOLS_UPDATE = '0'
-    $env:DEPOT_TOOLS_WIN_TOOLCHAIN = '0'
-    $env:CIPD_CACHE_DIR = Join-Path $deps 'cache\cipd'
-    $env:VPYTHON_VIRTUALENV_ROOT = Join-Path $deps 'cache\vpython'
-    $env:PATH = "$depot;$env:PATH"
-    $syncStamp = Join-Path $deps '.winapk-angle-synced'
-    $alreadySynced = (Test-Path $syncStamp) -and ((Get-Content $syncStamp -Raw).Trim() -eq $record.commit) -and
-        (Test-Path (Join-Path $angle 'buildtools\win\gn.exe')) -and
-        (Test-Path (Join-Path $angle 'third_party\llvm-build\Release+Asserts\bin\clang-cl.exe'))
-    if (-not $alreadySynced) {
-        Invoke-Checked (Join-Path $depot 'bootstrap\win_tools.bat') @()
-        Push-Location $deps
-        try {
-            Invoke-Checked (Join-Path $depot 'gclient.bat') @('sync', '--no-history', '--nohooks', '--revision', "angle@$($record.commit)", '-j4')
-        } finally { Pop-Location }
-        $record.commit | Set-Content $syncStamp -Encoding utf8NoBOM
+    $savedEnv = @{}
+    foreach ($name in 'PATH', 'DEPOT_TOOLS_UPDATE', 'DEPOT_TOOLS_WIN_TOOLCHAIN', 'CIPD_CACHE_DIR', 'VPYTHON_VIRTUALENV_ROOT', 'GYP_MSVS_OVERRIDE_PATH', 'GYP_MSVS_VERSION') {
+        $savedEnv[$name] = [Environment]::GetEnvironmentVariable($name, 'Process')
     }
-    foreach ($relative in $record.patches) {
-        $patch = Join-Path $repo $relative
-        & git -C (Join-Path $angle 'build') apply --reverse --check --ignore-space-change $patch 2> $null
-        if ($LASTEXITCODE -ne 0) {
-            Invoke-Checked 'git' @('-C', (Join-Path $angle 'build'), 'apply', '--check', '--ignore-space-change', $patch)
-            Invoke-Checked 'git' @('-C', (Join-Path $angle 'build'), 'apply', '--ignore-space-change', $patch)
+    try {
+        $env:DEPOT_TOOLS_UPDATE = '0'
+        $env:DEPOT_TOOLS_WIN_TOOLCHAIN = '0'
+        $env:CIPD_CACHE_DIR = Join-Path $deps 'cache\cipd'
+        $env:VPYTHON_VIRTUALENV_ROOT = Join-Path $deps 'cache\vpython'
+        $env:PATH = "$depot;$env:PATH"
+        $syncStamp = Join-Path $deps '.winapk-angle-synced'
+        $alreadySynced = (Test-Path $syncStamp) -and ((Get-Content $syncStamp -Raw).Trim() -eq $record.commit) -and
+            (Test-Path (Join-Path $angle 'buildtools\win\gn.exe')) -and
+            (Test-Path (Join-Path $angle 'third_party\llvm-build\Release+Asserts\bin\clang-cl.exe'))
+        if (-not $alreadySynced) {
+            Invoke-Checked (Join-Path $depot 'bootstrap\win_tools.bat') @()
+            Push-Location $deps
+            try {
+                Invoke-Checked (Join-Path $depot 'gclient.bat') @('sync', '--no-history', '--nohooks', '--revision', "angle@$($record.commit)", '-j4')
+            } finally { Pop-Location }
+            $record.commit | Set-Content $syncStamp -Encoding utf8NoBOM
+        }
+        foreach ($relative in $record.patches) {
+            $patch = Join-Path $repo $relative
+            & git -C (Join-Path $angle 'build') apply --reverse --check --ignore-space-change $patch 2> $null
+            if ($LASTEXITCODE -ne 0) {
+                Invoke-Checked 'git' @('-C', (Join-Path $angle 'build'), 'apply', '--check', '--ignore-space-change', $patch)
+                Invoke-Checked 'git' @('-C', (Join-Path $angle 'build'), 'apply', '--ignore-space-change', $patch)
+            }
+        }
+        $vs = Find-VisualStudio
+        $sdk = (Get-ItemPropertyValue 'HKLM:\SOFTWARE\Microsoft\Windows Kits\Installed Roots' 'KitsRoot10').TrimEnd('\')
+        $env:GYP_MSVS_OVERRIDE_PATH = $vs.Root
+        $env:GYP_MSVS_VERSION = '2026'
+        Push-Location $angle
+        try {
+            # Run only the metadata hook needed by these DLL targets; no Rust/test/remote toolchain setup.
+            Invoke-Checked (Join-Path $depot 'python3.bat') @('build/util/lastchange.py', '-o', 'build/util/LASTCHANGE')
+        } finally { Pop-Location }
+        # Fetch the exact public hook object directly: gsutil's own archive exceeds MAX_PATH here.
+        $rc = Join-Path $angle 'build\toolchain\win\rc\win\rc.exe'
+        $rcHash = (Get-Content "$rc.sha1" -Raw).Trim()
+        if (-not (Test-Path $rc) -or (Get-FileHash $rc -Algorithm SHA1).Hash.ToLower() -ne $rcHash) {
+            Invoke-WebRequest "https://storage.googleapis.com/chromium-browser-clang/rc/$rcHash" -OutFile "$rc.download"
+            if ((Get-FileHash "$rc.download" -Algorithm SHA1).Hash.ToLower() -ne $rcHash) { throw 'ANGLE resource compiler hook hash mismatch' }
+            Move-Item "$rc.download" $rc -Force
+        }
+        if ((Get-FileHash $rc -Algorithm SHA256).Hash.ToLower() -ne $record.resourceCompilerSha256) {
+            throw 'ANGLE resource compiler SHA-256 mismatch'
+        }
+        $compiler = Join-Path $angle 'third_party\llvm-build\Release+Asserts\bin\clang-cl.exe'
+        Invoke-Checked $compiler @('--version')
+        $native = Join-Path $angle 'out\WindowsArm64'
+        New-Item -ItemType Directory -Force $native | Out-Null
+        $gnArgs = (Get-Content (Join-Path $repo $record.gnArgs) -Raw) + "`n" +
+            "visual_studio_path = `"$($vs.Root.Replace('\', '/'))`"`nvisual_studio_version = `"2026`"`n" +
+            "windows_sdk_path = `"$($sdk.Replace('\', '/'))`"`nwindows_sdk_version = `"$($lock.host.windowsSdk.version)`"`n" +
+            "wdk_path = `"$($sdk.Replace('\', '/'))`"`n"
+        $gnArgs | Set-Content (Join-Path $native 'args.gn') -Encoding utf8NoBOM
+        $jobs = [Math]::Max(2, [Math]::Min(8, [Environment]::ProcessorCount))
+        Push-Location $angle
+        try {
+            Invoke-InDevShell $vs @((Join-Path $angle 'buildtools\win\gn.exe'), 'gen', $native, '--fail-on-unused-args')
+            Invoke-InDevShell $vs @((Join-Path $vs.NinjaDir 'ninja.exe'), '-C', $native, "-j$jobs", 'libEGL', 'libGLESv2')
+        } finally { Pop-Location }
+        $dest = Join-Path $out 'bin\angle'
+        New-Item -ItemType Directory -Force $dest | Out-Null
+        $hashes = [ordered]@{}
+        foreach ($name in 'libEGL.dll', 'libGLESv2.dll') {
+            $dll = Join-Path $native $name
+            if ((Get-PeMachine $dll) -ne 'ARM64') { throw "$name is not ARM64; not staging it" }
+            Copy-Item $dll (Join-Path $dest $name) -Force
+            $hashes[$name] = (Get-FileHash $dll -Algorithm SHA256).Hash.ToLower()
+        }
+        $d3dc = Join-Path $native 'd3dcompiler_47.dll'
+        if (-not (Test-Path $d3dc)) { $d3dc = Join-Path $sdk 'Redist\D3D\arm64\d3dcompiler_47.dll' }
+        if (-not (Test-Path $d3dc)) { $d3dc = Join-Path $sdk "bin\$($lock.host.windowsSdk.version)\arm64\d3dcompiler_47.dll" }
+        if (-not (Test-Path $d3dc) -or (Get-PeMachine $d3dc) -ne 'ARM64') { throw 'ARM64 d3dcompiler_47.dll not found in ANGLE output or Windows SDK' }
+        Copy-Item $d3dc (Join-Path $dest 'd3dcompiler_47.dll') -Force
+        $hashes['d3dcompiler_47.dll'] = (Get-FileHash (Join-Path $dest 'd3dcompiler_47.dll') -Algorithm SHA256).Hash.ToLower()
+        $patches = @($record.patches | ForEach-Object {
+            [ordered]@{ path = $_; sha256 = (Get-FileHash (Join-Path $repo $_) -Algorithm SHA256).Hash.ToLower() }
+        })
+        [ordered]@{ commit = $record.commit; depotToolsCommit = $record.depotToolsCommit; patches = $patches
+            compiler = $record.compiler; resourceCompilerSha256 = $record.resourceCompilerSha256
+            args = Get-Content (Join-Path $repo $record.gnArgs) -Raw
+            argsSha256 = (Get-FileHash (Join-Path $repo $record.gnArgs) -Algorithm SHA256).Hash.ToLower()
+            windowsSdk = $lock.host.windowsSdk.version; sha256 = $hashes } |
+            ConvertTo-Json -Depth 5 | Set-Content (Join-Path $dest 'angle.json') -Encoding utf8NoBOM
+        Write-Step 'ANGLE DLLs staged as ARM64; no rendering capability is claimed until the host probes run'
+    } finally {
+        foreach ($name in $savedEnv.Keys) {
+            [Environment]::SetEnvironmentVariable($name, $savedEnv[$name], 'Process')
         }
     }
-    $vs = Find-VisualStudio
-    $sdk = (Get-ItemPropertyValue 'HKLM:\SOFTWARE\Microsoft\Windows Kits\Installed Roots' 'KitsRoot10').TrimEnd('\')
-    $env:GYP_MSVS_OVERRIDE_PATH = $vs.Root
-    $env:GYP_MSVS_VERSION = '2026'
-    Push-Location $angle
-    try {
-        # Run only the metadata hook needed by these DLL targets; no Rust/test/remote toolchain setup.
-        Invoke-Checked (Join-Path $depot 'python3.bat') @('build/util/lastchange.py', '-o', 'build/util/LASTCHANGE')
-    } finally { Pop-Location }
-    # Fetch the exact public hook object directly: gsutil's own archive exceeds MAX_PATH here.
-    $rc = Join-Path $angle 'build\toolchain\win\rc\win\rc.exe'
-    $rcHash = (Get-Content "$rc.sha1" -Raw).Trim()
-    if (-not (Test-Path $rc) -or (Get-FileHash $rc -Algorithm SHA1).Hash.ToLower() -ne $rcHash) {
-        Invoke-WebRequest "https://storage.googleapis.com/chromium-browser-clang/rc/$rcHash" -OutFile "$rc.download"
-        if ((Get-FileHash "$rc.download" -Algorithm SHA1).Hash.ToLower() -ne $rcHash) { throw 'ANGLE resource compiler hook hash mismatch' }
-        Move-Item "$rc.download" $rc -Force
-    }
-    if ((Get-FileHash $rc -Algorithm SHA256).Hash.ToLower() -ne $record.resourceCompilerSha256) {
-        throw 'ANGLE resource compiler SHA-256 mismatch'
-    }
-    $compiler = Join-Path $angle 'third_party\llvm-build\Release+Asserts\bin\clang-cl.exe'
-    Invoke-Checked $compiler @('--version')
-    $native = Join-Path $angle 'out\WindowsArm64'
-    New-Item -ItemType Directory -Force $native | Out-Null
-    $gnArgs = (Get-Content (Join-Path $repo $record.gnArgs) -Raw) + "`n" +
-        "visual_studio_path = `"$($vs.Root.Replace('\', '/'))`"`nvisual_studio_version = `"2026`"`n" +
-        "windows_sdk_path = `"$($sdk.Replace('\', '/'))`"`nwindows_sdk_version = `"$($lock.host.windowsSdk.version)`"`n" +
-        "wdk_path = `"$($sdk.Replace('\', '/'))`"`n"
-    $gnArgs | Set-Content (Join-Path $native 'args.gn') -Encoding utf8NoBOM
-    $jobs = [Math]::Max(2, [Math]::Min(8, [Environment]::ProcessorCount))
-    Push-Location $angle
-    try {
-        Invoke-InDevShell $vs @((Join-Path $angle 'buildtools\win\gn.exe'), 'gen', $native, '--fail-on-unused-args')
-        Invoke-InDevShell $vs @((Join-Path $vs.NinjaDir 'ninja.exe'), '-C', $native, "-j$jobs", 'libEGL', 'libGLESv2')
-    } finally { Pop-Location }
-    $dest = Join-Path $out 'bin\angle'
-    New-Item -ItemType Directory -Force $dest | Out-Null
-    $hashes = [ordered]@{}
-    foreach ($name in 'libEGL.dll', 'libGLESv2.dll') {
-        $dll = Join-Path $native $name
-        if ((Get-PeMachine $dll) -ne 'ARM64') { throw "$name is not ARM64; not staging it" }
-        Copy-Item $dll (Join-Path $dest $name) -Force
-        $hashes[$name] = (Get-FileHash $dll -Algorithm SHA256).Hash.ToLower()
-    }
-    $d3dc = Join-Path $native 'd3dcompiler_47.dll'
-    if (-not (Test-Path $d3dc)) { $d3dc = Join-Path $sdk 'Redist\D3D\arm64\d3dcompiler_47.dll' }
-    if (-not (Test-Path $d3dc)) { $d3dc = Join-Path $sdk "bin\$($lock.host.windowsSdk.version)\arm64\d3dcompiler_47.dll" }
-    if (-not (Test-Path $d3dc) -or (Get-PeMachine $d3dc) -ne 'ARM64') { throw 'ARM64 d3dcompiler_47.dll not found in ANGLE output or Windows SDK' }
-    Copy-Item $d3dc (Join-Path $dest 'd3dcompiler_47.dll') -Force
-    $hashes['d3dcompiler_47.dll'] = (Get-FileHash (Join-Path $dest 'd3dcompiler_47.dll') -Algorithm SHA256).Hash.ToLower()
-    $patches = @($record.patches | ForEach-Object {
-        [ordered]@{ path = $_; sha256 = (Get-FileHash (Join-Path $repo $_) -Algorithm SHA256).Hash.ToLower() }
-    })
-    [ordered]@{ commit = $record.commit; depotToolsCommit = $record.depotToolsCommit; patches = $patches
-        compiler = $record.compiler; resourceCompilerSha256 = $record.resourceCompilerSha256
-        args = Get-Content (Join-Path $repo $record.gnArgs) -Raw
-        argsSha256 = (Get-FileHash (Join-Path $repo $record.gnArgs) -Algorithm SHA256).Hash.ToLower()
-        windowsSdk = $lock.host.windowsSdk.version; sha256 = $hashes } |
-        ConvertTo-Json -Depth 5 | Set-Content (Join-Path $dest 'angle.json') -Encoding utf8NoBOM
-    Write-Step 'ANGLE DLLs staged as ARM64; no rendering capability is claimed until the host probes run'
 }
 
 <# Ensures pinned ANGLE headers exist for Host/AngleProbe builds, falling back to GitHub google/angle when googlesource times out. #>

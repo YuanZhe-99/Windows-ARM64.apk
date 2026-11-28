@@ -67,7 +67,8 @@ jobs:
             .dev/deps
             build/windows-arm64/framework-res
             build/windows-arm64/deps/skia
-            build/windows-arm64/deps/angle
+            build/windows-arm64/deps/angle/include
+            build/windows-arm64/deps/angle/LICENSE
             build/windows-arm64/bin/angle
           key: ${{ steps.keys.outputs.deps }}
 
@@ -107,7 +108,8 @@ jobs:
             .dev/deps
             build/windows-arm64/framework-res
             build/windows-arm64/deps/skia
-            build/windows-arm64/deps/angle
+            build/windows-arm64/deps/angle/include
+            build/windows-arm64/deps/angle/LICENSE
             build/windows-arm64/bin/angle
           key: ${{ steps.keys.outputs.deps }}
 
